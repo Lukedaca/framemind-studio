@@ -494,6 +494,67 @@ export const cropPatchFromFile = async (
 };
 
 /**
+ * Načte base64 PNG masku a najde bounding box bílých (alpha > 0, brightness > 0.5) pixelů.
+ */
+export const findMaskBoundingBox = async (maskBase64: string): Promise<CropRect | null> => {
+  const img: HTMLImageElement = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error('Mask load failed'));
+    i.src = `data:image/png;base64,${maskBase64}`;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, img.width, img.height).data;
+
+  let minX = img.width, minY = img.height, maxX = -1, maxY = -1;
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      const i = (y * img.width + x) * 4;
+      const a = data[i + 3];
+      const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      if (a > 32 && brightness > 80) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0 || maxY < 0) return null;
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+};
+
+/**
+ * Vyřízne masku ve stejných souřadnicích jako cropPatchFromFile a vrátí base64 PNG resizovanou na targetSize.
+ */
+export const cropMaskPatch = async (
+  maskBase64: string,
+  cropRect: CropRect,
+  targetSize: number
+): Promise<string> => {
+  const img: HTMLImageElement = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error('Mask load failed'));
+    i.src = `data:image/png;base64,${maskBase64}`;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = targetSize;
+  canvas.height = targetSize;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas context unavailable');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, cropRect.x, cropRect.y, cropRect.width, cropRect.height, 0, 0, targetSize, targetSize);
+  return canvas.toDataURL('image/png').split(',')[1];
+};
+
+/**
  * Aplikuje silný Gaussian blur na zadanou oblast uvnitř File a vrátí novou File.
  * Použito jako safety bypass: tetování → rozmazaná skvrna → AI nepozná, projde safety, deblurne čistě.
  */

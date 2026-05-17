@@ -9,7 +9,7 @@ import type {
     QualityAssessment,
     YouTubeThumbnailTemplate,
 } from '../types';
-import { fileToBase64, base64ToFile, cropPatchFromFile, compositePatchIntoFile, blurRegionInFile, type CropRect } from '../utils/imageProcessor';
+import { fileToBase64, base64ToFile, cropPatchFromFile, compositePatchIntoFile, blurRegionInFile, findMaskBoundingBox, cropMaskPatch, type CropRect } from '../utils/imageProcessor';
 
 // Maximální permisivní safety settings (nemá vliv na server-side IMAGE_SAFETY,
 // ale snižuje false-positives na text harm kategoriích)
@@ -1002,7 +1002,75 @@ export const retouchWithPrompt = async (file: File, prompt: string): Promise<{ f
     }
 };
 
+// Patch + mask retouch — pošle jen vyříznutý patch + odpovídající kus masky
+const retouchMaskedPatch = async (patchFile: File, maskPatchBase64: string): Promise<File> => {
+    return withRetry(async () => {
+        const ai = getGenAI();
+        const base64Patch = await fileToBase64(patchFile);
+        const response = await ai.models.generateContent({
+            model: 'gemini-3.1-flash-image-preview',
+            contents: {
+                parts: [
+                    { inlineData: { data: base64Patch, mimeType: patchFile.type } },
+                    { inlineData: { data: maskPatchBase64, mimeType: 'image/png' } },
+                    { text: 'Professional photo retouching task: this is a close-up texture patch with an accompanying mask. The white areas in the mask indicate regions to inpaint. Replace the content in white-masked areas with seamless natural skin texture matching the surrounding sharp area. Match the surrounding tone, lighting and texture so the result is invisible. Keep non-masked areas unchanged. Preserve original resolution and color balance. Return ONLY the edited image, no text.' }
+                ]
+            },
+            config: { responseModalities: ['image', 'text'], safetySettings: PERMISSIVE_SAFETY_SETTINGS }
+        });
+        const imagePart = getInlineImageData(response);
+        return base64ToFile(imagePart.data, `masked_${patchFile.name}`, imagePart.mimeType);
+    }, 3);
+};
+
 export const retouchWithMask = async (file: File, maskBase64: string): Promise<{ file: File }> => {
+    // Najdi bbox masky → cropuj patch + masku → multi-size retry stejně jako u prompt flow
+    const maskBbox = await findMaskBoundingBox(maskBase64);
+    if (!maskBbox) {
+        throw new Error('PATCH_FALLBACK_FAILED: maska je prázdná. Namaluj přes oblast k retuši a zkus znovu.');
+    }
+
+    const PATCH_STRATEGIES: Array<{ target: number; padding: number; label: string }> = [
+        { target: 768, padding: 0.30, label: '768/0.30 (nejlepší blend)' },
+        { target: 640, padding: 0.15, label: '640/0.15' },
+        { target: 512, padding: 0.08, label: '512/0.08' },
+        { target: 384, padding: 0.04, label: '384/0.04 (minimum context)' },
+    ];
+
+    for (const strategy of PATCH_STRATEGIES) {
+        const { patchFile, cropRect, bboxInPatch } = await cropPatchFromFile(file, maskBbox, strategy.target, strategy.padding);
+        const maskPatchBase64 = await cropMaskPatch(maskBase64, cropRect, strategy.target);
+        console.log(`[mask retouch] Strategy: ${strategy.label}`);
+
+        // Vrstva A: patch + maska s neutrálním promptem
+        try {
+            const retouchedPatch = await retouchMaskedPatch(patchFile, maskPatchBase64);
+            console.log(`[mask retouch] Mask+patch prošel se strategií ${strategy.label}`);
+            const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
+            return { file: merged };
+        } catch (e: any) {
+            if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
+            console.warn(`[mask retouch] Mask+patch blokován pro ${strategy.label}, zkouším blur fallback...`);
+        }
+
+        // Vrstva B: pre-blur bbox v patchi → deblur prompt (bez masky, jen deblur)
+        try {
+            const blurredPatch = await blurRegionInFile(patchFile, bboxInPatch, 50);
+            const retouchedPatch = await retouchBlurredPatchAsDeblur(blurredPatch);
+            console.log(`[mask retouch] Blur+deblur prošel se strategií ${strategy.label}`);
+            const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
+            return { file: merged };
+        } catch (e: any) {
+            if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
+            console.warn(`[mask retouch] Blur+deblur blokován pro ${strategy.label}, zkouším menší patch...`);
+        }
+    }
+
+    throw new Error('PATCH_FALLBACK_FAILED: Gemini blokuje všechny strategie i s maskou. Tato fotka má příliš silné safety triggery — viz Settings pro alternativní engine.');
+};
+
+// LEGACY: původní full-image+mask volání (zachováno jako záloha, nepoužívá se z UI)
+const _retouchWithMaskFullImage = async (file: File, maskBase64: string): Promise<{ file: File }> => {
     return withRetry(async () => {
         const ai = getGenAI();
         const base64Image = await fileToBase64(file);
