@@ -931,10 +931,11 @@ const retouchBlurredPatchAsDeblur = async (blurredPatchFile: File): Promise<File
 
 /**
  * Fallback retouch: detect bbox → crop patch → retouch jen patch (bez kontextu osoby) → composite zpět.
- * Trojvrstvá obrana proti safety filtru:
- *   1) Patch s neutrálním promptem (bez kontextu celé osoby)
- *   2) Když i to blokne: aplikuj silný blur na bbox uvnitř patche → požádej o deblur
- *   3) Když i to blokne: throw, UI nabídne mask brush
+ *
+ * Multi-size retry strategie: postupně zmenšuje patch a okolní kontext kolem bbox.
+ * Pro každou velikost zkusí (1) čistý neutrální prompt, (2) blur+deblur.
+ * Menší patch = méně kontextu pro safety filter = vyšší šance projít při fotkách
+ * kde kolem editované oblasti jsou další triggery (prádlo, intimní partie, atd.).
  */
 const retouchViaPatchExtraction = async (file: File, prompt: string): Promise<{ file: File }> => {
     const bbox = await detectObjectBoundingBox(file, prompt);
@@ -942,32 +943,47 @@ const retouchViaPatchExtraction = async (file: File, prompt: string): Promise<{ 
         throw new Error('PATCH_FALLBACK_FAILED: nepodařilo se najít oblast v obrázku. Zkus specifičtější popis (např. "tmavý vzor na pravém předloktí").');
     }
 
-    const { patchFile, cropRect, bboxInPatch } = await cropPatchFromFile(file, bbox, 768, 0.3);
+    // Strategy: víc kontextu = lepší blend, méně kontextu = vyšší šance obejít safety
+    const PATCH_STRATEGIES: Array<{ target: number; padding: number; label: string }> = [
+        { target: 768, padding: 0.30, label: '768/0.30 (default, nejlepší blend)' },
+        { target: 640, padding: 0.15, label: '640/0.15 (mid context)' },
+        { target: 512, padding: 0.08, label: '512/0.08 (low context)' },
+        { target: 384, padding: 0.04, label: '384/0.04 (minimal context — max safety bypass)' },
+    ];
 
-    let retouchedPatch: File | null = null;
+    let lastError: Error | null = null;
 
-    // Vrstva 1: čistý patch s neutrálním promptem
-    try {
-        retouchedPatch = await retouchPatchWithNeutralPrompt(patchFile);
-    } catch (e: any) {
-        if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
-        console.warn('[retouch] Patch s neutrálním promptem blokován safety, zkouším blur+deblur fallback...');
-    }
+    for (const strategy of PATCH_STRATEGIES) {
+        const { patchFile, cropRect, bboxInPatch } = await cropPatchFromFile(file, bbox, strategy.target, strategy.padding);
+        console.log(`[retouch] Patch strategy: ${strategy.label}`);
 
-    // Vrstva 2: pre-blur bbox v patchi a požádej o deblur
-    if (!retouchedPatch) {
+        // Vrstva A: čistý patch s neutrálním promptem
         try {
-            const blurredPatch = await blurRegionInFile(patchFile, bboxInPatch, 45);
-            retouchedPatch = await retouchBlurredPatchAsDeblur(blurredPatch);
+            const retouchedPatch = await retouchPatchWithNeutralPrompt(patchFile);
+            console.log(`[retouch] Neutral prompt prošel se strategií ${strategy.label}`);
+            const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
+            return { file: merged };
         } catch (e: any) {
             if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
-            console.warn('[retouch] I blur+deblur fallback blokován safety.');
-            throw new Error('PATCH_FALLBACK_FAILED: i lokální patch i blur+deblur byl blokován. Zkus masku (štětec) v Retouch módu.');
+            lastError = e;
+            console.warn(`[retouch] Neutral prompt blokován pro ${strategy.label}, zkouším blur+deblur...`);
+        }
+
+        // Vrstva B: pre-blur bbox v patchi → deblur prompt
+        try {
+            const blurredPatch = await blurRegionInFile(patchFile, bboxInPatch, 50);
+            const retouchedPatch = await retouchBlurredPatchAsDeblur(blurredPatch);
+            console.log(`[retouch] Blur+deblur prošel se strategií ${strategy.label}`);
+            const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
+            return { file: merged };
+        } catch (e: any) {
+            if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
+            lastError = e;
+            console.warn(`[retouch] Blur+deblur blokován pro ${strategy.label}, zkouším menší patch...`);
         }
     }
 
-    const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
-    return { file: merged };
+    throw new Error('PATCH_FALLBACK_FAILED: Gemini blokuje všechny velikosti patche i s blur+deblur. Fotka má příliš mnoho safety triggerů (kombinace prádlo + tetování + póza). Zkus masku (štětec) v Retouch módu — namaluj přesně přes tetování a aplikuj.');
 };
 
 /**
