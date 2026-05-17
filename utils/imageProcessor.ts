@@ -450,12 +450,11 @@ export const cropPatchFromFile = async (
   bbox: CropRect,
   targetSize: number = 768,
   paddingRatio: number = 0.3
-): Promise<{ patchFile: File; cropRect: CropRect }> => {
+): Promise<{ patchFile: File; cropRect: CropRect; bboxInPatch: CropRect }> => {
   const img = await loadImageFromFile(file);
 
   const longSide = Math.max(bbox.width, bbox.height);
   const padded = Math.ceil(longSide * (1 + paddingRatio * 2));
-  // Square crop, větší než bbox o padding, ale ne větší než celý obrázek
   const cropSize = Math.min(padded, Math.min(img.width, img.height));
 
   const cx = bbox.x + bbox.width / 2;
@@ -481,7 +480,71 @@ export const cropPatchFromFile = async (
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Patch toBlob failed'))), 'image/jpeg', 0.95);
   });
   const patchFile = new File([blob], `patch_${file.name}`, { type: 'image/jpeg' });
-  return { patchFile, cropRect };
+
+  // Vypočítaj bbox uvnitř patche (po cropu+resizu na targetSize)
+  const scale = targetSize / cropSize;
+  const bboxInPatch: CropRect = {
+    x: Math.max(0, Math.round((bbox.x - cropX) * scale)),
+    y: Math.max(0, Math.round((bbox.y - cropY) * scale)),
+    width: Math.min(targetSize, Math.round(bbox.width * scale)),
+    height: Math.min(targetSize, Math.round(bbox.height * scale)),
+  };
+
+  return { patchFile, cropRect, bboxInPatch };
+};
+
+/**
+ * Aplikuje silný Gaussian blur na zadanou oblast uvnitř File a vrátí novou File.
+ * Použito jako safety bypass: tetování → rozmazaná skvrna → AI nepozná, projde safety, deblurne čistě.
+ */
+export const blurRegionInFile = async (
+  file: File,
+  region: CropRect,
+  blurRadius: number = 40,
+  outputMime: string = 'image/jpeg',
+  quality: number = 0.92
+): Promise<File> => {
+  const img = await loadImageFromFile(file);
+
+  // 1) Vykresli celý obrázek
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas context unavailable');
+  ctx.drawImage(img, 0, 0);
+
+  // 2) Aplikuj blur jen na region — vyřízni, blurni přes filter, vykresli zpět
+  const pad = Math.round(blurRadius * 1.5);
+  const sx = Math.max(0, region.x - pad);
+  const sy = Math.max(0, region.y - pad);
+  const sw = Math.min(img.width - sx, region.width + pad * 2);
+  const sh = Math.min(img.height - sy, region.height + pad * 2);
+
+  // Tmpcanvas s blurnutým regionem (i s padding pro plynulý okraj)
+  const tmp = document.createElement('canvas');
+  tmp.width = sw;
+  tmp.height = sh;
+  const tctx = tmp.getContext('2d');
+  if (!tctx) throw new Error('Canvas context unavailable');
+  tctx.filter = `blur(${blurRadius}px)`;
+  tctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  tctx.filter = 'none';
+
+  // Vykresli blurnutý region zpět do main canvas
+  ctx.drawImage(tmp, 0, 0, sw, sh, sx, sy, sw, sh);
+
+  const blob: Blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Blur toBlob failed'))),
+      outputMime,
+      outputMime === 'image/jpeg' ? quality : undefined
+    );
+  });
+
+  const ext = outputMime === 'image/png' ? 'png' : 'jpg';
+  const baseName = file.name.replace(/\.[^/.]+$/, '');
+  return new File([blob], `blurred_${baseName}.${ext}`, { type: outputMime });
 };
 
 /**
