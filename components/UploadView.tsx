@@ -26,6 +26,10 @@ const UploadView: React.FC<UploadViewProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
+  // RAW soubory čekající na konverzi. showDirectoryPicker vyžaduje čerstvou
+  // user activation — z change eventu file inputu ho volat NEJDE (SecurityError),
+  // proto mezikrok s tlačítkem: klik = nová aktivace = picker projde.
+  const [pendingRawFiles, setPendingRawFiles] = useState<File[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -45,7 +49,7 @@ const UploadView: React.FC<UploadViewProps> = ({
     e.stopPropagation();
   }, []);
 
-  const processFiles = async (incomingFiles: File[]) => {
+  const processFiles = (incomingFiles: File[]) => {
       const rawFiles = incomingFiles.filter(f => isRawFile(f));
       const normalFiles = incomingFiles.filter(f => !isRawFile(f));
 
@@ -54,64 +58,82 @@ const UploadView: React.FC<UploadViewProps> = ({
           onFilesSelected(normalFiles);
       }
 
-      // RAW soubory - výběr složky → konverze → uložení
+      // RAW soubory → mezikrok s volbou (konverze startuje až kliknutím)
       if (rawFiles.length > 0) {
-          // @ts-ignore - File System Access API
-          if (!window.showDirectoryPicker) {
-              if (addNotification) addNotification('Výběr složky není v tomto prostředí podporován.', 'error');
-              return;
-          }
+          setPendingRawFiles(rawFiles);
+      }
+  };
 
-          let dirHandle: any;
+  const convertRawFiles = async (rawFiles: File[], dirHandle: any | null) => {
+      setPendingRawFiles(null);
+      setIsProcessing(true);
+      const convertedFiles: File[] = [];
+      let errors = 0;
+
+      for (let i = 0; i < rawFiles.length; i++) {
+          const file = rawFiles[i];
+          setProcessingStatus(`${t.upload_raw_converting}: ${file.name} (${i + 1}/${rawFiles.length})`);
           try {
-              // @ts-ignore
-              dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-          } catch (e: any) {
-              if (e.name === 'AbortError') return; // zrušeno uživatelem
-              if (addNotification) addNotification('Nepodařilo se otevřít složku.', 'error');
-              return;
-          }
+              const convertedFile = await processRawFile(file);
 
-          setIsProcessing(true);
-          const convertedFiles: File[] = [];
-          let errors = 0;
-
-          for (let i = 0; i < rawFiles.length; i++) {
-              const file = rawFiles[i];
-              setProcessingStatus(`${t.upload_raw_converting}: ${file.name} (${i + 1}/${rawFiles.length})`);
-              try {
-                  const convertedFile = await processRawFile(file);
-
-                  // Uložit do vybrané složky
+              if (dirHandle) {
                   const fh = await dirHandle.getFileHandle(convertedFile.name, { create: true });
                   const writable = await fh.createWritable();
                   await writable.write(convertedFile);
                   await writable.close();
-
-                  convertedFiles.push(convertedFile);
-              } catch (error: any) {
-                  errors++;
-                  if (addNotification) {
-                      addNotification(`${file.name}: ${error.message || 'Konverze selhala'}`, 'error');
-                  }
               }
-          }
 
-          setIsProcessing(false);
-          setProcessingStatus('');
-
-          if (convertedFiles.length > 0) {
+              convertedFiles.push(convertedFile);
+          } catch (error: any) {
+              errors++;
               if (addNotification) {
-                  addNotification(`${convertedFiles.length} RAW → JPEG uloženo do ${dirHandle.name}/`, 'info');
-              }
-              onFilesSelected(convertedFiles);
-          } else if (errors > 0) {
-              if (addNotification) {
-                  addNotification('Konverze RAW souborů selhala.', 'error');
+                  addNotification(`${file.name}: ${error.message || 'Konverze selhala'}`, 'error');
               }
           }
       }
+
+      setIsProcessing(false);
+      setProcessingStatus('');
+
+      if (convertedFiles.length > 0) {
+          if (addNotification) {
+              addNotification(
+                  dirHandle
+                      ? `${convertedFiles.length} RAW → JPEG uloženo do ${dirHandle.name}/`
+                      : `${convertedFiles.length} RAW → JPEG převedeno.`,
+                  'info'
+              );
+          }
+          onFilesSelected(convertedFiles);
+      } else if (errors > 0) {
+          if (addNotification) {
+              addNotification('Konverze RAW souborů selhala.', 'error');
+          }
+      }
   };
+
+  // Klik na tlačítko = čerstvá user activation, tady už picker projde.
+  const handleConvertWithFolder = async () => {
+      if (!pendingRawFiles) return;
+      let dirHandle: any;
+      try {
+          // @ts-ignore - File System Access API
+          dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (e: any) {
+          if (e.name === 'AbortError') return; // zrušeno uživatelem, mezikrok zůstává
+          if (addNotification) addNotification('Nepodařilo se otevřít složku.', 'error');
+          return;
+      }
+      await convertRawFiles(pendingRawFiles, dirHandle);
+  };
+
+  const handleConvertOnly = () => {
+      if (!pendingRawFiles) return;
+      convertRawFiles(pendingRawFiles, null);
+  };
+
+  // @ts-ignore - File System Access API
+  const folderPickerSupported = typeof window !== 'undefined' && !!window.showDirectoryPicker;
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -129,6 +151,8 @@ const UploadView: React.FC<UploadViewProps> = ({
       const files: File[] = Array.from(e.target.files);
       processFiles(files);
     }
+    // Reset — jinak opakovaný výběr stejných souborů nevystřelí change event
+    e.target.value = '';
   };
   
   const onButtonClick = () => {
@@ -151,6 +175,36 @@ const UploadView: React.FC<UploadViewProps> = ({
                  </div>
                  <h3 className="text-2xl font-bold text-white mb-2">{t.upload_processing}</h3>
                  <p className="text-gray-400 font-mono text-xs">{processingStatus}</p>
+            </div>
+        ) : pendingRawFiles ? (
+            <div className="fm-gradient-border glass-panel max-w-xl w-full p-10 rounded-3xl text-center animate-fade-in">
+                <h3 className="text-2xl font-bold text-white mb-3">{t.upload_raw_pending_title}</h3>
+                <p className="text-sm text-gray-400 mb-2">
+                    {pendingRawFiles.length}× RAW ({pendingRawFiles.slice(0, 3).map(f => f.name).join(', ')}{pendingRawFiles.length > 3 ? '…' : ''})
+                </p>
+                <p className="text-sm text-gray-400 mb-8 leading-relaxed">{t.upload_raw_pending_desc}</p>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                    {folderPickerSupported && (
+                        <button
+                            onClick={handleConvertWithFolder}
+                            className="px-6 py-3 bg-white text-black text-sm font-bold rounded-xl hover:bg-gray-200 transition-all"
+                        >
+                            {t.upload_raw_convert_save}
+                        </button>
+                    )}
+                    <button
+                        onClick={handleConvertOnly}
+                        className="px-6 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1] hover:border-fm-blue/60 hover:bg-fm-blue/10 text-sm font-bold text-white transition-all"
+                    >
+                        {t.upload_raw_convert_only}
+                    </button>
+                    <button
+                        onClick={() => setPendingRawFiles(null)}
+                        className="px-6 py-3 rounded-xl text-sm font-bold text-gray-500 hover:text-white transition-colors"
+                    >
+                        {t.upload_raw_cancel}
+                    </button>
+                </div>
             </div>
         ) : (
             <div 

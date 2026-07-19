@@ -549,6 +549,11 @@ const translations = {
     upload_support_detail: "Podporujeme <strong>JPG, PNG, WEBP</strong> a profesionální <strong>RAW</strong> formáty (CR2, NEF, ARW) s automatickou konverzí.",
     upload_select_files: "Vybrat soubory",
     upload_raw_converting: "Konverze RAW",
+    upload_raw_pending_title: "RAW soubory ke konverzi",
+    upload_raw_pending_desc: "Převedeme je do JPEG. Chceš kopie zároveň uložit do složky na disku, nebo jen pokračovat v aplikaci?",
+    upload_raw_convert_save: "Vybrat složku a uložit JPEGy",
+    upload_raw_convert_only: "Převést jen do aplikace",
+    upload_raw_cancel: "Zrušit",
 
     // Feedback
     feedback_title: "Hodnocení AI výsledku",
@@ -1110,6 +1115,11 @@ const translations = {
     upload_support_detail: "We support <strong>JPG, PNG, WEBP</strong> and professional <strong>RAW</strong> formats (CR2, NEF, ARW) with automatic conversion.",
     upload_select_files: "Select Files",
     upload_raw_converting: "RAW conversion",
+    upload_raw_pending_title: "RAW files ready to convert",
+    upload_raw_pending_desc: "We'll convert them to JPEG. Do you also want to save copies to a folder on disk, or just continue in the app?",
+    upload_raw_convert_save: "Pick a folder and save JPEGs",
+    upload_raw_convert_only: "Convert in app only",
+    upload_raw_cancel: "Cancel",
 
     // Feedback
     feedback_title: "Rate AI result",
