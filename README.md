@@ -8,6 +8,11 @@
   <p>AI fotostudio pro fotografy přímo v prohlížeči — žánrový AI culling, editor, retuš,<br />RAW konverze, klientské galerie a CRM v jedné aplikaci.</p>
 
   <p>
+    <a href="README.md"><img src="https://img.shields.io/badge/README-%C4%8Cesky-2f6fe0?style=for-the-badge" alt="Čeština" /></a>
+    <a href="README.en.md"><img src="https://img.shields.io/badge/README-English-555?style=for-the-badge" alt="English" /></a>
+  </p>
+
+  <p>
     <img src="https://img.shields.io/badge/React-19-2f6fe0" alt="React 19" />
     <img src="https://img.shields.io/badge/TypeScript-5.8-2f6fe0" alt="TypeScript" />
     <img src="https://img.shields.io/badge/Vite-6-b01ecb" alt="Vite 6" />
