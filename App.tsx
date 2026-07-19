@@ -7,6 +7,7 @@ const DashboardView = lazy(() => import('./components/DashboardView'));
 const UploadView = lazy(() => import('./components/UploadView'));
 const EditorView = lazy(() => import('./components/EditorView'));
 const BatchView = lazy(() => import('./components/BatchView'));
+const CullingView = lazy(() => import('./components/CullingView'));
 const AICommandCenter = lazy(() => import('./components/ai/AICommandCenter'));
 const GenerateImageView = lazy(() => import('./components/GenerateImageView'));
 const RAWConverterView = lazy(() => import('./components/RAWConverterView'));
@@ -252,7 +253,7 @@ function App() {
     const results = await Promise.allSettled(
       selectedFiles.map(async (file): Promise<UploadedFile | null> => {
         if (file.size === 0) {
-          addNotification(`Soubor ${file.name} je pr zdnì (0 bajt…). Zkontrolujte, zda je sta§en offline.`, 'error');
+          addNotification(`Soubor ${file.name} je prázdný (0 bajtů). Zkontrolujte, zda je stažen offline.`, 'error');
           return null;
         }
 
@@ -362,34 +363,6 @@ function App() {
 
   const handleFilesSelected = useCallback(async (selectedFiles: File[]) => {
     const validFiles = await prepareUploadedFiles(selectedFiles);
-    /*
-    const results = await Promise.allSettled(
-      selectedFiles.map(async (file): Promise<UploadedFile | null> => {
-        if (file.size === 0) {
-            addNotification(`Soubor ${file.name} je prázdný (0 bajtů). Zkontrolujte, zda je stažen offline.`, 'error');
-            return null;
-        }
-        try {
-          const normalizedFile = await normalizeImageFile(file);
-          const previewUrl = URL.createObjectURL(normalizedFile);
-          return {
-            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            file: normalizedFile,
-            previewUrl: previewUrl,
-            originalPreviewUrl: previewUrl,
-          };
-        } catch (error) {
-          console.error('File processing error:', error);
-          addNotification(`${t.msg_error}: ${file.name}`, 'error');
-          return null;
-        }
-      })
-    );
-
-    const validFiles = results
-      .filter((r): r is PromiseFulfilledResult<UploadedFile> => r.status === 'fulfilled' && r.value !== null)
-      .map(r => r.value);
-    */
 
     if (validFiles.length > 0) {
       setFiles(
@@ -522,7 +495,20 @@ function App() {
       case 'batch':
         return (
           <div className="flex-1 flex flex-col h-full">
-            <BatchView {...headerProps} files={files} onBatchComplete={handleBatchComplete} addNotification={addNotification} onSetFiles={setFiles} mode={activeAction?.action === 'culling' ? 'culling' : 'batch'} />
+            {activeAction?.action === 'culling' ? (
+              <CullingView
+                {...headerProps}
+                files={files}
+                onSetFiles={setFiles}
+                addNotification={addNotification}
+                onDone={() => {
+                  setView('editor');
+                  setActiveAction({ action: 'base-edit', timestamp: Date.now() });
+                }}
+              />
+            ) : (
+              <BatchView {...headerProps} files={files} onBatchComplete={handleBatchComplete} addNotification={addNotification} onSetFiles={setFiles} mode="batch" />
+            )}
             {stepper}
           </div>
         );

@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogoIcon, AutopilotIcon, EraserIcon, BatchIcon, GenerateImageIcon } from './icons';
+import { AutopilotIcon, EraserIcon, BatchIcon, GenerateImageIcon } from './icons';
 import { useTranslation } from '../contexts/LanguageContext';
 import Button from './common/Button';
 
@@ -21,15 +21,17 @@ const HomeView: React.FC<HomeViewProps> = ({ onEnterApp }) => {
     <div className="min-h-screen w-full flex flex-col items-center justify-center p-6 bg-void text-text-primary">
       <div className="relative z-10 flex flex-col items-center max-w-5xl w-full">
         <div className="animate-fade-in-up flex flex-col items-center text-center">
-          <div className="p-4 border border-border-subtle mb-8">
-            <LogoIcon className="w-20 h-20 text-accent" />
-          </div>
+          <img src="/logo-mark.png" alt="FrameMind" className="w-24 h-24 object-contain mb-8" />
 
-          <div className="mb-6">
+          <div className="mb-4">
             <h1 className="heading text-5xl md:text-7xl tracking-tight">
-              Fotograf AI
+              FrameMind <span className="fm-gradient-text">Studio</span>
             </h1>
           </div>
+
+          <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-text-secondary mb-6">
+            Propojujeme snímky s inteligencí
+          </p>
 
           <p className="max-w-xl text-sm md:text-base text-text-secondary leading-relaxed font-medium">
             {t.home_subtitle}

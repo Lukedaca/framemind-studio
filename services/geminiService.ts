@@ -5,6 +5,9 @@ import type {
     AutoCropResult,
     AutoCropSuggestion,
     CropCoordinates,
+    CullingAiVerdict,
+    CullingGenre,
+    CullingMetrics,
     Language,
     QualityAssessment,
     YouTubeThumbnailTemplate,
@@ -804,6 +807,180 @@ export const assessQuality = async (file: File): Promise<QualityAssessment> => {
             config: { responseMimeType: 'application/json' }
         });
         return safeJsonParse<QualityAssessment>(response.text, 'Quality assessment failed');
+    });
+};
+
+// --- FrameMind AI Culling (žánrově adaptivní verdikty) ---
+
+const CULLING_MODEL = 'gemini-3.1-flash-preview';
+
+const CULLING_SYSTEM_PROMPT = `Jsi expert na fotografický culling pro profesionální fotografy.
+Tvůj úkol: podívej se na jednu fotku, urči její žánr a rozhodni "keep", "review" nebo "reject" PODLE STANDARDŮ TOHO ŽÁNRU. Univerzální metr neexistuje — co je vada v produktovce, je styl ve streetu.
+
+Žánrová kritéria:
+- sport: rozhoduje vrchol akce a ostrý hlavní subjekt. Pohybová neostrost pozadí (panning) je plus, ne vada. Vyšší šum toleruj (haly, večerní zápasy). Zavřené oči neřeš, pokud moment funguje.
+- portrait: ostré a OTEVŘENÉ oči jsou kritické. Výraz, práce se světlem, tóny pleti. Zavřené oči = reject, pokud nejsou zjevný záměr.
+- wedding: emoce a moment mají přednost před technickou dokonalostí. Klíčové osoby musí fungovat. Zavřené oči vadí u pózovaných, méně u reportážních momentů.
+- product: tvrdá technická kritéria — celková ostrost, přesná expozice, čisté pozadí, žádný rušivý šum.
+- landscape: ostrost celé scény, rovný horizont, expozice oblohy (přepálené nebe je vážná vada), kompozice.
+- street: moment, příběh a kompozice před technikou. Zrno a lehká neostrost mohou být součást stylu.
+- wildlife: rozhoduje ostré oko zvířete. Zachycené chování nebo akce je plus.
+- event: reportáž — momenty, výrazy, atmosféra; technická kritéria mírněji.
+- other: obecná profesionální kritéria.
+
+Kategorie verdiktu:
+- keep: podle žánrových kritérií silná fotka bez zásadních problémů
+- review: hraniční — opravitelné vady, téměř duplicita lepšího záběru, nebo potřeba lidského úsudku
+- reject: selhává v tom, na čem v daném žánru záleží
+
+Dostáváš: samotný obrázek plus předpočítané heuristické metriky (ostrost, expozice, kontrast, šum, kompozice, přepaly světel/stínů, příznak skupiny duplicit). Ber metriky jako podpůrný důkaz — tvůj vizuální úsudek je primární. Pokud dostaneš záměr fotografa, má při rozhodování vysokou váhu.
+
+Pravidla:
+- Hodnoty "decision" a "genre" zůstávají VŽDY anglicky, přesně z povolených hodnot.
+- aiScore musí odrážet celkovou kvalitu v kontextu žánru, ne jen technické metriky.
+- "summary" max 120 znaků, česky, žádné marketingové fráze.
+- "reasons" a "risks" každé max 4 položky, každá max 60 znaků, česky.
+- Pokud obrázek chybí nebo je nečitelný, nastav decision na "review" a vysvětli v risks.`;
+
+const CULLING_GENRE_VALUES: CullingGenre[] = ['sport', 'portrait', 'wedding', 'product', 'landscape', 'street', 'wildlife', 'event', 'other'];
+
+const CULLING_RESPONSE_SCHEMA = {
+    type: 'object',
+    properties: {
+        decision: { type: 'string', enum: ['keep', 'review', 'reject'] },
+        genre: { type: 'string', enum: CULLING_GENRE_VALUES },
+        aiScore: { type: 'integer' },
+        summary: { type: 'string' },
+        reasons: { type: 'array', items: { type: 'string' } },
+        risks: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['decision', 'genre', 'aiScore', 'summary', 'reasons', 'risks'],
+} as any;
+
+const GENRE_DETECT_PROMPT = `Jsi expert na fotografii. Dostaneš 1-3 náhledy ze STEJNÉHO focení. Urči převažující žánr celé sady.
+Hodnota "genre" zůstává anglicky. "note" je jedna krátká česká věta (max 100 znaků), co na fotkách vidíš.`;
+
+const GENRE_DETECT_SCHEMA = {
+    type: 'object',
+    properties: {
+        genre: { type: 'string', enum: CULLING_GENRE_VALUES },
+        confidence: { type: 'integer' },
+        note: { type: 'string' },
+    },
+    required: ['genre', 'confidence', 'note'],
+} as any;
+
+const dataUrlToInlinePart = (dataUrl: string) => {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(dataUrl);
+    if (!match) throw new Error('Invalid thumbnail data URL');
+    return { inlineData: { mimeType: match[1], data: match[2] } };
+};
+
+export const detectBatchGenre = async (
+    thumbnailDataUrls: string[]
+): Promise<{ genre: CullingGenre; confidence: number; note: string }> => {
+    return withRetry(async () => {
+        const ai = getGenAI();
+        const thumbs = thumbnailDataUrls.slice(0, 3).map(dataUrlToInlinePart);
+        const response = await ai.models.generateContent({
+            model: CULLING_MODEL,
+            contents: {
+                parts: [
+                    { text: `${GENRE_DETECT_PROMPT}\n\nNáhledy z jednoho focení (${thumbs.length}). Urči žánr sady.` },
+                    ...thumbs,
+                ],
+            },
+            config: {
+                temperature: 0.1,
+                maxOutputTokens: 1024,
+                responseMimeType: 'application/json',
+                responseSchema: GENRE_DETECT_SCHEMA,
+            },
+        });
+        const parsed = safeJsonParse<{ genre: CullingGenre; confidence: number; note: string }>(
+            response.text,
+            'Genre detection failed'
+        );
+        return {
+            genre: CULLING_GENRE_VALUES.includes(parsed.genre) ? parsed.genre : 'other',
+            confidence: Math.max(0, Math.min(100, Math.round(Number(parsed.confidence)) || 0)),
+            note: typeof parsed.note === 'string' ? parsed.note.slice(0, 140) : '',
+        };
+    });
+};
+
+export interface CullingVerdictContext {
+    filename: string;
+    metrics: CullingMetrics;
+    heuristicScore: number;
+    duplicateGroupId?: string;
+    isBestInGroup?: boolean;
+    genre?: CullingGenre | null;
+    brief?: string;
+}
+
+export const getCullingVerdict = async (
+    thumbnailDataUrl: string,
+    context: CullingVerdictContext
+): Promise<CullingAiVerdict> => {
+    return withRetry(async () => {
+        const ai = getGenAI();
+        const m = context.metrics;
+        const lines = [
+            `Filename: ${context.filename.slice(0, 200)}`,
+            'Heuristic metrics (0-1 unless noted):',
+            `- sharpness: ${m.sharpnessScore.toFixed(2)}`,
+            `- exposure: ${m.exposureScore.toFixed(2)}`,
+            `- contrast: ${m.contrastScore.toFixed(2)}`,
+            `- noise (1=clean): ${m.noiseScore.toFixed(2)}`,
+            `- composition: ${m.compositionScore.toFixed(2)}`,
+            `- highlight clipping (0=none): ${m.highlightClipping.toFixed(2)}`,
+            `- shadow clipping (0=none): ${m.shadowClipping.toFixed(2)}`,
+            `- heuristic finalScore: ${Math.round(context.heuristicScore)}/100`,
+            context.duplicateGroupId
+                ? `- duplicate group: ${context.duplicateGroupId}${context.isBestInGroup ? ' (best in group)' : ' (not best)'}`
+                : null,
+            context.genre
+                ? `Žánr celé sady byl klasifikován jako: ${context.genre}. Ber jako výchozí; pokud tahle konkrétní fotka zjevně patří jinam, urči vlastní žánr.`
+                : null,
+            // Brief fotografa je length-capped — injection guard proti přetlačení promptu.
+            context.brief?.trim()
+                ? `Záměr fotografa pro toto focení (zohledni s vysokou vahou): ${context.brief.trim().slice(0, 500)}`
+                : null,
+            '',
+            'Podívej se na obrázek a vrať JSON verdikt.',
+        ].filter(Boolean).join('\n');
+
+        const response = await ai.models.generateContent({
+            model: CULLING_MODEL,
+            contents: {
+                parts: [
+                    { text: `${CULLING_SYSTEM_PROMPT}\n\n${lines}` },
+                    dataUrlToInlinePart(thumbnailDataUrl),
+                ],
+            },
+            config: {
+                temperature: 0.2,
+                maxOutputTokens: 2048,
+                responseMimeType: 'application/json',
+                responseSchema: CULLING_RESPONSE_SCHEMA,
+            },
+        });
+
+        const raw = safeJsonParse<CullingAiVerdict>(response.text, 'Culling verdict failed');
+        const decision = ['keep', 'review', 'reject'].includes(raw.decision) ? raw.decision : 'review';
+        return {
+            decision,
+            genre: CULLING_GENRE_VALUES.includes(raw.genre) ? raw.genre : 'other',
+            aiScore: Math.max(0, Math.min(100, Math.round(Number(raw.aiScore)) || 0)),
+            summary: typeof raw.summary === 'string' ? raw.summary.slice(0, 180) : '',
+            reasons: Array.isArray(raw.reasons)
+                ? raw.reasons.filter((item): item is string => typeof item === 'string').slice(0, 4).map((item) => item.slice(0, 80))
+                : [],
+            risks: Array.isArray(raw.risks)
+                ? raw.risks.filter((item): item is string => typeof item === 'string').slice(0, 4).map((item) => item.slice(0, 80))
+                : [],
+        };
     });
 };
 

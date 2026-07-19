@@ -59,21 +59,25 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const data = getInitialData();
     setClients(data.clients);
     setProjects(data.projects);
+    setHydrated(true);
   }, []);
 
+  // Ukládat až po hydrataci — jinak první render přepíše storage prázdnými poli.
   useEffect(() => {
+    if (!hydrated) return;
     const payload: StoredData = { clients, projects };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (error) {
       console.error('Failed to save CRM storage.', error);
     }
-  }, [clients, projects]);
+  }, [clients, projects, hydrated]);
 
   const currentProject = useMemo(() => {
     if (!currentProjectId) return null;

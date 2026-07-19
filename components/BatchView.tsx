@@ -1,11 +1,10 @@
 
 import React, { useState, useMemo } from 'react';
-import type { UploadedFile, EnhancementMode } from '../types';
-import { analyzeImage, autopilotImage, assessQuality, enhanceFaces } from '../services/geminiService';
-import { AutopilotIcon, SparklesIcon, ChevronDoubleLeftIcon, StackIcon, CheckCircleIcon, XCircleIcon, FaceIcon } from './icons';
+import type { UploadedFile } from '../types';
+import { enhanceFaces } from '../services/geminiService';
+import { SparklesIcon, StackIcon, CheckCircleIcon, FaceIcon } from './icons';
 import Header from './Header';
 import { useTranslation } from '../contexts/LanguageContext';
-import { runAutopilot } from '../services/aiAutopilot';
 
 interface BatchViewProps {
   files: UploadedFile[];
@@ -41,7 +40,7 @@ const groupFilesByTime = (files: UploadedFile[], thresholdMs = 2000) => {
     return groups;
 };
 
-const BatchView: React.FC<BatchViewProps> = ({ files, onBatchComplete, onSetFiles, addNotification, title, onToggleSidebar, onOpenApiKeyModal, mode = 'batch' }) => {
+const BatchView: React.FC<BatchViewProps> = ({ files, onBatchComplete, onSetFiles, addNotification, title, onToggleSidebar, onOpenApiKeyModal }) => {
   const { t, language } = useTranslation();
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set(files.map(f => f.id)));
   const [isProcessing, setIsProcessing] = useState(false);
@@ -74,37 +73,6 @@ const BatchView: React.FC<BatchViewProps> = ({ files, onBatchComplete, onSetFile
 
   // --- AI ACTIONS ---
 
-  const handleRunCulling = async () => {
-      if (files.length === 0) return;
-      setProcessingAction(t.batch_analyzing);
-      setIsProcessing(true);
-      setProgress({ current: 0, total: files.length });
-      
-      const failures: string[] = [];
-      for (const file of files) {
-          try {
-              // Simulation of analyzing loop if assessment already exists to save tokens
-              if (file.assessment) {
-                  setProgress(prev => ({ ...prev, current: prev.current + 1 }));
-                  continue; 
-              }
-              
-              const assessment = await assessQuality(file.file);
-              onSetFiles(prev => prev.map(f => 
-                  f.id === file.id ? { ...f, assessment, isAnalyzing: false } : f
-              ), 'AI Culling');
-          } catch (e) {
-              console.error(`Failed to assess ${file.file.name}:`, e);
-              failures.push(file.file.name);
-          }
-          finally { setProgress(prev => ({ ...prev, current: prev.current + 1 })); }
-      }
-      setIsProcessing(false);
-      setProcessingAction(null);
-      if (failures.length > 0) addNotification(`${failures.length} analyses failed`, 'error');
-      else addNotification('AI Culling Complete: Quality scores assigned.', 'info');
-  };
-
   const handleSmartRetouch = async () => {
       if (selectedFiles.length === 0) return;
       setProcessingAction(t.batch_retouching);
@@ -131,23 +99,12 @@ const BatchView: React.FC<BatchViewProps> = ({ files, onBatchComplete, onSetFile
       }
   };
 
-  const handleAutoReject = () => {
-      const rejectedIds = new Set<string>();
-      files.forEach(f => {
-          if (f.assessment && f.assessment.score < 40) rejectedIds.add(f.id);
-      });
-      // Invert selection: Select only good ones
-      const goodIds = new Set(files.filter(f => !rejectedIds.has(f.id)).map(f => f.id));
-      setSelectedFileIds(goodIds);
-      addNotification(`${t.batch_auto_rejected} ${rejectedIds.size} ${t.batch_low_quality}`, 'info');
-  };
-
   return (
     <div className="w-full h-full flex flex-col bg-[#050505] text-white overflow-hidden">
-      <Header 
-        title={mode === 'culling' ? 'AI Smart Culling' : 'Batch Studio'} 
-        onToggleSidebar={onToggleSidebar} 
-        onOpenApiKeyModal={onOpenApiKeyModal} 
+      <Header
+        title="Batch Studio"
+        onToggleSidebar={onToggleSidebar}
+        onOpenApiKeyModal={onOpenApiKeyModal}
       />
       
       <div className="flex-1 flex overflow-hidden">
@@ -159,45 +116,23 @@ const BatchView: React.FC<BatchViewProps> = ({ files, onBatchComplete, onSetFile
             <div className="bg-[#151515] p-5 rounded-2xl shadow-lg border border-[#222]">
                 <h2 className="text-sm font-bold text-white uppercase tracking-wider mb-2 flex items-center gap-2">
                     <SparklesIcon className="w-4 h-4 text-cyan-400" />
-                    {mode === 'culling' ? 'Culling Mode' : 'Batch Mode'}
+                    Batch Mode
                 </h2>
-                <p className="text-xs text-gray-400 leading-relaxed">
-                    {mode === 'culling'
-                        ? t.batch_culling_desc
-                        : t.batch_batch_desc}
-                </p>
+                <p className="text-xs text-gray-400 leading-relaxed">{t.batch_batch_desc}</p>
             </div>
 
             {/* Actions */}
             <div className="space-y-3">
                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest pl-1">AI Tools</h3>
                 
-                {mode === 'culling' ? (
-                    <>
-                        <button
-                            onClick={handleRunCulling}
-                            disabled={isProcessing}
-                            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-900 to-blue-900 border border-blue-800/50 hover:border-blue-500 text-white text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 transition-all hover:shadow-[0_0_15px_rgba(59,130,246,0.5)]"
-                        >
-                            <SparklesIcon className="w-4 h-4" /> {t.batch_analyze_quality}
-                        </button>
-                        
-                        <div className="grid grid-cols-2 gap-2">
-                             <button onClick={() => setSelectedFileIds(new Set(files.map(f => f.id)))} className="py-2 bg-[#1a1a1a] rounded-lg border border-[#333] hover:bg-[#252525] text-[10px] text-gray-300 font-bold uppercase">{t.batch_select_all_btn}</button>
-                             <button onClick={handleAutoReject} className="py-2 bg-[#1a1a1a] rounded-lg border border-[#333] hover:border-red-900 hover:text-red-400 text-[10px] text-gray-300 font-bold uppercase">Auto-Reject Low</button>
-                        </div>
-                    </>
-                ) : (
-                    <>
-                         <button 
-                            onClick={handleSmartRetouch} 
-                            disabled={isProcessing || selectedFiles.length === 0}
-                            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-pink-900 to-rose-900 border border-rose-800/50 hover:border-rose-500 text-white text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 transition-all hover:shadow-[0_0_15px_rgba(244,63,94,0.5)]"
-                        >
-                            <FaceIcon className="w-4 h-4" /> Smart Portrait Retouch
-                        </button>
-                    </>
-                )}
+                <button
+                    onClick={handleSmartRetouch}
+                    disabled={isProcessing || selectedFiles.length === 0}
+                    className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-pink-900 to-rose-900 border border-rose-800/50 hover:border-rose-500 text-white text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 transition-all hover:shadow-[0_0_15px_rgba(244,63,94,0.5)]"
+                >
+                    <FaceIcon className="w-4 h-4" /> Smart Portrait Retouch
+                </button>
+                <button onClick={() => setSelectedFileIds(new Set(files.map(f => f.id)))} className="w-full py-2 bg-[#1a1a1a] rounded-lg border border-[#333] hover:bg-[#252525] text-[10px] text-gray-300 font-bold uppercase">{t.batch_select_all_btn}</button>
             </div>
 
             {/* Stats */}

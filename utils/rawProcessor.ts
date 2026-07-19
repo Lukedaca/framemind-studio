@@ -136,8 +136,9 @@ export const processRawFile = async (file: File, options: RawConvertOptions = DE
     const candidates: Candidate[] = [];
 
     // --- Method 1: exifr preview (full-size embedded JPEG) ---
+    // exifr full build má preview() za runtime, ale typové definice ho nedeklarují
     try {
-        const previewData = await exifr.preview(file);
+        const previewData = await (exifr as unknown as { preview(input: File): Promise<Uint8Array | undefined> }).preview(file);
         if (previewData && previewData.length > 1000) {
             const blob = new Blob([previewData], { type: 'image/jpeg' });
             const { valid, width, height } = await isValidImage(blob);

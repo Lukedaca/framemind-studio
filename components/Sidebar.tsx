@@ -12,7 +12,6 @@ import {
   GenerateImageIcon,
   ExportIcon,
   HistoryIcon,
-  LogoIcon,
   ChevronDoubleLeftIcon,
   StyleTransferIcon,
   BackgroundReplacementIcon,
@@ -122,13 +121,13 @@ const Sidebar = ({ isOpen, isCollapsed, onClose, onNavigate, onToggleCollapse, c
           <div className={`relative flex items-center h-20 border-b border-[#ffffff0a] flex-shrink-0 transition-all duration-300 ${isCollapsed ? 'justify-center px-0' : 'px-6'}`}>
             <button onClick={() => handleNavigation({ view: 'dashboard' })} className="flex items-center space-x-3 group w-full">
               <div className="relative">
-                <div className="absolute inset-0 bg-indigo-500 blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                <LogoIcon className="w-8 h-8 text-white relative z-10" />
+                <div className="absolute inset-0 bg-gradient-to-tr from-fm-magenta via-fm-blue to-fm-green blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                <img src="/logo-mark.png" alt="FrameMind" className="w-9 h-9 object-contain relative z-10" />
               </div>
               {!isCollapsed && (
                 <div className="flex-grow overflow-hidden text-left">
-                  <h1 className="text-base font-bold text-white tracking-tight leading-none">Fotograf AI</h1>
-                  <p className="text-[10px] text-gray-500 font-medium mt-1 tracking-wide">PRO STUDIO</p>
+                  <h1 className="text-base font-bold text-white tracking-tight leading-none">FrameMind <span className="fm-gradient-text">Studio</span></h1>
+                  <p className="text-[10px] text-gray-500 font-medium mt-1 tracking-wide">SNÍMKY S INTELIGENCÍ</p>
                 </div>
               )}
             </button>

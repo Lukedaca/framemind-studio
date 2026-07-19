@@ -8,7 +8,11 @@
   --bg-void: #030303;
   --bg-panel: #0a0a0a;
   --line-color: rgba(255, 255, 255, 0.08);
-  --accent-glow: rgba(99, 102, 241, 0.4);
+  /* FrameMind brand (paleta z loga) */
+  --fm-magenta: #b01ecb;
+  --fm-blue: #2f6fe0;
+  --fm-green: #1fc06b;
+  --accent-glow: rgba(47, 111, 224, 0.4);
 }
 
 body {
@@ -16,8 +20,20 @@ body {
   color: #ededed;
   font-family: 'Plus Jakarta Sans', sans-serif;
   overflow-x: hidden;
-  /* Noise Texture */
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+  /* Noise Texture + statický, klidný brand nádech v rozích (žádná animace) */
+  background-image:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E"),
+    radial-gradient(1100px 700px at 0% 0%, rgba(176, 30, 203, 0.07), transparent 60%),
+    radial-gradient(1100px 700px at 100% 100%, rgba(31, 192, 107, 0.06), transparent 60%);
+  background-attachment: fixed;
+}
+
+/* Brand gradient pro nadpisy a akcenty */
+.fm-gradient-text {
+  background: linear-gradient(100deg, var(--fm-magenta) 0%, var(--fm-blue) 50%, var(--fm-green) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* --- UTILITIES --- */
@@ -35,10 +51,10 @@ body {
 
 /* Active Nav Item Glow */
 .nav-item-active {
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.15) 0%, transparent 100%);
-  border-left: 2px solid #6366f1;
+  background: linear-gradient(90deg, rgba(47, 111, 224, 0.16) 0%, transparent 100%);
+  border-left: 2px solid var(--fm-blue);
   color: #fff;
-  text-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+  text-shadow: 0 0 15px rgba(47, 111, 224, 0.5);
 }
 
 /* TECH CARD (Simulated Concave/Cut Corners via visual hacks or clip-path) */
@@ -58,7 +74,7 @@ body {
   content: '';
   position: absolute;
   top: 0; left: 0; right: 0; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.5), transparent);
+  background: linear-gradient(90deg, transparent, rgba(176, 30, 203, 0.5), rgba(47, 111, 224, 0.5), rgba(31, 192, 107, 0.5), transparent);
   opacity: 0.5;
 }
 

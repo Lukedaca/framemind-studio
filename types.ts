@@ -11,6 +11,7 @@ export interface UploadedFile {
   socialContent?: SocialMediaContent;
   generatedVideo?: GeneratedVideo;
   assessment?: QualityAssessment;
+  culling?: CullingResult;
   category?: string;
 }
 
@@ -18,6 +19,68 @@ export interface QualityAssessment {
     score: number; // 0-100
     isBestPick: boolean;
     flags: string[]; // ['Blurry', 'Closed Eyes', 'Bad Exposure', 'Great Composition']
+}
+
+// --- AI Culling (FrameMind engine) ---
+
+export type CullingDecision = 'keep' | 'review' | 'reject';
+
+export type CullingGenre =
+  | 'sport'
+  | 'portrait'
+  | 'wedding'
+  | 'product'
+  | 'landscape'
+  | 'street'
+  | 'wildlife'
+  | 'event'
+  | 'other';
+
+export interface CullingMetrics {
+  hash: string;
+  meanLuma: number;
+  sharpnessScore: number; // 0-1
+  exposureScore: number; // 0-1
+  highlightClipping: number; // 0-1, podíl přepálených pixelů
+  shadowClipping: number; // 0-1
+  contrastScore: number; // 0-1
+  noiseScore: number; // 0-1, 1 = čistý
+  compositionScore: number; // 0-1
+}
+
+export interface CullingAiVerdict {
+  decision: CullingDecision;
+  genre: CullingGenre;
+  aiScore: number; // 0-100
+  summary: string;
+  reasons: string[];
+  risks: string[];
+}
+
+export type CullingAiStatus = 'idle' | 'pending' | 'done' | 'error';
+
+export interface CullingResult {
+  metrics: CullingMetrics;
+  finalScore: number; // 0-100 (žánrově vážený)
+  decision: CullingDecision;
+  manualDecision?: CullingDecision;
+  reasons: string[]; // překladové klíče cull_reason_* nebo AI texty
+  risks: string[];
+  aspectRatio: number;
+  duplicateGroupId?: string;
+  isBestInGroup?: boolean;
+  groupRank?: number;
+  genre?: CullingGenre;
+  ai?: CullingAiVerdict;
+  aiStatus: CullingAiStatus;
+  aiError?: string;
+}
+
+export interface BatchGenreInfo {
+  genre: CullingGenre;
+  confidence: number; // 0-100
+  note: string;
+  manual: boolean;
 }
 
 export interface SocialMediaContent {

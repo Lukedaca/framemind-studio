@@ -27,9 +27,9 @@ export default defineConfig(({ mode }) => {
         VitePWA({
           registerType: 'autoUpdate',
           manifest: {
-            name: 'Fotograf AI',
-            short_name: 'FotografAI',
-            description: 'AI-powered photo editor for photographers',
+            name: 'FrameMind Studio',
+            short_name: 'FrameMind',
+            description: 'AI fotostudio pro fotografy — žánrový culling, úpravy, RAW, galerie',
             theme_color: '#0a0a0a',
             background_color: '#0a0a0a',
             display: 'standalone',
