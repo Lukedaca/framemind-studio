@@ -987,7 +987,7 @@ Text: ${thumbnailText}${thumbnailReferenceFile ? '\n(Used visual reference)' : '
 
   if (!activeFile && !isYouTubeMode) {
     return (
-      <div className="flex-1 flex flex-col h-full bg-void">
+      <div className="flex-1 flex flex-col h-full">
          <Header title={trans.app_title} onToggleSidebar={props.onToggleSidebar} credits={credits} />
          <div className="flex-1 flex flex-col items-center justify-center text-text-secondary p-8 text-center">
             <div className="p-6 bg-surface mb-6 border border-border-subtle rounded-3xl">
@@ -1000,7 +1000,7 @@ Text: ${thumbnailText}${thumbnailReferenceFile ? '\n(Used visual reference)' : '
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-void overflow-hidden">
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
         {!isFocusMode && (
           <Header title={isYouTubeMode ? "YouTube Studio" : trans.nav_studio} onToggleSidebar={props.onToggleSidebar} credits={credits} onBuyCredits={props.onBuyCredits} />
         )}

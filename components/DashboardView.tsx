@@ -25,7 +25,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   const { t } = useTranslation();
 
   return (
-    <div className="w-full h-full flex flex-col bg-void text-white overflow-y-auto custom-scrollbar">
+    <div className="w-full h-full flex flex-col text-white overflow-y-auto custom-scrollbar">
       <Header
         title={t.nav_studio}
         onToggleSidebar={onToggleSidebar}

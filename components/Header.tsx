@@ -16,7 +16,7 @@ const Header: React.FC<HeaderProps> = ({ title, onToggleSidebar, credits, onBuyC
   const { language, setLanguage, t } = useTranslation();
 
   return (
-    <header className="relative flex-shrink-0 flex items-center h-20 px-4 sm:px-8 border-b border-gray-800 w-full bg-void">
+    <header className="relative flex-shrink-0 flex items-center h-20 px-4 sm:px-8 border-b border-gray-800 w-full bg-void/60 backdrop-blur-xl">
       <div className="fm-hairline absolute bottom-0 left-0 right-0" />
       {/* Mobile Menu Button */}
       <button

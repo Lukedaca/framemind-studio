@@ -121,7 +121,7 @@ const GenerateImageView: React.FC<GenerateImageViewProps> = ({
 
     return (
         <>
-            <div className="h-full w-full flex flex-col bg-void text-text-primary">
+            <div className="h-full w-full flex flex-col text-text-primary">
                 <Header title={title} onOpenApiKeyModal={onOpenApiKeyModal} onToggleSidebar={onToggleSidebar} credits={credits}/>
                 <div className="flex-1 flex items-center justify-center p-4 sm:p-8 overflow-y-auto">
                     <div className="w-full max-w-5xl">

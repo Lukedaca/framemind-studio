@@ -18,7 +18,7 @@ const HomeView: React.FC<HomeViewProps> = ({ onEnterApp }) => {
   ];
 
   return (
-    <div className="min-h-screen w-full flex flex-col items-center justify-center p-6 bg-void text-text-primary">
+    <div className="min-h-screen w-full flex flex-col items-center justify-center p-6 text-text-primary">
       <div className="relative z-10 flex flex-col items-center max-w-5xl w-full">
         <div className="animate-fade-in-up flex flex-col items-center text-center">
           <img src="/logo-mark.png" alt="FrameMind" className="w-24 h-24 object-contain mb-8" />

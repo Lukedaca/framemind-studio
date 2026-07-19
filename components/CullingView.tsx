@@ -462,12 +462,12 @@ const CullingView: React.FC<CullingViewProps> = ({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-void text-white overflow-hidden">
+    <div className="w-full h-full flex flex-col text-white overflow-hidden">
       <Header title={title} onToggleSidebar={onToggleSidebar} onOpenApiKeyModal={onOpenApiKeyModal} />
 
       <div className="flex-1 flex overflow-hidden">
         {/* LEVÝ PANEL */}
-        <div className="w-80 flex-shrink-0 bg-surface border-r border-border-subtle p-5 flex flex-col gap-5 overflow-y-auto custom-scrollbar z-10">
+        <div className="w-80 flex-shrink-0 bg-surface/70 backdrop-blur-xl border-r border-border-subtle p-5 flex flex-col gap-5 overflow-y-auto custom-scrollbar z-10">
 
           <div className="glass-panel p-4 rounded-2xl">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
@@ -612,7 +612,7 @@ const CullingView: React.FC<CullingViewProps> = ({
         </div>
 
         {/* GRID */}
-        <div className="flex-1 bg-void p-6 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
           {files.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
               <StackIcon className="w-10 h-10 opacity-40" />

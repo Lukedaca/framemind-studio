@@ -136,7 +136,7 @@ const UploadView: React.FC<UploadViewProps> = ({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-void text-text-primary">
+    <div className="w-full h-full flex flex-col text-text-primary">
        <Header 
         title={title} 
         onOpenApiKeyModal={onOpenApiKeyModal}

@@ -219,7 +219,7 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
   ]);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-void text-text-primary">
+    <div className="flex-1 flex flex-col h-full text-text-primary">
       <Header
         title={title}
         onToggleSidebar={onToggleSidebar}

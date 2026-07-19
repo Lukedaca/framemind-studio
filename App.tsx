@@ -625,7 +625,7 @@ function App() {
   }
 
   return (
-    <div className={`h-screen w-screen overflow-hidden flex font-sans bg-slate-950`}>
+    <div className="h-screen w-screen overflow-hidden flex font-sans">
         <Sidebar 
             isOpen={isSidebarOpen}
             isCollapsed={isSidebarCollapsed}

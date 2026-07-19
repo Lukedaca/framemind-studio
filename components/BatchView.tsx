@@ -100,7 +100,7 @@ const BatchView: React.FC<BatchViewProps> = ({ files, onBatchComplete, onSetFile
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#050505] text-white overflow-hidden">
+    <div className="w-full h-full flex flex-col text-white overflow-hidden">
       <Header
         title="Batch Studio"
         onToggleSidebar={onToggleSidebar}
@@ -110,7 +110,7 @@ const BatchView: React.FC<BatchViewProps> = ({ files, onBatchComplete, onSetFile
       <div className="flex-1 flex overflow-hidden">
         
         {/* LEFT PANEL: AI CONTROLS */}
-        <div className="w-80 bg-[#0a0a0a] border-r border-[#1f1f1f] p-6 flex flex-col gap-6 overflow-y-auto custom-scrollbar z-10 shadow-2xl">
+        <div className="w-80 bg-[#0a0a0a]/70 backdrop-blur-xl border-r border-[#1f1f1f] p-6 flex flex-col gap-6 overflow-y-auto custom-scrollbar z-10 shadow-2xl">
             
             {/* Context Card */}
             <div className="bg-[#151515] p-5 rounded-2xl shadow-lg border border-[#222]">
@@ -150,7 +150,7 @@ const BatchView: React.FC<BatchViewProps> = ({ files, onBatchComplete, onSetFile
         </div>
 
         {/* RIGHT PANEL: GRID / STACKS */}
-        <div className="flex-1 bg-[#050505] p-8 overflow-y-auto custom-scrollbar relative">
+        <div className="flex-1 p-8 overflow-y-auto custom-scrollbar relative">
             
             {/* Processing Overlay */}
             {isProcessing && (
