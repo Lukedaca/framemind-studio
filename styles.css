@@ -41,20 +41,99 @@ body {
 /* Glass Panel with 1px Highlight */
 .glass-panel {
   background: rgba(15, 15, 15, 0.6);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 
+  box-shadow:
     0 0 0 1px rgba(0,0,0, 0.5),
     0 4px 20px rgba(0,0,0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-/* Active Nav Item Glow */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-panel {
+    background: rgba(18, 18, 18, 0.95);
+  }
+}
+
+/* Gradient border v brand barvách — pro vybrané/hero karty (mask-composite trik) */
+.fm-gradient-border {
+  position: relative;
+}
+.fm-gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(176, 30, 203, 0.6), rgba(47, 111, 224, 0.6), rgba(31, 192, 107, 0.6));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Tenká brand linka (hairline) — spodní hrana headeru apod. */
+.fm-hairline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(176, 30, 203, 0.5), rgba(47, 111, 224, 0.5), rgba(31, 192, 107, 0.5), transparent);
+}
+
+/* Rotace clony při AI analýze */
+@keyframes fm-aperture-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.fm-aperture-spin {
+  animation: fm-aperture-rotate 5s linear infinite;
+  transform-origin: center;
+}
+
+/* Scan-line „AI se dívá" — přejíždí přes fotku během analýzy */
+.fm-scanline {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.fm-scanline::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -20%;
+  height: 18%;
+  background: linear-gradient(180deg, transparent, rgba(47, 111, 224, 0.22), rgba(31, 192, 107, 0.28), transparent);
+  animation: fm-scan 2.6s ease-in-out infinite;
+}
+@keyframes fm-scan {
+  0% { top: -20%; }
+  100% { top: 110%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fm-aperture-spin { animation: none; }
+  .fm-scanline::after { animation: none; opacity: 0; }
+}
+
+/* Active Nav Item — sklo + svislá brand gradient lišta vlevo (žádný gradient pill) */
 .nav-item-active {
-  background: linear-gradient(90deg, rgba(47, 111, 224, 0.16) 0%, transparent 100%);
-  border-left: 2px solid var(--fm-blue);
+  position: relative;
+  background: linear-gradient(90deg, rgba(47, 111, 224, 0.14) 0%, transparent 100%);
   color: #fff;
   text-shadow: 0 0 15px rgba(47, 111, 224, 0.5);
+}
+.nav-item-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 15%;
+  bottom: 15%;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--fm-magenta), var(--fm-blue), var(--fm-green));
 }
 
 /* TECH CARD (Simulated Concave/Cut Corners via visual hacks or clip-path) */

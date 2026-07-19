@@ -13,6 +13,7 @@ import {
   type PhotoAnalysis,
 } from '../utils/cullingEngine';
 import { SparklesIcon, StackIcon, XCircleIcon } from './icons';
+import Aperture from './common/Aperture';
 import Header from './Header';
 import { useTranslation } from '../contexts/LanguageContext';
 
@@ -158,6 +159,12 @@ const CullingView: React.FC<CullingViewProps> = ({
       const result = workMap.get(f.id);
       return result && result.decision !== 'reject' && analyses.has(f.id);
     });
+    // Kandidáti dostanou pending — na kartě se zapne scan-line „AI se dívá".
+    for (const file of candidates) {
+      const result = workMap.get(file.id)!;
+      workMap.set(file.id, { ...result, aiStatus: 'pending' });
+    }
+    setCullingMap(new Map(workMap));
     setProgress({ current: 0, total: candidates.length });
     let aiFailed = 0;
 
@@ -230,6 +237,10 @@ const CullingView: React.FC<CullingViewProps> = ({
   };
 
   const finishRun = (workMap: Map<string, CullingResult>) => {
+    // Po stopce nesmí zůstat viset pending — scan-line by běžela donekonečna.
+    for (const [id, result] of workMap) {
+      if (result.aiStatus === 'pending') workMap.set(id, { ...result, aiStatus: 'idle' });
+    }
     setCullingMap(new Map(workMap));
     commitToFiles(workMap, 'AI Culling');
     setPhase('done');
@@ -376,6 +387,7 @@ const CullingView: React.FC<CullingViewProps> = ({
       >
         <img src={file.previewUrl} className="w-full h-full object-cover" loading="lazy" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/30 opacity-80" />
+        {isRunning && (!result || result.aiStatus === 'pending') && <div className="fm-scanline" />}
 
         {/* Verdikt + skóre */}
         <div className="absolute top-2 left-2 flex items-center gap-1.5">
@@ -459,7 +471,7 @@ const CullingView: React.FC<CullingViewProps> = ({
 
           <div className="glass-panel p-4 rounded-2xl">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
-              <SparklesIcon className="w-4 h-4 text-fm-green" />
+              <Aperture className="w-4 h-4" />
               {tr('cull_title')}
             </h2>
             <p className="text-xs text-gray-400 leading-relaxed">{tr('cull_desc')}</p>
@@ -512,7 +524,10 @@ const CullingView: React.FC<CullingViewProps> = ({
           ) : (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-300">{phaseLabel}</span>
+                <span className="flex items-center gap-2 text-gray-300">
+                  <Aperture className="w-4 h-4" spinning />
+                  {phaseLabel}
+                </span>
                 <span className="text-gray-500 font-mono">{progress.current}/{progress.total}</span>
               </div>
               <div className="w-full bg-elevated h-1.5 rounded-full overflow-hidden">

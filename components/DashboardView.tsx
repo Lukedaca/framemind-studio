@@ -1,7 +1,8 @@
 import React from 'react';
 import Header from './Header';
 import { useTranslation } from '../contexts/LanguageContext';
-import { LogoIcon, UploadIcon, HistoryIcon, AutopilotIcon, SparklesIcon, ChevronDoubleLeftIcon } from './icons';
+import { UploadIcon, HistoryIcon, AutopilotIcon, SparklesIcon, ChevronDoubleLeftIcon } from './icons';
+import Aperture from './common/Aperture';
 import type { View, HistoryEntry } from '../types';
 
 interface DashboardViewProps {
@@ -36,11 +37,15 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="p-6 lg:p-8 max-w-[1600px] mx-auto w-full space-y-8 animate-fade-in pb-20">
         
         {/* Hero Section */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-900/40 to-purple-900/40 border border-[#ffffff10] p-8 lg:p-12 shadow-2xl">
-            <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-indigo-500 rounded-full blur-[100px] opacity-20 pointer-events-none"></div>
+        <div className="fm-gradient-border relative overflow-hidden rounded-3xl bg-gradient-to-r from-fm-magenta/15 via-fm-blue/15 to-fm-green/10 border border-[#ffffff10] p-8 lg:p-12 shadow-2xl">
+            <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-fm-magenta rounded-full blur-[110px] opacity-20 pointer-events-none"></div>
+            <div className="absolute bottom-0 right-1/4 -mb-16 w-56 h-56 bg-fm-green rounded-full blur-[110px] opacity-15 pointer-events-none"></div>
+            <div className="absolute right-8 top-1/2 -translate-y-1/2 opacity-[0.13] pointer-events-none hidden lg:block">
+                <Aperture className="w-56 h-56" />
+            </div>
             <div className="relative z-10 max-w-2xl">
                 <h1 className="text-4xl lg:text-5xl font-extrabold tracking-tight mb-4 text-white">
-                    {t.dash_welcome_title} <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">{t.dash_welcome_studio}</span>
+                    {t.dash_welcome_title} <span className="fm-gradient-text">{t.dash_welcome_studio}</span>
                 </h1>
                 <p className="text-lg text-gray-400 mb-8 leading-relaxed">
                     {t.dash_welcome_desc}
@@ -129,7 +134,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
 
             {/* Stats / Credits (Wide Bottom) */}
             <div className="md:col-span-3 glass-panel rounded-3xl p-8 flex items-center justify-between relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-r from-indigo-600/20 to-purple-600/20 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-fm-magenta/15 via-fm-blue/15 to-fm-green/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
                 
                 <div className="relative z-10">
                     <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-1">{t.dash_available_credits}</p>
