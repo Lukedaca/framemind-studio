@@ -16,18 +16,20 @@
 }
 
 body {
-  background-color: var(--bg-void);
+  background-color: #06060c;
   color: #ededed;
   font-family: 'Plus Jakarta Sans', sans-serif;
   overflow-x: hidden;
   /* Noise + statický FrameMind mesh (magenta → modrá → zelená, žádná animace).
      Views mají průhledné kořeny, aby mesh prosvítal celým workflow; neutrální
-     černou si drží jen plochy s fotkou (CanvasViewport, culling karty). */
+     černou si drží jen plochy s fotkou (CanvasViewport, culling karty).
+     Středová modrofialová záře drží barvu i uprostřed obrazovky. */
   background-image:
     url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E"),
-    radial-gradient(1000px 700px at 10% -5%, rgba(176, 30, 203, 0.16), transparent 55%),
-    radial-gradient(1100px 800px at 105% 35%, rgba(47, 111, 224, 0.14), transparent 55%),
-    radial-gradient(1000px 750px at 25% 105%, rgba(31, 192, 107, 0.12), transparent 55%);
+    radial-gradient(1200px 800px at 8% -8%, rgba(176, 30, 203, 0.26), transparent 60%),
+    radial-gradient(1300px 900px at 108% 28%, rgba(47, 111, 224, 0.22), transparent 60%),
+    radial-gradient(1200px 850px at 18% 108%, rgba(31, 192, 107, 0.18), transparent 60%),
+    radial-gradient(1600px 1100px at 55% 50%, rgba(64, 56, 180, 0.13), transparent 65%);
   background-attachment: fixed;
 }
 
@@ -43,7 +45,7 @@ body {
 
 /* Glass Panel with 1px Highlight */
 .glass-panel {
-  background: rgba(15, 15, 15, 0.6);
+  background: rgba(16, 17, 27, 0.55);
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.08);

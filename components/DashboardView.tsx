@@ -1,7 +1,8 @@
 import React from 'react';
 import Header from './Header';
 import { useTranslation } from '../contexts/LanguageContext';
-import { UploadIcon, HistoryIcon, AutopilotIcon, SparklesIcon, ChevronDoubleLeftIcon } from './icons';
+import { UploadIcon, ChevronDoubleLeftIcon } from './icons';
+import { FmCullingIcon, FmAutopilotIcon, FmGenerateIcon, FmHistoryIcon } from './FmIcons';
 import Aperture from './common/Aperture';
 import type { View, HistoryEntry } from '../types';
 
@@ -75,26 +76,28 @@ const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="md:col-span-1 glass-panel rounded-3xl p-6 flex flex-col gap-4">
                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">{t.dash_quick_tools}</h3>
                 
-                <button onClick={() => onNavigate({ view: 'batch', action: 'culling' })} className="group relative overflow-hidden bg-[#ffffff05] hover:bg-[#ffffff0a] border border-[#ffffff0a] rounded-2xl p-5 transition-all text-left">
-                    <div className="absolute top-0 right-0 p-3 opacity-50 group-hover:opacity-100 transition-opacity">
-                        <SparklesIcon className="w-6 h-6 text-indigo-400" />
+                <button onClick={() => onNavigate({ view: 'batch', action: 'culling' })} className="group relative overflow-hidden bg-fm-blue/[0.08] hover:bg-fm-blue/[0.14] border border-fm-blue/25 hover:border-fm-blue/50 rounded-2xl p-5 transition-all text-left hover:-translate-y-0.5">
+                    <div className="w-10 h-10 rounded-xl bg-fm-blue/15 border border-fm-blue/30 flex items-center justify-center mb-3 text-white">
+                        <FmCullingIcon className="w-5 h-5" />
                     </div>
                     <h4 className="font-bold text-white mb-1">AI Culling</h4>
                     <p className="text-xs text-gray-400">{t.dash_culling_desc}</p>
                 </button>
 
-                <button onClick={() => onNavigate({ view: 'editor', action: 'autopilot' })} className="group relative overflow-hidden bg-[#ffffff05] hover:bg-[#ffffff0a] border border-[#ffffff0a] rounded-2xl p-5 transition-all text-left">
-                    <div className="absolute top-0 right-0 p-3 opacity-50 group-hover:opacity-100 transition-opacity">
-                        <AutopilotIcon className="w-6 h-6 text-emerald-400" />
+                <button onClick={() => onNavigate({ view: 'editor', action: 'autopilot' })} className="group relative overflow-hidden bg-fm-green/[0.07] hover:bg-fm-green/[0.13] border border-fm-green/25 hover:border-fm-green/50 rounded-2xl p-5 transition-all text-left hover:-translate-y-0.5">
+                    <div className="w-10 h-10 rounded-xl bg-fm-green/15 border border-fm-green/30 flex items-center justify-center mb-3 text-white">
+                        <FmAutopilotIcon className="w-5 h-5" />
                     </div>
                     <h4 className="font-bold text-white mb-1">Autopilot</h4>
                     <p className="text-xs text-gray-400">{t.dash_autopilot_desc}</p>
                 </button>
 
-                <button onClick={() => onNavigate({ view: 'generate' })} className="group relative overflow-hidden bg-[#ffffff05] hover:bg-[#ffffff0a] border border-[#ffffff0a] rounded-2xl p-5 transition-all text-left mt-auto">
-                    <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    <h4 className="font-bold text-white mb-1 relative z-10">{t.dash_ai_generator}</h4>
-                    <p className="text-xs text-gray-400 relative z-10">{t.dash_gen_desc}</p>
+                <button onClick={() => onNavigate({ view: 'generate' })} className="group relative overflow-hidden bg-fm-magenta/[0.08] hover:bg-fm-magenta/[0.14] border border-fm-magenta/25 hover:border-fm-magenta/50 rounded-2xl p-5 transition-all text-left mt-auto hover:-translate-y-0.5">
+                    <div className="w-10 h-10 rounded-xl bg-fm-magenta/15 border border-fm-magenta/30 flex items-center justify-center mb-3 text-white">
+                        <FmGenerateIcon className="w-5 h-5" />
+                    </div>
+                    <h4 className="font-bold text-white mb-1">{t.dash_ai_generator}</h4>
+                    <p className="text-xs text-gray-400">{t.dash_gen_desc}</p>
                 </button>
             </div>
 
@@ -110,8 +113,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                         recentHistory.slice(-4).reverse().map((entry, idx) => (
                             <div key={idx} className="flex items-center justify-between p-4 bg-[#ffffff03] border border-[#ffffff05] rounded-xl hover:bg-[#ffffff08] transition-colors group">
                                 <div className="flex items-center gap-4">
-                                    <div className="w-10 h-10 rounded-full bg-[#ffffff05] flex items-center justify-center text-gray-400 group-hover:text-white transition-colors">
-                                        <HistoryIcon className="w-5 h-5" />
+                                    <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center text-gray-400 group-hover:text-white transition-colors">
+                                        <FmHistoryIcon className="w-5 h-5" />
                                     </div>
                                     <div>
                                         <p className="text-sm font-bold text-white">{entry.actionName}</p>
@@ -123,8 +126,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                         ))
                     ) : (
                         <div className="flex flex-col items-center justify-center py-12 text-center">
-                            <div className="w-12 h-12 rounded-full bg-[#ffffff05] flex items-center justify-center text-gray-600 mb-3">
-                                <HistoryIcon className="w-6 h-6" />
+                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-fm-magenta/10 via-fm-blue/10 to-fm-green/10 border border-white/[0.08] flex items-center justify-center mb-3">
+                                <Aperture className="w-7 h-7" />
                             </div>
                             <p className="text-sm text-gray-500">{t.dash_no_history}</p>
                         </div>
@@ -133,7 +136,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             {/* Stats / Credits (Wide Bottom) */}
-            <div className="md:col-span-3 glass-panel rounded-3xl p-8 flex items-center justify-between relative overflow-hidden group">
+            <div className="fm-gradient-border md:col-span-3 glass-panel rounded-3xl p-8 flex items-center justify-between relative overflow-hidden group">
                 <div className="absolute inset-0 bg-gradient-to-r from-fm-magenta/15 via-fm-blue/15 to-fm-green/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
                 
                 <div className="relative z-10">
