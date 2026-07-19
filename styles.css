@@ -82,7 +82,8 @@ body {
 /* Tenká brand linka (hairline) — spodní hrana headeru apod. */
 .fm-hairline {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(176, 30, 203, 0.5), rgba(47, 111, 224, 0.5), rgba(31, 192, 107, 0.5), transparent);
+  background: linear-gradient(90deg, transparent, rgba(176, 30, 203, 0.75), rgba(47, 111, 224, 0.75), rgba(31, 192, 107, 0.75), transparent);
+  box-shadow: 0 0 8px rgba(47, 111, 224, 0.35);
 }
 
 /* Rotace clony při AI analýze */
