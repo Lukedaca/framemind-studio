@@ -31,11 +31,20 @@ export const base64ToFile = async (base64: string, filename: string, mimeType: s
  * Normalizes an image file: ensures it's a JPEG and resizes it only if absolutely necessary.
  * Falls back to original file if processing fails.
  */
+export const isJpegFile = (file: File): boolean =>
+    /^(?:image\/(?:jpeg|jpg|pjpeg))$/i.test(file.type) || /\.jpe?g$/i.test(file.name);
+
 export const normalizeImageFile = (
     file: File,
     maxSize = 6000, 
     quality = 0.98 
 ): Promise<File> => {
+    // JPEG je už cílový formát. Zachováme původní soubor bajt po bajtu a
+    // vyhneme se nákladnému dekódování + opětovné ztrátové kompresi při importu.
+    if (isJpegFile(file)) {
+        return Promise.resolve(file);
+    }
+
     return new Promise((resolve) => {
         // Fallback mechanism: if anything fails, resolve with original file
         const safeResolve = () => {

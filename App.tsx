@@ -250,33 +250,42 @@ function App() {
   }, []);
 
   const prepareUploadedFiles = useCallback(async (selectedFiles: File[]) => {
-    const results = await Promise.allSettled(
-      selectedFiles.map(async (file): Promise<UploadedFile | null> => {
-        if (file.size === 0) {
-          addNotification(`Soubor ${file.name} je prázdný (0 bajtů). Zkontrolujte, zda je stažen offline.`, 'error');
-          return null;
-        }
+    // U formátů, které skutečně vyžadují převod, držíme nízký souběh.
+    // JPEG má v normalizeImageFile rychlou bezztrátovou cestu a canvas vůbec nepoužije.
+    const results: Array<UploadedFile | null> = new Array(selectedFiles.length).fill(null);
+    let nextIndex = 0;
 
-        try {
-          const normalizedFile = await normalizeImageFile(file);
-          const previewUrl = URL.createObjectURL(normalizedFile);
-          return {
-            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            file: normalizedFile,
-            previewUrl,
-            originalPreviewUrl: previewUrl,
-          };
-        } catch (error) {
-          console.error('File processing error:', error);
-          addNotification(`${t.msg_error}: ${file.name}`, 'error');
-          return null;
+    const workers = Array.from(
+      { length: Math.min(2, selectedFiles.length) },
+      async () => {
+        while (nextIndex < selectedFiles.length) {
+          const index = nextIndex++;
+          const file = selectedFiles[index];
+
+          if (file.size === 0) {
+            addNotification(`Soubor ${file.name} je prázdný (0 bajtů). Zkontrolujte, zda je stažen offline.`, 'error');
+            continue;
+          }
+
+          try {
+            const normalizedFile = await normalizeImageFile(file);
+            const previewUrl = URL.createObjectURL(normalizedFile);
+            results[index] = {
+              id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              file: normalizedFile,
+              previewUrl,
+              originalPreviewUrl: previewUrl,
+            };
+          } catch (error) {
+            console.error('File processing error:', error);
+            addNotification(`${t.msg_error}: ${file.name}`, 'error');
+          }
         }
-      })
+      }
     );
+    await Promise.all(workers);
 
-    return results
-      .filter((result): result is PromiseFulfilledResult<UploadedFile> => result.status === 'fulfilled' && result.value !== null)
-      .map((result) => result.value);
+    return results.filter((result): result is UploadedFile => result !== null);
   }, [addNotification, t.msg_error]);
 
   const syncFilesToCurrentProject = useCallback((newFiles: UploadedFile[], description: string) => {
