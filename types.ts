@@ -25,6 +25,14 @@ export interface QualityAssessment {
 
 export type CullingDecision = 'keep' | 'review' | 'reject';
 
+// Safe = výchozí: AI vizuálně posoudí i heuristické rejecty (žádná fotka
+// nevypadne jen kvůli heuristice). Economy = jisté heuristické rejecty
+// přeskočí AI, ověří se jen auditní vzorek — levnější, riskantnější.
+export type CullingMode = 'safe' | 'economy';
+
+// Odkud pochází aktuální verdikt fotky — UI to musí vždy zobrazit.
+export type CullingVerdictSource = 'heuristic' | 'ai' | 'manual';
+
 export type CullingGenre =
   | 'sport'
   | 'portrait'
@@ -71,6 +79,9 @@ export interface CullingResult {
   isBestInGroup?: boolean;
   groupRank?: number;
   genre?: CullingGenre;
+  faceCount?: number;
+  eyeBlink?: number; // 0=open, 1=closed; primary/largest face
+  aiDisagreement?: boolean; // strong local fail + AI keep => routed to review
   ai?: CullingAiVerdict;
   aiStatus: CullingAiStatus;
   aiError?: string;

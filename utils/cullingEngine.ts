@@ -7,11 +7,16 @@
 
 import type {
   CullingDecision,
+  CullingAiVerdict,
   CullingGenre,
   CullingMetrics,
+  CullingMode,
   CullingResult,
+  CullingVerdictSource,
 } from '../types';
 import { readMetrics, hashToWords, hammingWords, clamp01 } from './cullingMetrics';
+import { detectFaces, type FaceBoundingBox } from '../services/faceDetection';
+import { blendFinalScore } from '../services/tasteEngine';
 
 export const HEURISTIC_MAX_SIDE = 420;
 export const AI_THUMB_MAX_SIDE = 768;
@@ -112,17 +117,27 @@ export function deriveHeuristicDecision(
   metrics: CullingMetrics,
   finalScore: number,
   genre: CullingGenre | null,
-  group: { duplicateGroupId?: string; isBestInGroup?: boolean }
+  context: {
+    duplicateGroupId?: string;
+    isBestInGroup?: boolean;
+    faceCount?: number;
+    eyeBlink?: number;
+  }
 ): HeuristicDecision {
   const profile = GENRE_PROFILES[genre || 'other'] || GENRE_PROFILES.other;
   const reasons: string[] = [];
   const risks: string[] = [];
+  const hasFace = (context.faceCount ?? 0) > 0;
+  const eyeBlink = context.eyeBlink ?? 0;
+  const eyesClosed = hasFace && profile.eyesMatter && eyeBlink >= 0.5;
 
   if (metrics.sharpnessScore >= 0.68) reasons.push('cull_reason_sharp');
+  if (hasFace && profile.eyesMatter && eyeBlink < 0.3) reasons.push('cull_reason_open_eyes');
   if (metrics.exposureScore >= 0.68) reasons.push('cull_reason_exposure');
   if (metrics.compositionScore >= 0.64) reasons.push('cull_reason_composition');
-  if (group.isBestInGroup) reasons.push('cull_reason_best_in_group');
+  if (context.isBestInGroup) reasons.push('cull_reason_best_in_group');
 
+  if (eyesClosed) risks.push('cull_risk_closed_eyes');
   if (metrics.sharpnessScore < 0.36) risks.push('cull_risk_blur');
   if (metrics.exposureScore < 0.22) {
     risks.push(metrics.shadowClipping > metrics.highlightClipping ? 'cull_risk_underexposed' : 'cull_risk_exposure');
@@ -130,27 +145,28 @@ export function deriveHeuristicDecision(
   if (metrics.highlightClipping > 0.06) risks.push('cull_risk_highlights');
   if (metrics.shadowClipping > 0.08) risks.push('cull_risk_shadows');
   if (metrics.noiseScore < profile.noiseRiskBelow) risks.push('cull_risk_noise');
-  if (group.duplicateGroupId && !group.isBestInGroup) risks.push('cull_risk_duplicate');
+  if (context.duplicateGroupId && !context.isBestInGroup) risks.push('cull_risk_duplicate');
 
   const hasMajorRisk =
     metrics.sharpnessScore < 0.28 ||
     metrics.exposureScore < 0.16 ||
     metrics.highlightClipping > 0.16 ||
     metrics.shadowClipping > 0.2 ||
-    metrics.noiseScore < profile.noiseMajorBelow;
+    metrics.noiseScore < profile.noiseMajorBelow ||
+    (hasFace && profile.eyesMatter && eyeBlink >= 0.62);
 
   let decision: CullingDecision = 'review';
   if (
     !hasMajorRisk &&
-    (!group.duplicateGroupId || group.isBestInGroup) &&
-    (finalScore >= 74 || (group.isBestInGroup && finalScore >= 60))
+    (!context.duplicateGroupId || context.isBestInGroup) &&
+    (finalScore >= 74 || (context.isBestInGroup && finalScore >= 60))
   ) {
     decision = 'keep';
   }
   if (finalScore < 42 || hasMajorRisk) {
     decision = 'reject';
   }
-  if (group.duplicateGroupId && !group.isBestInGroup) {
+  if (context.duplicateGroupId && !context.isBestInGroup) {
     decision = finalScore >= 58 && !hasMajorRisk ? 'review' : 'reject';
   }
 
@@ -174,8 +190,23 @@ export interface SimilarityAssignment {
   groupRank: number;
 }
 
+// Nad tímto počtem fotek se místo přesného O(n²) použije LSH banding.
+export const SIMILARITY_EXACT_LIMIT = 1000;
+const SIMILARITY_HAMMING_THRESHOLD = 20;
+const SIMILARITY_ASPECT_TOLERANCE = 0.12;
+// Počet 8bitových bandů (256bit hash / 8). Protože bandů (32) je víc než práh
+// rozdílných bitů (20), každý pár pod prahem sdílí aspoň jeden identický band
+// (pigeonhole) — banding tedy nedává false negatives a výsledek je shodný
+// s přesným porovnáním.
+const SIMILARITY_BAND_BITS = 8;
+// Pojistka pro degenerované buckety (např. samé jednobarevné hashe): porovnává
+// se jen klouzavé okno deterministicky seřazeného bucketu, ne celý bucket.
+const MAX_BUCKET_COMPARE_WINDOW = 1500;
+
 // Union-find nad perceptual hashi: levný aspect-ratio test odfiltruje většinu
-// párů, hamming přes bitová slova (XOR+popcount) rozhodne zbytek.
+// párů, hamming přes bitová slova (XOR+popcount) rozhodne zbytek. Do
+// SIMILARITY_EXACT_LIMIT fotek běží přesné porovnání všech párů; nad limitem
+// kandidátní páry generuje LSH banding nad prefixy/bandy hashe.
 export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, SimilarityAssignment> {
   const result = new Map<string, SimilarityAssignment>();
   for (const item of items) {
@@ -201,13 +232,55 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
 
   const words = new Map(withHash.map((item) => [item.id, hashToWords(item.hash)]));
 
-  for (let i = 0; i < withHash.length; i += 1) {
-    const first = withHash[i];
-    const firstWords = words.get(first.id)!;
-    for (let j = i + 1; j < withHash.length; j += 1) {
-      const second = withHash[j];
-      if (Math.abs((first.aspectRatio || 0) - (second.aspectRatio || 0)) >= 0.12) continue;
-      if (hammingWords(firstWords, words.get(second.id)!) <= 20) union(first.id, second.id);
+  const comparePair = (first: SimilarityInput, second: SimilarityInput) => {
+    if (Math.abs((first.aspectRatio || 0) - (second.aspectRatio || 0)) >= SIMILARITY_ASPECT_TOLERANCE) return;
+    if (hammingWords(words.get(first.id)!, words.get(second.id)!) <= SIMILARITY_HAMMING_THRESHOLD) {
+      union(first.id, second.id);
+    }
+  };
+
+  if (withHash.length <= SIMILARITY_EXACT_LIMIT) {
+    // Přesná cesta: všechny páry.
+    for (let i = 0; i < withHash.length; i += 1) {
+      for (let j = i + 1; j < withHash.length; j += 1) {
+        comparePair(withHash[i], withHash[j]);
+      }
+    }
+  } else {
+    // LSH banding: item padne do bucketu za každý 8bitový band svého hashe.
+    // Kandidáti = dvojice sdílející aspoň jeden bucket; přesná Hamming distance
+    // se počítá jen pro ně. Deterministické: pořadí bucketů i položek v nich
+    // sleduje pořadí vstupu.
+    const bandChars = SIMILARITY_BAND_BITS;
+    const buckets = new Map<string, number[]>();
+    withHash.forEach((item, index) => {
+      const hash = item.hash;
+      const bandCount = Math.floor(hash.length / bandChars);
+      for (let band = 0; band < bandCount; band += 1) {
+        // Délka hashe v klíči: různě dlouhé hashe nikdy nesdílí bucket.
+        const key = `${hash.length}:${band}:${hash.slice(band * bandChars, (band + 1) * bandChars)}`;
+        const bucket = buckets.get(key);
+        if (bucket) bucket.push(index);
+        else buckets.set(key, [index]);
+      }
+    });
+
+    const total = withHash.length;
+    const seenPairs = new Set<number>();
+    for (const bucket of buckets.values()) {
+      if (bucket.length < 2) continue;
+      const window = Math.min(bucket.length, MAX_BUCKET_COMPARE_WINDOW);
+      for (let a = 0; a < bucket.length; a += 1) {
+        const limit = Math.min(bucket.length, a + window);
+        for (let b = a + 1; b < limit; b += 1) {
+          const i = bucket[a];
+          const j = bucket[b];
+          const pairKey = i < j ? i * total + j : j * total + i;
+          if (seenPairs.has(pairKey)) continue;
+          seenPairs.add(pairKey);
+          comparePair(withHash[i], withHash[j]);
+        }
+      }
     }
   }
 
@@ -288,6 +361,35 @@ async function computeMetrics(imageData: ImageData): Promise<CullingMetrics> {
   }).catch(() => readMetrics(imageData.data, imageData.width, imageData.height));
 }
 
+async function measureFaceSharpness(
+  source: CanvasImageSource,
+  bbox: FaceBoundingBox,
+  sourceWidth: number,
+  sourceHeight: number
+): Promise<number | null> {
+  const padding = 0.18;
+  const sourceX = Math.max(0, bbox.x - bbox.w * padding);
+  const sourceY = Math.max(0, bbox.y - bbox.h * padding);
+  const sourceW = Math.min(bbox.w * (1 + padding * 2), sourceWidth - sourceX);
+  const sourceH = Math.min(bbox.h * (1 + padding * 2), sourceHeight - sourceY);
+  if (sourceW < 8 || sourceH < 8) return null;
+
+  const maxSide = 320;
+  const scale = Math.min(1, maxSide / Math.max(sourceW, sourceH));
+  const width = Math.max(32, Math.round(sourceW * scale));
+  const height = Math.max(32, Math.round(sourceH * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(source, sourceX, sourceY, sourceW, sourceH, 0, 0, width, height);
+  const metrics = await computeMetrics(context.getImageData(0, 0, width, height));
+  return metrics.sharpnessScore;
+}
+
 async function loadImageSource(file: File): Promise<{ source: CanvasImageSource; width: number; height: number; close: () => void }> {
   if ('createImageBitmap' in window) {
     try {
@@ -316,6 +418,8 @@ export interface PhotoAnalysis {
   metrics: CullingMetrics;
   aspectRatio: number;
   aiThumbnailDataUrl: string;
+  faceCount: number;
+  eyeBlink: number;
 }
 
 export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
@@ -335,6 +439,25 @@ export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
     const imageData = hCtx.getImageData(0, 0, hWidth, hHeight);
 
     const metrics = await computeMetrics(imageData);
+    let faceCount = 0;
+    let eyeBlink = 0;
+
+    try {
+      const detected = await detectFaces(loaded.source, loaded.width, loaded.height);
+      faceCount = detected.faceCount;
+      if (detected.primary) {
+        eyeBlink = detected.primary.eyeBlink;
+        const faceSharpness = await measureFaceSharpness(
+          loaded.source,
+          detected.primary.bbox,
+          loaded.width,
+          loaded.height
+        );
+        if (faceSharpness !== null) metrics.sharpnessScore = faceSharpness;
+      }
+    } catch (error) {
+      console.warn(`Face detection failed for ${file.name}:`, error);
+    }
 
     const aiScale = Math.min(1, AI_THUMB_MAX_SIDE / Math.max(loaded.width, loaded.height));
     const aiWidth = Math.max(64, Math.round(loaded.width * aiScale));
@@ -353,6 +476,8 @@ export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
       metrics,
       aspectRatio: loaded.width > 0 && loaded.height > 0 ? loaded.width / loaded.height : 0,
       aiThumbnailDataUrl,
+      faceCount,
+      eyeBlink,
     };
   } finally {
     loaded.close();
@@ -363,8 +488,11 @@ export function buildCullingResult(
   analysis: PhotoAnalysis,
   genre: CullingGenre | null
 ): CullingResult {
-  const finalScore = computeFinalScore(analysis.metrics, genre);
-  const heuristic = deriveHeuristicDecision(analysis.metrics, finalScore, genre, {});
+  const finalScore = blendFinalScore(computeFinalScore(analysis.metrics, genre), analysis.metrics);
+  const heuristic = deriveHeuristicDecision(analysis.metrics, finalScore, genre, {
+    faceCount: analysis.faceCount,
+    eyeBlink: analysis.eyeBlink,
+  });
   return {
     metrics: analysis.metrics,
     finalScore,
@@ -373,6 +501,8 @@ export function buildCullingResult(
     risks: heuristic.risks,
     aspectRatio: analysis.aspectRatio,
     genre: genre || undefined,
+    faceCount: analysis.faceCount,
+    eyeBlink: analysis.eyeBlink,
     aiStatus: 'idle',
   };
 }
@@ -380,10 +510,12 @@ export function buildCullingResult(
 // Přepočet po změně žánru nebo doběhnutí skupin: skóre + heuristický verdikt.
 // AI verdikty a ruční rozhodnutí zůstávají autoritativní.
 export function rescoreCullingResult(result: CullingResult, genre: CullingGenre | null): CullingResult {
-  const finalScore = computeFinalScore(result.metrics, genre);
+  const finalScore = blendFinalScore(computeFinalScore(result.metrics, genre), result.metrics);
   const heuristic = deriveHeuristicDecision(result.metrics, finalScore, genre, {
     duplicateGroupId: result.duplicateGroupId,
     isBestInGroup: result.isBestInGroup,
+    faceCount: result.faceCount,
+    eyeBlink: result.eyeBlink,
   });
   const aiAuthoritative = result.aiStatus === 'done' && result.ai;
   return {
@@ -399,6 +531,102 @@ export function rescoreCullingResult(result: CullingResult, genre: CullingGenre 
 export function getEffectiveDecision(result: CullingResult | undefined): CullingDecision | null {
   if (!result) return null;
   return result.manualDecision || result.decision || 'review';
+}
+
+// Zdroj verdiktu: ruční > AI > heuristika. UI badge + logika mazání rejectů.
+export function getVerdictSource(result: CullingResult | undefined): CullingVerdictSource | null {
+  if (!result) return null;
+  if (result.manualDecision) return 'manual';
+  if (result.aiStatus === 'done' && result.ai) return 'ai';
+  return 'heuristic';
+}
+
+/**
+ * AI is authoritative for ordinary cases. A direct disagreement over an extreme,
+ * deterministic technical failure is routed to Review instead of silently turning
+ * into Keep. That preserves Safe mode's human-review guarantee without letting a
+ * single optimistic model response erase strong local evidence.
+ */
+export function reconcileAiDecision(
+  result: CullingResult,
+  verdict: CullingAiVerdict
+): { decision: CullingDecision; disagreement: boolean } {
+  if (result.decision !== 'reject' || verdict.decision !== 'keep') {
+    return { decision: verdict.decision, disagreement: false };
+  }
+
+  const profile = GENRE_PROFILES[verdict.genre || result.genre || 'other'] || GENRE_PROFILES.other;
+  const metrics = result.metrics;
+  const certainTechnicalFailure =
+    metrics.sharpnessScore < 0.16 ||
+    metrics.exposureScore < 0.08 ||
+    metrics.highlightClipping > 0.28 ||
+    metrics.shadowClipping > 0.35 ||
+    metrics.noiseScore < profile.noiseMajorBelow * 0.5 ||
+    ((result.faceCount ?? 0) > 0 && profile.eyesMatter && (result.eyeBlink ?? 0) >= 0.78);
+
+  return certainTechnicalFailure
+    ? { decision: 'review', disagreement: true }
+    : { decision: verdict.decision, disagreement: false };
+}
+
+// --- Safe/Economy výběr kandidátů pro AI fázi ---
+
+export interface AiCandidateInput {
+  id: string;
+  decision: CullingDecision;
+  finalScore: number;
+}
+
+export interface AiCandidateSelection {
+  candidateIds: string[]; // fotky, které jdou do AI (včetně auditního vzorku)
+  skippedRejectIds: string[]; // heuristické rejecty přeskočené bez AI (jen economy)
+  auditIds: string[]; // podmnožina skipped rejectů poslaná do AI jako audit
+}
+
+export const AUDIT_MIN = 5;
+export const AUDIT_MAX = 20;
+export const AUDIT_RATIO = 0.1;
+
+/**
+ * Safe mode (výchozí): AI posoudí všechno — heuristický reject je jen předběžný
+ * návrh a nikdy nesmí sám o sobě fotku vyřadit.
+ * Economy mode: jisté heuristické rejecty AI přeskočí; deterministický auditní
+ * vzorek (5–20 fotek, ~10 %, rozprostřený přes rozsah skóre) jde do AI, aby šlo
+ * odhalit falešné rejecty.
+ */
+export function selectAiCandidates(items: AiCandidateInput[], mode: CullingMode): AiCandidateSelection {
+  if (mode === 'safe') {
+    return { candidateIds: items.map((item) => item.id), skippedRejectIds: [], auditIds: [] };
+  }
+
+  const rejects = items.filter((item) => item.decision === 'reject');
+  const nonRejects = items.filter((item) => item.decision !== 'reject');
+
+  // Deterministický vzorek: seřadit podle skóre (tiebreak id), vybrat rovnoměrně
+  // rozložené indexy — pokryje slabé i hraniční rejecty, výsledek je testovatelný.
+  const sorted = [...rejects].sort((a, b) => a.finalScore - b.finalScore || a.id.localeCompare(b.id));
+  const auditSize = Math.min(
+    sorted.length,
+    Math.min(AUDIT_MAX, Math.max(AUDIT_MIN, Math.round(sorted.length * AUDIT_RATIO)))
+  );
+
+  const auditIds: string[] = [];
+  if (auditSize > 0) {
+    const picked = new Set<number>();
+    for (let i = 0; i < auditSize; i += 1) {
+      const index = auditSize === 1 ? 0 : Math.round((i * (sorted.length - 1)) / (auditSize - 1));
+      picked.add(index);
+    }
+    for (const index of picked) auditIds.push(sorted[index].id);
+  }
+
+  const auditSet = new Set(auditIds);
+  return {
+    candidateIds: [...nonRejects.map((item) => item.id), ...auditIds],
+    skippedRejectIds: rejects.filter((item) => !auditSet.has(item.id)).map((item) => item.id),
+    auditIds,
+  };
 }
 
 export async function mapWithConcurrency<T, R>(
