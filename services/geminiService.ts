@@ -812,7 +812,7 @@ export const assessQuality = async (file: File): Promise<QualityAssessment> => {
 
 // --- FrameMind AI Culling (žánrově adaptivní verdikty) ---
 
-const CULLING_MODEL = 'gemini-3.1-flash-preview';
+const CULLING_MODELS = ['gemini-3.5-flash', 'gemini-2.5-flash'] as const;
 
 const CULLING_SYSTEM_PROMPT = `Jsi expert na fotografický culling pro profesionální fotografy.
 Tvůj úkol: podívej se na jednu fotku, urči její žánr a rozhodni "keep", "review" nebo "reject" PODLE STANDARDŮ TOHO ŽÁNRU. Univerzální metr neexistuje — co je vada v produktovce, je styl ve streetu.
@@ -840,6 +840,7 @@ Pravidla:
 - aiScore musí odrážet celkovou kvalitu v kontextu žánru, ne jen technické metriky.
 - "summary" max 120 znaků, česky, žádné marketingové fráze.
 - "reasons" a "risks" každé max 4 položky, každá max 60 znaků, česky.
+- Lokálně detekované tváře, stav očí a ostrost hlavního obličeje jsou důležité technické signály. Pokud se obraz a metriky rozcházejí, zvol "review", ne automatické "keep".
 - Pokud obrázek chybí nebo je nečitelný, nastav decision na "review" a vysvětli v risks.`;
 
 const CULLING_GENRE_VALUES: CullingGenre[] = ['sport', 'portrait', 'wedding', 'product', 'landscape', 'street', 'wildlife', 'event', 'other'];
@@ -876,29 +877,65 @@ const dataUrlToInlinePart = (dataUrl: string) => {
     return { inlineData: { mimeType: match[1], data: match[2] } };
 };
 
+function isModelUnavailable(error: unknown): boolean {
+    const status = typeof error === 'object' && error !== null && 'status' in error
+        ? Number((error as { status?: unknown }).status)
+        : 0;
+    const message = error instanceof Error ? error.message : String(error);
+    return status === 404 || /not[_ -]?found|unsupported|does not exist|unknown model/i.test(message);
+}
+
+function isStructuredOutputFailure(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /empty response from ai|invalid json from ai/i.test(message);
+}
+
+async function generateCullingJson<T>(
+    generate: (model: string) => Promise<{ text?: string }>,
+    fallbackError: string
+): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let index = 0; index < CULLING_MODELS.length; index += 1) {
+        try {
+            const response = await generate(CULLING_MODELS[index]);
+            return safeJsonParse<T>(response.text, fallbackError);
+        } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            const hasFallback = index < CULLING_MODELS.length - 1;
+            if (!hasFallback || (!isModelUnavailable(error) && !isStructuredOutputFailure(error))) {
+                throw lastError;
+            }
+        }
+    }
+
+    throw lastError || new Error(fallbackError);
+}
+
 export const detectBatchGenre = async (
     thumbnailDataUrls: string[]
 ): Promise<{ genre: CullingGenre; confidence: number; note: string }> => {
     return withRetry(async () => {
         const ai = getGenAI();
         const thumbs = thumbnailDataUrls.slice(0, 3).map(dataUrlToInlinePart);
-        const response = await ai.models.generateContent({
-            model: CULLING_MODEL,
-            contents: {
-                parts: [
-                    { text: `${GENRE_DETECT_PROMPT}\n\nNáhledy z jednoho focení (${thumbs.length}). Urči žánr sady.` },
-                    ...thumbs,
-                ],
-            },
-            config: {
-                temperature: 0.1,
-                maxOutputTokens: 1024,
-                responseMimeType: 'application/json',
-                responseSchema: GENRE_DETECT_SCHEMA,
-            },
-        });
-        const parsed = safeJsonParse<{ genre: CullingGenre; confidence: number; note: string }>(
-            response.text,
+        const parsed = await generateCullingJson<{ genre: CullingGenre; confidence: number; note: string }>(
+            (model) => ai.models.generateContent({
+                model,
+                contents: {
+                    parts: [
+                        { text: `Náhledy z jednoho focení (${thumbs.length}). Urči žánr sady.` },
+                        ...thumbs,
+                    ],
+                },
+                config: {
+                    systemInstruction: GENRE_DETECT_PROMPT,
+                    temperature: 0.1,
+                    thinkingConfig: { thinkingBudget: -1 },
+                    maxOutputTokens: 1024,
+                    responseMimeType: 'application/json',
+                    responseSchema: GENRE_DETECT_SCHEMA,
+                },
+            }),
             'Genre detection failed'
         );
         return {
@@ -917,6 +954,9 @@ export interface CullingVerdictContext {
     isBestInGroup?: boolean;
     genre?: CullingGenre | null;
     brief?: string;
+    faceCount?: number;
+    eyeBlink?: number;
+    taste?: string | null;
 }
 
 export const getCullingVerdict = async (
@@ -940,6 +980,9 @@ export const getCullingVerdict = async (
             context.duplicateGroupId
                 ? `- duplicate group: ${context.duplicateGroupId}${context.isBestInGroup ? ' (best in group)' : ' (not best)'}`
                 : null,
+            context.faceCount
+                ? `- faces detected: ${context.faceCount}${(context.eyeBlink ?? 0) >= 0.5 ? `, main face eyes likely CLOSED (blink ${Number(context.eyeBlink).toFixed(2)})` : (context.eyeBlink ?? 0) > 0 ? `, main face eyes open (blink ${Number(context.eyeBlink).toFixed(2)})` : ''}`
+                : null,
             context.genre
                 ? `Žánr celé sady byl klasifikován jako: ${context.genre}. Ber jako výchozí; pokud tahle konkrétní fotka zjevně patří jinam, urči vlastní žánr.`
                 : null,
@@ -947,27 +990,33 @@ export const getCullingVerdict = async (
             context.brief?.trim()
                 ? `Záměr fotografa pro toto focení (zohledni s vysokou vahou): ${context.brief.trim().slice(0, 500)}`
                 : null,
+            context.taste?.trim()
+                ? `Osobní profil vkusu fotografa (z jeho dřívějších ručních rozhodnutí): ${context.taste.trim().slice(0, 280)}`
+                : null,
             '',
             'Podívej se na obrázek a vrať JSON verdikt.',
         ].filter(Boolean).join('\n');
 
-        const response = await ai.models.generateContent({
-            model: CULLING_MODEL,
-            contents: {
-                parts: [
-                    { text: `${CULLING_SYSTEM_PROMPT}\n\n${lines}` },
-                    dataUrlToInlinePart(thumbnailDataUrl),
-                ],
-            },
-            config: {
-                temperature: 0.2,
-                maxOutputTokens: 2048,
-                responseMimeType: 'application/json',
-                responseSchema: CULLING_RESPONSE_SCHEMA,
-            },
-        });
-
-        const raw = safeJsonParse<CullingAiVerdict>(response.text, 'Culling verdict failed');
+        const raw = await generateCullingJson<CullingAiVerdict>(
+            (model) => ai.models.generateContent({
+                model,
+                contents: {
+                    parts: [
+                        { text: lines },
+                        dataUrlToInlinePart(thumbnailDataUrl),
+                    ],
+                },
+                config: {
+                    systemInstruction: CULLING_SYSTEM_PROMPT,
+                    temperature: 0,
+                    thinkingConfig: { thinkingBudget: -1 },
+                    maxOutputTokens: 2048,
+                    responseMimeType: 'application/json',
+                    responseSchema: CULLING_RESPONSE_SCHEMA,
+                },
+            }),
+            'Culling verdict failed'
+        );
         const decision = ['keep', 'review', 'reject'].includes(raw.decision) ? raw.decision : 'review';
         return {
             decision,
