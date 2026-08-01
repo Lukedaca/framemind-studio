@@ -137,6 +137,13 @@ export interface SetSharpnessContext {
   softThreshold: number;
   badThreshold: number;
   samples: number;
+  // Diagnostika: bez rozsahu a percentilů nejde poznat, jestli sada nic
+  // nevyřadila proto, že je vyrovnaná, nebo proto, že jsou prahy mimo.
+  min: number;
+  max: number;
+  p10: number;
+  softCount: number;
+  badCount: number;
 }
 
 export function computeSetSharpnessContext(values: number[]): SetSharpnessContext | null {
@@ -149,11 +156,19 @@ export function computeSetSharpnessContext(values: number[]): SetSharpnessContex
     sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
   if (median <= 0) return null;
 
+  const softThreshold = median * SHARPNESS_SOFT_RATIO;
+  const badThreshold = median * SHARPNESS_BAD_RATIO;
+
   return {
     median,
-    softThreshold: median * SHARPNESS_SOFT_RATIO,
-    badThreshold: median * SHARPNESS_BAD_RATIO,
+    softThreshold,
+    badThreshold,
     samples: measured.length,
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    p10: sorted[Math.floor((sorted.length - 1) * 0.1)],
+    softCount: sorted.filter((value) => value < softThreshold).length,
+    badCount: sorted.filter((value) => value < badThreshold).length,
   };
 }
 

@@ -50,6 +50,23 @@ describe('ostrost v kontextu sady', () => {
     expect(classifySharpness(800, context)).toBe('normal');
   });
 
+  it('hlásí rozsah a počty pod prahem, aby šlo poznat proč se nic nevyřadilo', () => {
+    // 18 vyrovnaných snímků + 2 zjevně měkké
+    const withOutliers = [...evenSet, 120, 300];
+    const context = computeSetSharpnessContext(withOutliers)!;
+
+    expect(context.min).toBe(120);
+    expect(context.max).toBe(1090);
+    expect(context.badCount).toBe(1); // jen 120 je pod ~0,22 mediánu
+    expect(context.softCount).toBe(2); // 120 i 300 jsou pod ~0,45 mediánu
+    expect(context.p10).toBeLessThan(context.median);
+
+    // Vyrovnaná sada nesmí hlásit nic pod prahem — to je signál pro UI.
+    const evenContext = computeSetSharpnessContext(evenSet)!;
+    expect(evenContext.softCount).toBe(0);
+    expect(evenContext.badCount).toBe(0);
+  });
+
   it('u malé sady se relativní pravidlo vypne', () => {
     const tooFew = evenSet.slice(0, SHARPNESS_CONTEXT_MIN_SAMPLES - 1);
     expect(computeSetSharpnessContext(tooFew)).toBeNull();

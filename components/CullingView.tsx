@@ -91,6 +91,7 @@ const CullingView: React.FC<CullingViewProps> = ({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageTotals>(() => getUsageTotals());
+  const [sharpnessStats, setSharpnessStats] = useState<SetSharpnessContext | null>(null);
 
   useEffect(() => subscribeUsage(setUsage), []);
 
@@ -170,6 +171,7 @@ const CullingView: React.FC<CullingViewProps> = ({
     sharpnessContextRef.current = computeSetSharpnessContext(
       Array.from(workMap.values()).map(r => r.metrics.nativeSharpness)
     );
+    setSharpnessStats(sharpnessContextRef.current);
 
     // Série: union-find nad hashi, reprezentant = nejvyšší skóre.
     applySimilarity(workMap);
@@ -737,6 +739,47 @@ const CullingView: React.FC<CullingViewProps> = ({
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Ostrost sady — proč culling vyřadil (nebo nevyřadil) to, co vyřadil. */}
+          {sharpnessStats && (
+            <div className="glass-panel rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
+                  {tr('cull_sharp_title')}
+                </span>
+                <span className="font-mono text-sm text-fm-blue">
+                  {Math.round(sharpnessStats.median)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_sharp_range')}</span>
+                <span className="font-mono text-gray-300">
+                  {Math.round(sharpnessStats.min)} – {Math.round(sharpnessStats.max)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_sharp_p10')}</span>
+                <span className="font-mono text-gray-300">{Math.round(sharpnessStats.p10)}</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_sharp_thresholds')}</span>
+                <span className="font-mono text-gray-300">
+                  {Math.round(sharpnessStats.softThreshold)} / {Math.round(sharpnessStats.badThreshold)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_sharp_below')}</span>
+                <span className="font-mono text-gray-300">
+                  {sharpnessStats.softCount} / {sharpnessStats.badCount}
+                </span>
+              </div>
+              {sharpnessStats.softCount === 0 && (
+                <p className="text-[9px] text-gray-600 leading-snug pt-1">
+                  {tr('cull_sharp_even_set')}
+                </p>
+              )}
             </div>
           )}
 
