@@ -16,6 +16,12 @@ vi.mock('@google/genai', () => ({
     MEDIUM: 'MEDIUM',
     HIGH: 'HIGH',
   },
+  MediaResolution: {
+    MEDIA_RESOLUTION_UNSPECIFIED: 'MEDIA_RESOLUTION_UNSPECIFIED',
+    MEDIA_RESOLUTION_LOW: 'MEDIA_RESOLUTION_LOW',
+    MEDIA_RESOLUTION_MEDIUM: 'MEDIA_RESOLUTION_MEDIUM',
+    MEDIA_RESOLUTION_HIGH: 'MEDIA_RESOLUTION_HIGH',
+  },
 }));
 
 vi.mock('../utils/apiKey', () => ({
@@ -73,6 +79,8 @@ describe('Gemini culling configuration', () => {
     // u thinking modelů vedou ke smyčkám a tím k vyšší spotřebě.
     expect(request.config.temperature).toBeUndefined();
     expect(request.config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
+    // Bez tohohle stojí náhled 3:2 přes 1 500 tokenů místo 256.
+    expect(request.config.mediaResolution).toBe('MEDIA_RESOLUTION_MEDIUM');
     expect(request.contents.parts[0].text).toContain('faces detected: 1');
     expect(request.contents.parts[0].text).toContain('Osobní profil vkusu');
   });

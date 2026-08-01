@@ -16,6 +16,7 @@ import {
   type PhotoAnalysis,
 } from '../utils/cullingEngine';
 import { getTasteProfile, recordTasteSample, tasteHintForAi } from '../services/tasteEngine';
+import { getUsageTotals, resetUsage, subscribeUsage, type UsageTotals } from '../services/aiUsage';
 import { SparklesIcon, StackIcon, XCircleIcon } from './icons';
 import Aperture from './common/Aperture';
 import Header from './Header';
@@ -36,6 +37,17 @@ type Filter = 'all' | CullingDecision;
 
 const AI_CONCURRENCY = 3;
 const DECODE_CONCURRENCY = 3;
+
+// Culling se pohybuje v setinách centu na fotku — dvě desetinná místa by celý
+// běh ukázala jako $0.00. Pod cent proto přepínáme na čtyři.
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '$0.00';
+  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+
+function formatTokens(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
+}
 
 const DECISION_STYLE: Record<CullingDecision, { chip: string; label: string; ring: string }> = {
   keep: { chip: 'bg-fm-green/90 text-black', label: 'K', ring: 'ring-fm-green' },
@@ -75,6 +87,9 @@ const CullingView: React.FC<CullingViewProps> = ({
   const [collapseSeries, setCollapseSeries] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [usage, setUsage] = useState<UsageTotals>(() => getUsageTotals());
+
+  useEffect(() => subscribeUsage(setUsage), []);
 
   const cancelRef = useRef(false);
   const mapRef = useRef(cullingMap);
@@ -115,6 +130,9 @@ const CullingView: React.FC<CullingViewProps> = ({
   const runCulling = async () => {
     if (files.length === 0 || isRunning) return;
     cancelRef.current = false;
+    // Účet se počítá za běh, ne za session — jinak by se sady sčítaly dohromady
+    // a číslo by ztratilo vypovídací hodnotu.
+    resetUsage();
 
     // Fáze 1: lokální heuristiky (zdarma, bez API) — ostrost, expozice, šum,
     // kompozice, perceptual hash pro série. Worker drží UI plynulé.
@@ -705,6 +723,42 @@ const CullingView: React.FC<CullingViewProps> = ({
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Spotřeba AI za tenhle běh — účtenka, ne odhad. */}
+          {usage.calls > 0 && (
+            <div className="glass-panel rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
+                  {tr('cull_usage_title')}
+                </span>
+                <span className="font-mono text-sm text-fm-green">
+                  {formatUsd(usage.costUsd)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_usage_calls')}</span>
+                <span className="font-mono text-gray-300">{usage.calls}</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_usage_per_photo')}</span>
+                <span className="font-mono text-gray-300">
+                  {formatUsd(usage.costUsd / usage.calls)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_usage_tokens')}</span>
+                <span className="font-mono text-gray-300">
+                  {formatTokens(usage.promptTokens)} / {formatTokens(usage.outputTokens)}
+                </span>
+              </div>
+              {usage.thoughtTokens > 0 && (
+                <div className="flex items-center justify-between text-[10px] text-gray-500">
+                  <span>{tr('cull_usage_thinking')}</span>
+                  <span className="font-mono text-gray-300">{formatTokens(usage.thoughtTokens)}</span>
+                </div>
+              )}
             </div>
           )}
 

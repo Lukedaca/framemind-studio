@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, MediaResolution, ThinkingLevel } from '@google/genai';
 import type {
     AnalysisResult,
     AutoCropResult,
@@ -25,6 +25,7 @@ const PERMISSIVE_SAFETY_SETTINGS = [
 ] as any;
 import { sanitizeText } from '../utils/text';
 import { getApiKey } from '../utils/apiKey';
+import { recordUsage, type RawUsageMetadata } from './aiUsage';
 
 const IMAGE_GENERATION_MODEL = 'gemini-3.1-flash-image-preview';
 
@@ -823,6 +824,17 @@ const CULLING_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'] as const;
 // což paradoxně spotřebu zvyšuje.
 const CULLING_THINKING = { thinkingLevel: ThinkingLevel.LOW };
 
+// Gemini účtuje obrázek po dlaždicích a počet dlaždic se odvíjí od POMĚRU stran,
+// ne od velikosti — náhled 3:2 stojí 1 548 tokenů, ať má 768 px nebo 400 px.
+// mediaResolution ten strop nastaví přímo: MEDIUM = 256 tokenů, LOW = 64.
+//
+// MEDIUM u verdiktu: model vidí celou fotku v jednom pohledu místo šesti výřezů.
+// Detailní ostrost stejně rozhoduje lokální Laplacian na plném rozlišení, AI má
+// na starost moment, kompozici a výraz — na to jeden pohled stačí.
+// LOW u detekce žánru: rozpoznat "sport vs. portrét" jde i z hrubého náhledu.
+const CULLING_MEDIA_RESOLUTION = MediaResolution.MEDIA_RESOLUTION_MEDIUM;
+const GENRE_MEDIA_RESOLUTION = MediaResolution.MEDIA_RESOLUTION_LOW;
+
 const CULLING_SYSTEM_PROMPT = `Jsi expert na fotografický culling pro profesionální fotografy.
 Tvůj úkol: podívej se na jednu fotku, urči její žánr a rozhodni "keep", "review" nebo "reject" PODLE STANDARDŮ TOHO ŽÁNRU. Univerzální metr neexistuje — co je vada v produktovce, je styl ve streetu.
 
@@ -900,14 +912,18 @@ function isStructuredOutputFailure(error: unknown): boolean {
 }
 
 async function generateCullingJson<T>(
-    generate: (model: string) => Promise<{ text?: string }>,
+    generate: (model: string) => Promise<{ text?: string; usageMetadata?: RawUsageMetadata }>,
     fallbackError: string
 ): Promise<T> {
     let lastError: Error | null = null;
 
     for (let index = 0; index < CULLING_MODELS.length; index += 1) {
+        const model = CULLING_MODELS[index];
         try {
-            const response = await generate(CULLING_MODELS[index]);
+            const response = await generate(model);
+            // Spotřebu zapisujeme i u odpovědi, která se pak neparsuje — zaplacená
+            // byla stejně a bez ní by účet vycházel opticky nižší, než jaký přijde.
+            recordUsage(model, response.usageMetadata);
             return safeJsonParse<T>(response.text, fallbackError);
         } catch (error) {
             lastError = error instanceof Error ? error : new Error(String(error));
@@ -939,6 +955,7 @@ export const detectBatchGenre = async (
                 config: {
                     systemInstruction: GENRE_DETECT_PROMPT,
                     thinkingConfig: CULLING_THINKING,
+                    mediaResolution: GENRE_MEDIA_RESOLUTION,
                     maxOutputTokens: 1024,
                     responseMimeType: 'application/json',
                     responseSchema: GENRE_DETECT_SCHEMA,
@@ -1017,6 +1034,7 @@ export const getCullingVerdict = async (
                 config: {
                     systemInstruction: CULLING_SYSTEM_PROMPT,
                     thinkingConfig: CULLING_THINKING,
+                    mediaResolution: CULLING_MEDIA_RESOLUTION,
                     maxOutputTokens: 2048,
                     responseMimeType: 'application/json',
                     responseSchema: CULLING_RESPONSE_SCHEMA,
