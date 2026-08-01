@@ -8,6 +8,14 @@ vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
     models = { generateContent };
   },
+  // Mock musí nést i enumy, které service importuje jako hodnotu (ne jen typ).
+  ThinkingLevel: {
+    THINKING_LEVEL_UNSPECIFIED: 'THINKING_LEVEL_UNSPECIFIED',
+    MINIMAL: 'MINIMAL',
+    LOW: 'LOW',
+    MEDIUM: 'MEDIUM',
+    HIGH: 'HIGH',
+  },
 }));
 
 vi.mock('../utils/apiKey', () => ({
@@ -43,7 +51,7 @@ describe('Gemini culling configuration', () => {
     generateContent.mockReset();
   });
 
-  it('používá Gemini 3.5, system instruction a adaptivní thinking', async () => {
+  it('používá Gemini 3.6, system instruction a nízké thinking', async () => {
     generateContent.mockResolvedValueOnce({ text: responseText });
 
     await getCullingVerdict('data:image/jpeg;base64,AA==', {
@@ -57,17 +65,19 @@ describe('Gemini culling configuration', () => {
     });
 
     const request = generateContent.mock.calls[0][0];
-    expect(request.model).toBe('gemini-3.5-flash');
+    expect(request.model).toBe('gemini-3.6-flash');
     expect(request.config.systemInstruction).toContain('expert na fotografický culling');
     expect(request.config.systemInstruction).toContain('rozhoduje vrchol akce');
     expect(request.config.systemInstruction).toContain('selhává v tom, na čem v daném žánru záleží');
-    expect(request.config.temperature).toBe(0);
-    expect(request.config.thinkingConfig).toEqual({ thinkingBudget: -1 });
+    // Gemini 3 doporučuje ponechat výchozí temperature 1.0 — nižší hodnoty
+    // u thinking modelů vedou ke smyčkám a tím k vyšší spotřebě.
+    expect(request.config.temperature).toBeUndefined();
+    expect(request.config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
     expect(request.contents.parts[0].text).toContain('faces detected: 1');
     expect(request.contents.parts[0].text).toContain('Osobní profil vkusu');
   });
 
-  it('při nedostupném 3.5 modelu použije 2.5 fallback', async () => {
+  it('při nedostupném 3.6 modelu použije 3.5 fallback', async () => {
     generateContent
       .mockRejectedValueOnce(Object.assign(new Error('model not found'), { status: 404 }))
       .mockResolvedValueOnce({ text: responseText });
@@ -80,8 +90,8 @@ describe('Gemini culling configuration', () => {
 
     expect(verdict.decision).toBe('keep');
     expect(generateContent.mock.calls.map(([request]) => request.model)).toEqual([
+      'gemini-3.6-flash',
       'gemini-3.5-flash',
-      'gemini-2.5-flash',
     ]);
   });
 
@@ -97,8 +107,8 @@ describe('Gemini culling configuration', () => {
     });
 
     expect(generateContent.mock.calls.map(([request]) => request.model)).toEqual([
+      'gemini-3.6-flash',
       'gemini-3.5-flash',
-      'gemini-2.5-flash',
     ]);
   });
 });

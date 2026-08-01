@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import type {
     AnalysisResult,
     AutoCropResult,
@@ -812,7 +812,16 @@ export const assessQuality = async (file: File): Promise<QualityAssessment> => {
 
 // --- FrameMind AI Culling (žánrově adaptivní verdikty) ---
 
-const CULLING_MODELS = ['gemini-3.5-flash', 'gemini-2.5-flash'] as const;
+// 3.6 Flash je z rodiny Flash nejlevnější na výstupu ($7.50/1M vs $9.00 u 3.5),
+// a výstup je u cullingu většina účtu — thinking tokeny se účtují jako output.
+// Fallback drží 3.5 Flash pro případ výpadku/nedostupnosti novějšího modelu.
+const CULLING_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'] as const;
+
+// Culling je klasifikace s předpočítanými metrikami, ne řetězec úvah — hluboké
+// myšlení tu nic nepřidá, jen prodraží výstup. Gemini 3 navíc doporučuje nechat
+// temperature na výchozí 1.0; nižší hodnoty u thinking modelů vedou ke smyčkám,
+// což paradoxně spotřebu zvyšuje.
+const CULLING_THINKING = { thinkingLevel: ThinkingLevel.LOW };
 
 const CULLING_SYSTEM_PROMPT = `Jsi expert na fotografický culling pro profesionální fotografy.
 Tvůj úkol: podívej se na jednu fotku, urči její žánr a rozhodni "keep", "review" nebo "reject" PODLE STANDARDŮ TOHO ŽÁNRU. Univerzální metr neexistuje — co je vada v produktovce, je styl ve streetu.
@@ -929,8 +938,7 @@ export const detectBatchGenre = async (
                 },
                 config: {
                     systemInstruction: GENRE_DETECT_PROMPT,
-                    temperature: 0.1,
-                    thinkingConfig: { thinkingBudget: -1 },
+                    thinkingConfig: CULLING_THINKING,
                     maxOutputTokens: 1024,
                     responseMimeType: 'application/json',
                     responseSchema: GENRE_DETECT_SCHEMA,
@@ -1008,8 +1016,7 @@ export const getCullingVerdict = async (
                 },
                 config: {
                     systemInstruction: CULLING_SYSTEM_PROMPT,
-                    temperature: 0,
-                    thinkingConfig: { thinkingBudget: -1 },
+                    thinkingConfig: CULLING_THINKING,
                     maxOutputTokens: 2048,
                     responseMimeType: 'application/json',
                     responseSchema: CULLING_RESPONSE_SCHEMA,
