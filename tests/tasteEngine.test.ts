@@ -21,6 +21,7 @@ const metrics: CullingMetrics = {
   contrastScore: 0.85,
   noiseScore: 0.9,
   compositionScore: 0.9,
+  nativeSharpness: 0,
 };
 
 describe('tasteEngine', () => {

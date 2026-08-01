@@ -3,11 +3,14 @@ import {
   computeFinalScore,
   deriveHeuristicDecision,
   computeSimilarityGroups,
+  computeSetSharpnessContext,
+  classifySharpness,
   selectAiCandidates,
   getVerdictSource,
   reconcileAiDecision,
   AUDIT_MIN,
   AUDIT_MAX,
+  SHARPNESS_CONTEXT_MIN_SAMPLES,
   SIMILARITY_EXACT_LIMIT,
   type SimilarityInput,
 } from '../utils/cullingEngine';
@@ -23,7 +26,87 @@ const metrics = (overrides: Partial<CullingMetrics> = {}): CullingMetrics => ({
   contrastScore: 0.7,
   noiseScore: 0.8,
   compositionScore: 0.7,
+  nativeSharpness: 0,
   ...overrides,
+});
+
+describe('ostrost v kontextu sady', () => {
+  const evenSet = Array.from({ length: 20 }, (_, i) => 900 + i * 10); // 900–1090
+
+  it('vyrovnaná sada nevyřadí nic — práh je relativní, ne kvóta', () => {
+    const context = computeSetSharpnessContext(evenSet);
+    expect(context).not.toBeNull();
+
+    for (const value of evenSet) {
+      expect(classifySharpness(value, context)).toBe('normal');
+    }
+  });
+
+  it('snímek výrazně měkčí než sada je vada, mírně měkčí je riziko', () => {
+    const context = computeSetSharpnessContext(evenSet)!;
+    // medián ≈ 995 → soft pod ~448, bad pod ~219
+    expect(classifySharpness(150, context)).toBe('bad');
+    expect(classifySharpness(300, context)).toBe('soft');
+    expect(classifySharpness(800, context)).toBe('normal');
+  });
+
+  it('u malé sady se relativní pravidlo vypne', () => {
+    const tooFew = evenSet.slice(0, SHARPNESS_CONTEXT_MIN_SAMPLES - 1);
+    expect(computeSetSharpnessContext(tooFew)).toBeNull();
+    expect(classifySharpness(1, null)).toBe('unknown');
+  });
+
+  it('nezměřená ostrost nikdy nevyrobí vadu', () => {
+    const context = computeSetSharpnessContext(evenSet)!;
+    expect(classifySharpness(0, context)).toBe('unknown');
+    expect(classifySharpness(undefined, context)).toBe('unknown');
+  });
+
+  it('měkký snímek propadne na reject i s jinak slušným skóre', () => {
+    const context = computeSetSharpnessContext(evenSet)!;
+    const good = metrics({ nativeSharpness: 1000 });
+    const soft = metrics({ nativeSharpness: 100 });
+
+    // Stejné skóre i žánr, liší se jen ostrost proti sadě.
+    const keepDecision = deriveHeuristicDecision(good, 80, 'sport', { sharpnessContext: context });
+    const rejectDecision = deriveHeuristicDecision(soft, 80, 'sport', { sharpnessContext: context });
+
+    expect(keepDecision.decision).toBe('keep');
+    expect(rejectDecision.decision).toBe('reject');
+    expect(rejectDecision.risks).toContain('cull_risk_soft_vs_set');
+  });
+
+  it('bez kontextu se chová jako dřív — žádná regrese na starých datech', () => {
+    const soft = metrics({ nativeSharpness: 100 });
+    expect(deriveHeuristicDecision(soft, 80, 'sport', {}).decision).toBe('keep');
+  });
+
+  it('AI "keep" nepřebije měření na plném rozlišení', () => {
+    const context = computeSetSharpnessContext(evenSet)!;
+    const result = {
+      metrics: metrics({ nativeSharpness: 100 }),
+      finalScore: 80,
+      decision: 'reject',
+      reasons: [],
+      risks: [],
+      aspectRatio: 1.5,
+      aiStatus: 'idle',
+      genre: 'sport',
+    } as unknown as CullingResult;
+
+    const verdict = {
+      decision: 'keep',
+      genre: 'sport',
+      aiScore: 85,
+      summary: '',
+      reasons: [],
+      risks: [],
+    } as CullingResult['ai'] & { decision: 'keep' };
+
+    const reconciled = reconcileAiDecision(result, verdict as never, context);
+    expect(reconciled.decision).toBe('review');
+    expect(reconciled.disagreement).toBe(true);
+  });
 });
 
 describe('computeFinalScore', () => {

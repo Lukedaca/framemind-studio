@@ -54,6 +54,11 @@ export interface CullingMetrics {
   contrastScore: number; // 0-1
   noiseScore: number; // 0-1, 1 = čistý
   compositionScore: number; // 0-1
+  // Syrová Laplacian variance z nejostřejšího místa fotky, měřená na NATIVNÍM
+  // rozlišení. Není normalizovaná — absolutní hodnota závisí na objektivu,
+  // světle i scéně, takže dává smysl jen v porovnání se zbytkem sady.
+  // 0 = neměřeno (starší výsledky, fallback bez plného dekódu).
+  nativeSharpness: number;
 }
 
 export interface CullingAiVerdict {

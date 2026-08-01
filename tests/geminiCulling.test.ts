@@ -41,6 +41,7 @@ const metrics: CullingMetrics = {
   contrastScore: 0.7,
   noiseScore: 0.8,
   compositionScore: 0.72,
+  nativeSharpness: 0,
 };
 
 const responseText = JSON.stringify({

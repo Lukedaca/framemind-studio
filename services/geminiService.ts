@@ -982,6 +982,9 @@ export interface CullingVerdictContext {
     faceCount?: number;
     eyeBlink?: number;
     taste?: string | null;
+    // 'soft' / 'bad' = měření na nativním rozlišení říká, že je snímek měkčí
+    // než zbytek sady. Model to z náhledu nepozná, musí se mu to říct.
+    sharpnessStanding?: 'unknown' | 'normal' | 'soft' | 'bad';
 }
 
 export const getCullingVerdict = async (
@@ -1008,6 +1011,11 @@ export const getCullingVerdict = async (
             context.faceCount
                 ? `- faces detected: ${context.faceCount}${(context.eyeBlink ?? 0) >= 0.5 ? `, main face eyes likely CLOSED (blink ${Number(context.eyeBlink).toFixed(2)})` : (context.eyeBlink ?? 0) > 0 ? `, main face eyes open (blink ${Number(context.eyeBlink).toFixed(2)})` : ''}`
                 : null,
+            context.sharpnessStanding === 'bad'
+                ? '- MĚŘENÍ NA PLNÉM ROZLIŠENÍ: tenhle snímek je výrazně měkčí než zbytek sady (pod pětinou mediánu ostrosti). Na zmenšeném náhledu to nepoznáš — ber to jako tvrdý důkaz neostrosti, ne jako domněnku.'
+                : context.sharpnessStanding === 'soft'
+                    ? '- MĚŘENÍ NA PLNÉM ROZLIŠENÍ: tenhle snímek je měkčí než zbytek sady (pod polovinou mediánu ostrosti). Náhled to neukáže; zvaž to při rozhodování.'
+                    : null,
             context.genre
                 ? `Žánr celé sady byl klasifikován jako: ${context.genre}. Ber jako výchozí; pokud tahle konkrétní fotka zjevně patří jinam, urči vlastní žánr.`
                 : null,

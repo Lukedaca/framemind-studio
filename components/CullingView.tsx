@@ -8,12 +8,15 @@ import {
   buildCullingResult,
   rescoreCullingResult,
   computeSimilarityGroups,
+  computeSetSharpnessContext,
+  classifySharpness,
   getEffectiveDecision,
   getVerdictSource,
   reconcileAiDecision,
   selectAiCandidates,
   mapWithConcurrency,
   type PhotoAnalysis,
+  type SetSharpnessContext,
 } from '../utils/cullingEngine';
 import { getTasteProfile, recordTasteSample, tasteHintForAi } from '../services/tasteEngine';
 import { getUsageTotals, resetUsage, subscribeUsage, type UsageTotals } from '../services/aiUsage';
@@ -96,6 +99,9 @@ const CullingView: React.FC<CullingViewProps> = ({
   mapRef.current = cullingMap;
   const genreRef = useRef<BatchGenreInfo | null>(null);
   genreRef.current = genreInfo;
+  // Platí pro celý běh; přepočty po změně žánru ho musí použít taky, jinak by
+  // se relativní posouzení ostrosti při rescoru ztratilo.
+  const sharpnessContextRef = useRef<SetSharpnessContext | null>(null);
 
   const isRunning = phase === 'heuristics' || phase === 'genre' || phase === 'ai';
 
@@ -157,6 +163,13 @@ const CullingView: React.FC<CullingViewProps> = ({
     });
 
     if (cancelRef.current) { finishRun(workMap); return; }
+
+    // Ostrost se posuzuje proti mediánu sady, takže kontext jde spočítat až
+    // teď, když jsou naměřené všechny fotky. Není to kvóta — u vyrovnané sady
+    // nikdo pod práh nespadne a nevyřadí se nic.
+    sharpnessContextRef.current = computeSetSharpnessContext(
+      Array.from(workMap.values()).map(r => r.metrics.nativeSharpness)
+    );
 
     // Série: union-find nad hashi, reprezentant = nejvyšší skóre.
     applySimilarity(workMap);
@@ -223,8 +236,9 @@ const CullingView: React.FC<CullingViewProps> = ({
           faceCount: result.faceCount,
           eyeBlink: result.eyeBlink,
           taste: tasteHintForAi(),
+          sharpnessStanding: classifySharpness(result.metrics.nativeSharpness, sharpnessContextRef.current),
         });
-        const reconciled = reconcileAiDecision(result, verdict);
+        const reconciled = reconcileAiDecision(result, verdict, sharpnessContextRef.current);
         workMap.set(file.id, {
           ...result,
           ai: verdict,
@@ -286,13 +300,13 @@ const CullingView: React.FC<CullingViewProps> = ({
       // AI a ruční verdikty jsou autoritativní; heuristické se s novou skupinou přepočítají.
       workMap.set(id, current.aiStatus === 'done' || current.manualDecision
         ? withGroup
-        : rescoreCullingResult(withGroup, genreRef.current?.genre ?? null));
+        : rescoreCullingResult(withGroup, genreRef.current?.genre ?? null, sharpnessContextRef.current));
     }
   };
 
   const rescoreAll = (workMap: Map<string, CullingResult>, genre: CullingGenre) => {
     for (const [id, result] of workMap) {
-      workMap.set(id, rescoreCullingResult(result, genre));
+      workMap.set(id, rescoreCullingResult(result, genre, sharpnessContextRef.current));
     }
     applySimilarity(workMap);
   };

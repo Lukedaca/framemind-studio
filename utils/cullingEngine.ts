@@ -14,7 +14,13 @@ import type {
   CullingResult,
   CullingVerdictSource,
 } from '../types';
-import { readMetrics, hashToWords, hammingWords, clamp01 } from './cullingMetrics';
+import {
+  readMetrics,
+  hashToWords,
+  hammingWords,
+  clamp01,
+  laplacianVarianceOfPatch,
+} from './cullingMetrics';
 import { detectFaces, type FaceBoundingBox } from '../services/faceDetection';
 import { blendFinalScore } from '../services/tasteEngine';
 
@@ -107,6 +113,62 @@ export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre |
   return Math.round(clamp01(weighted) * 100 - clippingPenalty);
 }
 
+// --- Ostrost v kontextu sady ---
+
+/**
+ * Absolutní práh ostrosti nejde stanovit: Laplacian variance závisí na objektivu,
+ * světle, textuře scény i ISO. Sada z večerního zápasu má jiná čísla než sada
+ * z poledne, a přesto v obou platí, že promáchnutá fotka je výrazně měkčí než
+ * její sousedky.
+ *
+ * Proto se měří odstup od mediánu sady. Není to kvóta: když jsou všechny fotky
+ * podobně ostré, medián je vysoko, nikdo pod prahy nespadne a nevyřadí se nic —
+ * což je u povedené série správná odpověď. Vyletí jen snímky, které se z řady
+ * vymykají směrem dolů.
+ */
+export const SHARPNESS_SOFT_RATIO = 0.45; // pod tímhle podílem mediánu = riziko
+export const SHARPNESS_BAD_RATIO = 0.22; // pod tímhle = skutečná vada
+// Pod tímhle počtem měřených fotek je medián nespolehlivý a relativní pravidlo
+// se vypne — u pěti snímků nelze říct, co je pro sadu „normální".
+export const SHARPNESS_CONTEXT_MIN_SAMPLES = 8;
+
+export interface SetSharpnessContext {
+  median: number;
+  softThreshold: number;
+  badThreshold: number;
+  samples: number;
+}
+
+export function computeSetSharpnessContext(values: number[]): SetSharpnessContext | null {
+  const measured = values.filter((value) => Number.isFinite(value) && value > 0);
+  if (measured.length < SHARPNESS_CONTEXT_MIN_SAMPLES) return null;
+
+  const sorted = [...measured].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+  if (median <= 0) return null;
+
+  return {
+    median,
+    softThreshold: median * SHARPNESS_SOFT_RATIO,
+    badThreshold: median * SHARPNESS_BAD_RATIO,
+    samples: measured.length,
+  };
+}
+
+export type SharpnessStanding = 'unknown' | 'normal' | 'soft' | 'bad';
+
+export function classifySharpness(
+  nativeSharpness: number | undefined,
+  context: SetSharpnessContext | null | undefined
+): SharpnessStanding {
+  if (!context || !nativeSharpness || nativeSharpness <= 0) return 'unknown';
+  if (nativeSharpness < context.badThreshold) return 'bad';
+  if (nativeSharpness < context.softThreshold) return 'soft';
+  return 'normal';
+}
+
 export interface HeuristicDecision {
   decision: CullingDecision;
   reasons: string[]; // překladové klíče cull_reason_* / cull_risk_*
@@ -122,6 +184,7 @@ export function deriveHeuristicDecision(
     isBestInGroup?: boolean;
     faceCount?: number;
     eyeBlink?: number;
+    sharpnessContext?: SetSharpnessContext | null;
   }
 ): HeuristicDecision {
   const profile = GENRE_PROFILES[genre || 'other'] || GENRE_PROFILES.other;
@@ -130,6 +193,7 @@ export function deriveHeuristicDecision(
   const hasFace = (context.faceCount ?? 0) > 0;
   const eyeBlink = context.eyeBlink ?? 0;
   const eyesClosed = hasFace && profile.eyesMatter && eyeBlink >= 0.5;
+  const standing = classifySharpness(metrics.nativeSharpness, context.sharpnessContext);
 
   if (metrics.sharpnessScore >= 0.68) reasons.push('cull_reason_sharp');
   if (hasFace && profile.eyesMatter && eyeBlink < 0.3) reasons.push('cull_reason_open_eyes');
@@ -138,6 +202,8 @@ export function deriveHeuristicDecision(
   if (context.isBestInGroup) reasons.push('cull_reason_best_in_group');
 
   if (eyesClosed) risks.push('cull_risk_closed_eyes');
+  // Měkký proti zbytku sady je vlastní důvod: náhledová metrika tohle nepozná.
+  if (standing === 'soft' || standing === 'bad') risks.push('cull_risk_soft_vs_set');
   if (metrics.sharpnessScore < 0.36) risks.push('cull_risk_blur');
   if (metrics.exposureScore < 0.22) {
     risks.push(metrics.shadowClipping > metrics.highlightClipping ? 'cull_risk_underexposed' : 'cull_risk_exposure');
@@ -148,6 +214,7 @@ export function deriveHeuristicDecision(
   if (context.duplicateGroupId && !context.isBestInGroup) risks.push('cull_risk_duplicate');
 
   const hasMajorRisk =
+    standing === 'bad' ||
     metrics.sharpnessScore < 0.28 ||
     metrics.exposureScore < 0.16 ||
     metrics.highlightClipping > 0.16 ||
@@ -158,6 +225,7 @@ export function deriveHeuristicDecision(
   let decision: CullingDecision = 'review';
   if (
     !hasMajorRisk &&
+    standing !== 'soft' &&
     (!context.duplicateGroupId || context.isBestInGroup) &&
     (finalScore >= 74 || (context.isBestInGroup && finalScore >= 60))
   ) {
@@ -361,6 +429,49 @@ async function computeMetrics(imageData: ImageData): Promise<CullingMetrics> {
   }).catch(() => readMetrics(imageData.data, imageData.width, imageData.height));
 }
 
+// Mřížka 3×3 výřezů po 224 px z nativního rozlišení. Bereme MAXIMUM, ne průměr:
+// ostrá fotka má aspoň jedno místo s ostrými detaily, i když je pozadí měkké
+// bokehem nebo panningem. Rozmazaná fotka nemá ostré nic — tím se právě liší.
+// Průměr by trestal krátkou hloubku ostrosti, což je u sportu a portrétu záměr.
+const NATIVE_PATCH_SIZE = 224;
+const NATIVE_PATCH_GRID = 3;
+
+async function measureNativeSharpness(
+  source: CanvasImageSource,
+  width: number,
+  height: number
+): Promise<number> {
+  if (width < 32 || height < 32) return 0;
+
+  const patch = Math.min(NATIVE_PATCH_SIZE, width, height);
+  const canvas = document.createElement('canvas');
+  canvas.width = patch;
+  canvas.height = patch;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return 0;
+  // Žádné vyhlazování: výřez musí jít do měření přesně tak, jak je na snímku.
+  context.imageSmoothingEnabled = false;
+
+  let best = 0;
+  for (let row = 0; row < NATIVE_PATCH_GRID; row += 1) {
+    for (let col = 0; col < NATIVE_PATCH_GRID; col += 1) {
+      // Středy buněk mřížky — pokryjí subjekt, ať je kdekoli v kompozici.
+      const centerX = ((col + 0.5) / NATIVE_PATCH_GRID) * width;
+      const centerY = ((row + 0.5) / NATIVE_PATCH_GRID) * height;
+      const sourceX = Math.max(0, Math.min(width - patch, Math.round(centerX - patch / 2)));
+      const sourceY = Math.max(0, Math.min(height - patch, Math.round(centerY - patch / 2)));
+
+      context.clearRect(0, 0, patch, patch);
+      context.drawImage(source, sourceX, sourceY, patch, patch, 0, 0, patch, patch);
+      const imageData = context.getImageData(0, 0, patch, patch);
+      const variance = laplacianVarianceOfPatch(imageData.data, patch, patch);
+      if (variance > best) best = variance;
+    }
+  }
+
+  return best;
+}
+
 async function measureFaceSharpness(
   source: CanvasImageSource,
   bbox: FaceBoundingBox,
@@ -439,6 +550,11 @@ export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
     const imageData = hCtx.getImageData(0, 0, hWidth, hHeight);
 
     const metrics = await computeMetrics(imageData);
+    metrics.nativeSharpness = await measureNativeSharpness(
+      loaded.source,
+      loaded.width,
+      loaded.height
+    );
     let faceCount = 0;
     let eyeBlink = 0;
 
@@ -486,12 +602,14 @@ export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
 
 export function buildCullingResult(
   analysis: PhotoAnalysis,
-  genre: CullingGenre | null
+  genre: CullingGenre | null,
+  sharpnessContext?: SetSharpnessContext | null
 ): CullingResult {
   const finalScore = blendFinalScore(computeFinalScore(analysis.metrics, genre), analysis.metrics);
   const heuristic = deriveHeuristicDecision(analysis.metrics, finalScore, genre, {
     faceCount: analysis.faceCount,
     eyeBlink: analysis.eyeBlink,
+    sharpnessContext,
   });
   return {
     metrics: analysis.metrics,
@@ -509,13 +627,18 @@ export function buildCullingResult(
 
 // Přepočet po změně žánru nebo doběhnutí skupin: skóre + heuristický verdikt.
 // AI verdikty a ruční rozhodnutí zůstávají autoritativní.
-export function rescoreCullingResult(result: CullingResult, genre: CullingGenre | null): CullingResult {
+export function rescoreCullingResult(
+  result: CullingResult,
+  genre: CullingGenre | null,
+  sharpnessContext?: SetSharpnessContext | null
+): CullingResult {
   const finalScore = blendFinalScore(computeFinalScore(result.metrics, genre), result.metrics);
   const heuristic = deriveHeuristicDecision(result.metrics, finalScore, genre, {
     duplicateGroupId: result.duplicateGroupId,
     isBestInGroup: result.isBestInGroup,
     faceCount: result.faceCount,
     eyeBlink: result.eyeBlink,
+    sharpnessContext,
   });
   const aiAuthoritative = result.aiStatus === 'done' && result.ai;
   return {
@@ -549,7 +672,8 @@ export function getVerdictSource(result: CullingResult | undefined): CullingVerd
  */
 export function reconcileAiDecision(
   result: CullingResult,
-  verdict: CullingAiVerdict
+  verdict: CullingAiVerdict,
+  sharpnessContext?: SetSharpnessContext | null
 ): { decision: CullingDecision; disagreement: boolean } {
   if (result.decision !== 'reject' || verdict.decision !== 'keep') {
     return { decision: verdict.decision, disagreement: false };
@@ -558,6 +682,10 @@ export function reconcileAiDecision(
   const profile = GENRE_PROFILES[verdict.genre || result.genre || 'other'] || GENRE_PROFILES.other;
   const metrics = result.metrics;
   const certainTechnicalFailure =
+    // Model vidí náhled, na kterém rozostření prakticky nepozná. Když měření na
+    // nativním rozlišení říká, že je snímek výrazně měkčí než zbytek sady, jeho
+    // optimistické "keep" nesmí ten důkaz smazat.
+    classifySharpness(metrics.nativeSharpness, sharpnessContext) === 'bad' ||
     metrics.sharpnessScore < 0.16 ||
     metrics.exposureScore < 0.08 ||
     metrics.highlightClipping > 0.28 ||
