@@ -4,6 +4,11 @@ import exifr from 'exifr';
 export const RAW_EXTENSIONS = [".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".dng", ".pef", ".rw2"];
 export const RAW_EXTENSIONS_STRING = RAW_EXTENSIONS.join(',');
 
+// Tento modul NENÍ RAW development engine. Extrahuje JPEG náhled vložený ve RAW
+// souboru (exifr preview/thumbnail, binární scan) a překóduje ho. UI to musí
+// prezentovat jako "RAW Quick Preview", nikdy jako plnohodnotnou RAW konverzi.
+export const RAW_OUTPUT_SOURCE = 'embedded-jpeg-preview' as const;
+
 export interface RawConvertOptions {
     quality: number;       // 1-100, JPEG quality
     maxResolution: number; // 0 = original, otherwise max long edge in px
