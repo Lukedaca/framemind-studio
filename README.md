@@ -5,7 +5,7 @@
 
   <p><strong>Propojujeme snímky s inteligencí.</strong></p>
 
-  <p>AI fotostudio pro fotografy přímo v prohlížeči — žánrový AI culling, editor, retuš,<br />RAW konverze, klientské galerie a CRM v jedné aplikaci.</p>
+  <p>AI fotostudio pro fotografy přímo v prohlížeči — žánrový AI culling, editor, retuš,<br />rychlé JPEG náhledy z RAW, klientské galerie a lokální CRM v jedné aplikaci.</p>
 
   <p>
     <a href="README.md"><img src="https://img.shields.io/badge/README-%C4%8Cesky-2f6fe0?style=for-the-badge" alt="Čeština" /></a>
@@ -39,9 +39,16 @@ Trojfázový výběr postavený na enginu FrameMind:
 
 1. **Lokální heuristiky** (zdarma, ve web workeru) — Laplacianova ostrost, expozice, šum, kompozice, perceptual-hash detekce sérií a duplicit
 2. **Rozpoznání žánru** — AI určí žánr celé sady ze tří náhledů; 9 žánrových profilů (sport, portrét, svatba, produkt, krajina, street, wildlife, reportáž, obecné) mění váhy i prahy — zavřené oči zabijí portrét, u sportu nevadí
-3. **AI verdikty** — Gemini rozhodne keep / review / reject podle standardů daného žánru, se shrnutím, důvody a riziky; jisté rejecty se přeskakují
+3. **AI verdikty** — Gemini rozhodne keep / review / reject podle standardů daného žánru, se shrnutím, důvody a riziky
 
-K tomu profi ovládání: klávesy **K / R / X** a šipky, sbalení sérií na reprezentanta s volbou „Tohle je vítěz", filtry podle verdiktu a jednorázové zahození rejectů.
+Dva režimy AI kontroly:
+
+- **Safe (výchozí)** — AI vizuálně posoudí každou fotku včetně heuristických rejectů. Žádná fotka není vyřazena jen na základě heuristiky.
+- **Economy** — jisté heuristické rejecty AI přeskočí a ověří jen auditní vzorek (5–20 fotek, ~10 %). Levnější, ale s vyšším rizikem falešného rejectu — UI na to před spuštěním upozorní a při špatném výsledku auditu doporučí Safe.
+
+Každá karta zobrazuje zdroj verdiktu (heuristika / AI ověřeno / ručně). Mazání rejectů ukazuje rozpad podle zdroje a rejecty označené jen heuristikou vyžadují samostatné potvrzení; akce jde vrátit přes Undo.
+
+K tomu profi ovládání: klávesy **K / R / X** a šipky, sbalení sérií na reprezentanta s volbou „Tohle je vítěz", filtry podle verdiktu.
 
 ## Další funkce
 
@@ -51,10 +58,10 @@ K tomu profi ovládání: klávesy **K / R / X** a šipky, sbalení sérií na r
 | **AI Autopilot** | Automatické vylepšení fotky + naučené tendence uživatele |
 | **Retuš** | AI retuš promptem i maskou, odstranění objektů, výměna pozadí |
 | **Batch Studio** | Hromadné úpravy a portrétní retuš celé série |
-| **RAW Converter** | Konverze RAW (CR2, NEF, ARW…) přímo v prohlížeči |
+| **RAW Quick Preview** | Rychlý export JPEG náhledu vloženého ve RAW souboru (CR2, NEF, ARW…). Nejde o plnohodnotné vyvolání RAW dat — exportuje se nejvyšší dostupné rozlišení náhledu |
 | **YouTube miniatury** | Generátor thumbnailů se 4 šablonami a textovým overlayem |
 | **AI Gallery** | Generování obrázků a správa AI assetů |
-| **Projekty & klienti** | CRM — zakázky, klienti, timeline aktivit, klientské galerie |
+| **Projekty & klienti** | Lokální CRM — zakázky, klienti, timeline aktivit, klientské galerie. Data jen v prohlížeči, bez synchronizace mezi zařízeními |
 | **PWA** | Instalovatelná z prohlížeče, offline-capable |
 | **CZ / EN** | Kompletní dvojjazyčné rozhraní |
 
@@ -67,15 +74,45 @@ npm install        # instalace závislostí
 npm run dev        # development server (port 3000)
 npm run build      # production build
 npm run preview    # preview production buildu
+npm run typecheck  # TypeScript kontrola (tsc --noEmit)
+npm run test:run   # jednotkové testy (Vitest)
 ```
 
-### API klíč
+CI (GitHub Actions) spouští typecheck, testy a build při každém pushi a pull requestu na `main`.
+
+### API klíč (BYOK)
 
 1. Spusť aplikaci a vlož svůj Google Gemini API klíč v UI (tlačítko **API** v horní liště).
 2. Klíč získáš zdarma v [Google AI Studiu](https://aistudio.google.com/app/apikey).
-3. Klíč se ukládá pouze lokálně v prohlížeči.
+3. Výchozí režim je **session-only** — klíč žije jen v `sessionStorage` a zavřením prohlížeče zmizí. Trvalé uložení do `localStorage` vyžaduje explicitní potvrzení.
 
-> **Bezpečnost:** API klíče nikdy nepatří do repozitáře ani do buildů.
+> **Bezpečnost:** API klíče nikdy nepatří do repozitáře ani do buildů. Úložiště prohlížeče není ekvivalent serverového zabezpečení — pro veřejný SaaS provoz bude nutný serverový proxy endpoint.
+
+---
+
+## Co je skutečně implementováno vs. co (zatím) není
+
+**Implementováno (běží lokálně v prohlížeči):**
+
+- lokální heuristiky cullingu (ostrost, expozice, šum, kompozice) ve web workeru
+- perceptual hash + detekce sérií a duplicit (pro velké sady LSH banding místo O(n²))
+- 9 žánrových profilů s vlastními váhami a prahy
+- Gemini AI verdikty s vysvětlením (keep / review / reject) + culling brief fotografa
+- Safe/Economy režim AI kontroly s auditem heuristických rejectů
+- ruční K/R/X workflow
+- lokální editor, retuš promptem/maskou (standardní API volání, odmítnutí modelu se respektuje)
+- extrakce embedded JPEG náhledu z RAW souborů
+- lokální CRM (localStorage, za storage abstrakcí)
+- BYOK Gemini režim (session-only default)
+
+**Není produkční SaaS — tyto věci zatím neexistují:**
+
+- serverová autentizace a účty
+- cloudová synchronizace dat (CRM je jen lokální)
+- skutečný billing — kredity jsou **demo** (localStorage), žádná platba neprobíhá
+- bezpečný serverový AI proxy (klíč je v prohlížeči uživatele)
+- týmové účty a auditní logy
+- skutečný RAW development engine (demosaicing) — jen embedded preview
 
 ---
 

@@ -5,7 +5,7 @@
 
   <p><strong>Connecting images with intelligence.</strong></p>
 
-  <p>An AI photo studio for photographers, right in the browser — genre-aware AI culling, editor, retouching,<br />RAW conversion, client galleries and CRM in a single app.</p>
+  <p>An AI photo studio for photographers, right in the browser — genre-aware AI culling, editor, retouching,<br />RAW quick previews, client galleries and a local CRM in a single app.</p>
 
   <p>
     <a href="README.md"><img src="https://img.shields.io/badge/README-%C4%8Cesky-555?style=for-the-badge" alt="Čeština" /></a>
@@ -39,9 +39,16 @@ A three-phase selection built on the FrameMind engine:
 
 1. **Local heuristics** (free, in a web worker) — Laplacian sharpness, exposure, noise, composition, perceptual-hash detection of series and duplicates
 2. **Genre detection** — the AI identifies the genre of the whole batch from three previews; 9 genre profiles (sports, portrait, wedding, product, landscape, street, wildlife, event, general) change the weights and thresholds — closed eyes kill a portrait but don't matter in sports
-3. **AI verdicts** — Gemini decides keep / review / reject by the standards of the detected genre, with a summary, reasons and risks; confident rejects are skipped
+3. **AI verdicts** — Gemini decides keep / review / reject by the standards of the detected genre, with a summary, reasons and risks
 
-Plus pro-grade controls: **K / R / X** keys and arrow navigation, series collapsed to a representative with a "This is the winner" pick, verdict filters and one-click discarding of rejects.
+Two AI review modes:
+
+- **Safe (default)** — the AI visually reviews every photo including heuristic rejects. No photo is dropped based on heuristics alone.
+- **Economy** — confident heuristic rejects skip the AI and only an audit sample (5–20 photos, ~10 %) is verified. Cheaper, but with a higher risk of false rejects — the UI warns before running and recommends Safe mode when the audit finds too many overturned rejects.
+
+Every card shows the verdict source (heuristic / AI reviewed / manual). Removing rejects shows a per-source breakdown, heuristic-only rejects require a separate confirmation, and the action can be reverted with Undo.
+
+Plus pro-grade controls: **K / R / X** keys and arrow navigation, series collapsed to a representative with a "This is the winner" pick, and verdict filters.
 
 ## More features
 
@@ -51,10 +58,10 @@ Plus pro-grade controls: **K / R / X** keys and arrow navigation, series collaps
 | **AI Autopilot** | Automatic photo enhancement + learned user tendencies |
 | **Retouching** | AI retouching by prompt or mask, object removal, background replacement |
 | **Batch Studio** | Bulk edits and portrait retouching for a whole series |
-| **RAW Converter** | RAW conversion (CR2, NEF, ARW…) right in the browser |
+| **RAW Quick Preview** | Quick JPEG export from the preview embedded in a RAW file (CR2, NEF, ARW…). This is not full RAW development — it exports the highest available embedded preview resolution |
 | **YouTube thumbnails** | Thumbnail generator with 4 templates and text overlay |
 | **AI Gallery** | Image generation and AI asset management |
-| **Projects & clients** | CRM — jobs, clients, activity timeline, client galleries |
+| **Projects & clients** | Local CRM — jobs, clients, activity timeline, client galleries. Data lives in this browser only, no cross-device sync |
 | **PWA** | Installable from the browser, offline-capable |
 | **CZ / EN** | Fully bilingual interface |
 
@@ -67,15 +74,45 @@ npm install        # install dependencies
 npm run dev        # development server (port 3000)
 npm run build      # production build
 npm run preview    # preview the production build
+npm run typecheck  # TypeScript check (tsc --noEmit)
+npm run test:run   # unit tests (Vitest)
 ```
 
-### API key
+CI (GitHub Actions) runs typecheck, tests and build on every push and pull request to `main`.
+
+### API key (BYOK)
 
 1. Launch the app and paste your Google Gemini API key in the UI (the **API** button in the top bar).
 2. You can get a key for free in [Google AI Studio](https://aistudio.google.com/app/apikey).
-3. The key is stored only locally in your browser.
+3. The default mode is **session-only** — the key lives in `sessionStorage` and disappears when the browser closes. Persistent `localStorage` storage requires explicit confirmation.
 
-> **Security:** API keys never belong in the repository or in builds.
+> **Security:** API keys never belong in the repository or in builds. Browser storage is not equivalent to server-side security — a server-side proxy will be required for public SaaS operation.
+
+---
+
+## What is actually implemented vs. what is not (yet)
+
+**Implemented (runs locally in the browser):**
+
+- local culling heuristics (sharpness, exposure, noise, composition) in a web worker
+- perceptual hash + series/duplicate detection (LSH banding instead of O(n²) for large sets)
+- 9 genre profiles with their own weights and thresholds
+- Gemini AI verdicts with explanations (keep / review / reject) + the photographer's culling brief
+- Safe/Economy AI review modes with an audit of heuristic rejects
+- manual K/R/X workflow
+- local editor, retouching by prompt/mask (standard API calls, model refusals are respected)
+- embedded JPEG preview extraction from RAW files
+- local CRM (localStorage, behind a storage abstraction)
+- BYOK Gemini mode (session-only default)
+
+**Not a production SaaS — these do not exist yet:**
+
+- server-side authentication and accounts
+- cloud data sync (the CRM is local only)
+- real billing — credits are **demo** (localStorage), no payment happens
+- a secure server-side AI proxy (the key lives in the user's browser)
+- team accounts and audit logs
+- a real RAW development engine (demosaicing) — embedded previews only
 
 ---
 
