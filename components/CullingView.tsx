@@ -10,6 +10,7 @@ import {
   computeSimilarityGroups,
   computeSetSharpnessContext,
   classifySharpness,
+  SHARPNESS_STANDING_AFFECTS_VERDICT,
   getEffectiveDecision,
   getVerdictSource,
   reconcileAiDecision,
@@ -238,7 +239,10 @@ const CullingView: React.FC<CullingViewProps> = ({
           faceCount: result.faceCount,
           eyeBlink: result.eyeBlink,
           taste: tasteHintForAi(),
-          sharpnessStanding: classifySharpness(result.metrics.nativeSharpness, sharpnessContextRef.current),
+          // Model dostane odstup od sady jen tehdy, když ho měření umí doložit.
+          sharpnessStanding: SHARPNESS_STANDING_AFFECTS_VERDICT
+            ? classifySharpness(result.metrics.nativeSharpness, sharpnessContextRef.current)
+            : 'unknown',
         });
         const reconciled = reconcileAiDecision(result, verdict, sharpnessContextRef.current);
         workMap.set(file.id, {
