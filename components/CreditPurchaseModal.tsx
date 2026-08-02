@@ -14,10 +14,12 @@ const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen, onClo
 
     if (!isOpen) return null;
 
+    // Demo režim: žádné ceny, žádná platba — jen přidání demo kreditů.
+    // Skutečné balíčky a platba přijdou až se serverovým billingem.
     const packages = [
-        { name: t.store_pack_basic, amount: 50, price: "$4.99", popular: false },
-        { name: t.store_pack_pro, amount: 150, price: "$12.99", popular: true },
-        { name: t.store_pack_ultra, amount: 500, price: "$34.99", popular: false },
+        { name: t.store_pack_basic, amount: 50, popular: false },
+        { name: t.store_pack_pro, amount: 150, popular: true },
+        { name: t.store_pack_ultra, amount: 500, popular: false },
     ];
 
     return (
@@ -37,9 +39,12 @@ const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen, onClo
                             <SparklesIcon className="w-8 h-8 text-warning" />
                         </div>
                         <h2 className="text-3xl font-black text-white mb-4">{t.store_title}</h2>
-                        <p className="text-text-secondary leading-relaxed mb-6">
+                        <p className="text-text-secondary leading-relaxed mb-4">
                             {t.store_desc}
                         </p>
+                        <div className="mb-6 p-3 border border-warning/40 bg-warning/10 text-warning text-xs font-semibold rounded-lg">
+                            {t.store_demo_notice}
+                        </div>
                         <ul className="space-y-3 text-sm text-text-primary">
                             <li className="flex items-center gap-2">
                                 <span className="text-success">✓</span> Gemini 3 Pro Quality
@@ -73,11 +78,11 @@ const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen, onClo
                                         </div>
                                         <div>
                                             <h3 className="font-bold text-white">{pkg.name}</h3>
-                                            <p className="text-xs text-text-secondary font-bold">{pkg.amount} Credits</p>
+                                            <p className="text-xs text-text-secondary font-bold">{pkg.amount} demo</p>
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <span className="block font-black text-white text-lg">{pkg.price}</span>
+                                        <span className="block font-black text-white text-lg">DEMO</span>
                                         <span className="text-[10px] text-accent opacity-0 group-hover:opacity-100 transition-opacity uppercase font-bold">{t.store_btn_buy}</span>
                                     </div>
                                 </div>
