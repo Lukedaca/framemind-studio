@@ -31,11 +31,20 @@ export const base64ToFile = async (base64: string, filename: string, mimeType: s
  * Normalizes an image file: ensures it's a JPEG and resizes it only if absolutely necessary.
  * Falls back to original file if processing fails.
  */
+export const isJpegFile = (file: File): boolean =>
+    /^(?:image\/(?:jpeg|jpg|pjpeg))$/i.test(file.type) || /\.jpe?g$/i.test(file.name);
+
 export const normalizeImageFile = (
     file: File,
     maxSize = 6000, 
     quality = 0.98 
 ): Promise<File> => {
+    // JPEG je už cílový formát. Zachováme původní soubor bajt po bajtu a
+    // vyhneme se nákladnému dekódování + opětovné ztrátové kompresi při importu.
+    if (isJpegFile(file)) {
+        return Promise.resolve(file);
+    }
+
     return new Promise((resolve) => {
         // Fallback mechanism: if anything fails, resolve with original file
         const safeResolve = () => {
@@ -421,77 +430,7 @@ export const applyEditsAndExport = (
   });
 };
 
-// --- Patch-based retouch helpers (bypass safety filter cropováním) ---
-
-const loadImageFromFile = (file: File): Promise<HTMLImageElement> => {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(img);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('Failed to load image from file'));
-    };
-    img.src = url;
-  });
-};
-
 export type CropRect = { x: number; y: number; width: number; height: number };
-
-/**
- * Vyřízne čtvercový patch kolem bbox s paddingem a resizem na targetSize.
- * Vrátí patch File + skutečný cropRect v originálních souřadnicích (pro pozdější composite).
- */
-export const cropPatchFromFile = async (
-  file: File,
-  bbox: CropRect,
-  targetSize: number = 768,
-  paddingRatio: number = 0.3
-): Promise<{ patchFile: File; cropRect: CropRect; bboxInPatch: CropRect }> => {
-  const img = await loadImageFromFile(file);
-
-  const longSide = Math.max(bbox.width, bbox.height);
-  const padded = Math.ceil(longSide * (1 + paddingRatio * 2));
-  const cropSize = Math.min(padded, Math.min(img.width, img.height));
-
-  const cx = bbox.x + bbox.width / 2;
-  const cy = bbox.y + bbox.height / 2;
-
-  let cropX = Math.round(cx - cropSize / 2);
-  let cropY = Math.round(cy - cropSize / 2);
-  cropX = Math.max(0, Math.min(img.width - cropSize, cropX));
-  cropY = Math.max(0, Math.min(img.height - cropSize, cropY));
-
-  const cropRect: CropRect = { x: cropX, y: cropY, width: cropSize, height: cropSize };
-
-  const canvas = document.createElement('canvas');
-  canvas.width = targetSize;
-  canvas.height = targetSize;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas context unavailable');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, cropX, cropY, cropSize, cropSize, 0, 0, targetSize, targetSize);
-
-  const blob: Blob = await new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Patch toBlob failed'))), 'image/jpeg', 0.95);
-  });
-  const patchFile = new File([blob], `patch_${file.name}`, { type: 'image/jpeg' });
-
-  // Vypočítaj bbox uvnitř patche (po cropu+resizu na targetSize)
-  const scale = targetSize / cropSize;
-  const bboxInPatch: CropRect = {
-    x: Math.max(0, Math.round((bbox.x - cropX) * scale)),
-    y: Math.max(0, Math.round((bbox.y - cropY) * scale)),
-    width: Math.min(targetSize, Math.round(bbox.width * scale)),
-    height: Math.min(targetSize, Math.round(bbox.height * scale)),
-  };
-
-  return { patchFile, cropRect, bboxInPatch };
-};
 
 /**
  * Načte base64 PNG masku a najde bounding box bílých (alpha > 0, brightness > 0.5) pixelů.
@@ -527,123 +466,4 @@ export const findMaskBoundingBox = async (maskBase64: string): Promise<CropRect 
   }
   if (maxX < 0 || maxY < 0) return null;
   return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
-};
-
-/**
- * Vyřízne masku ve stejných souřadnicích jako cropPatchFromFile a vrátí base64 PNG resizovanou na targetSize.
- */
-export const cropMaskPatch = async (
-  maskBase64: string,
-  cropRect: CropRect,
-  targetSize: number
-): Promise<string> => {
-  const img: HTMLImageElement = await new Promise((resolve, reject) => {
-    const i = new Image();
-    i.onload = () => resolve(i);
-    i.onerror = () => reject(new Error('Mask load failed'));
-    i.src = `data:image/png;base64,${maskBase64}`;
-  });
-  const canvas = document.createElement('canvas');
-  canvas.width = targetSize;
-  canvas.height = targetSize;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas context unavailable');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, cropRect.x, cropRect.y, cropRect.width, cropRect.height, 0, 0, targetSize, targetSize);
-  return canvas.toDataURL('image/png').split(',')[1];
-};
-
-/**
- * Aplikuje silný Gaussian blur na zadanou oblast uvnitř File a vrátí novou File.
- * Použito jako safety bypass: tetování → rozmazaná skvrna → AI nepozná, projde safety, deblurne čistě.
- */
-export const blurRegionInFile = async (
-  file: File,
-  region: CropRect,
-  blurRadius: number = 40,
-  outputMime: string = 'image/jpeg',
-  quality: number = 0.92
-): Promise<File> => {
-  const img = await loadImageFromFile(file);
-
-  // 1) Vykresli celý obrázek
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas context unavailable');
-  ctx.drawImage(img, 0, 0);
-
-  // 2) Aplikuj blur jen na region — vyřízni, blurni přes filter, vykresli zpět
-  const pad = Math.round(blurRadius * 1.5);
-  const sx = Math.max(0, region.x - pad);
-  const sy = Math.max(0, region.y - pad);
-  const sw = Math.min(img.width - sx, region.width + pad * 2);
-  const sh = Math.min(img.height - sy, region.height + pad * 2);
-
-  // Tmpcanvas s blurnutým regionem (i s padding pro plynulý okraj)
-  const tmp = document.createElement('canvas');
-  tmp.width = sw;
-  tmp.height = sh;
-  const tctx = tmp.getContext('2d');
-  if (!tctx) throw new Error('Canvas context unavailable');
-  tctx.filter = `blur(${blurRadius}px)`;
-  tctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-  tctx.filter = 'none';
-
-  // Vykresli blurnutý region zpět do main canvas
-  ctx.drawImage(tmp, 0, 0, sw, sh, sx, sy, sw, sh);
-
-  const blob: Blob = await new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error('Blur toBlob failed'))),
-      outputMime,
-      outputMime === 'image/jpeg' ? quality : undefined
-    );
-  });
-
-  const ext = outputMime === 'image/png' ? 'png' : 'jpg';
-  const baseName = file.name.replace(/\.[^/.]+$/, '');
-  return new File([blob], `blurred_${baseName}.${ext}`, { type: outputMime });
-};
-
-/**
- * Slepi retušovaný patch zpět do originálního obrázku na pozici cropRect.
- * Patch může mít jiné rozlišení než cropRect — automaticky se resizuje.
- */
-export const compositePatchIntoFile = async (
-  originalFile: File,
-  patchFile: File,
-  cropRect: CropRect,
-  outputMime: string = 'image/jpeg',
-  quality: number = 0.95
-): Promise<File> => {
-  const [origImg, patchImg] = await Promise.all([
-    loadImageFromFile(originalFile),
-    loadImageFromFile(patchFile),
-  ]);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = origImg.width;
-  canvas.height = origImg.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas context unavailable');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-
-  ctx.drawImage(origImg, 0, 0);
-  ctx.drawImage(patchImg, 0, 0, patchImg.width, patchImg.height, cropRect.x, cropRect.y, cropRect.width, cropRect.height);
-
-  const blob: Blob = await new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error('Composite toBlob failed'))),
-      outputMime,
-      outputMime === 'image/jpeg' ? quality : undefined
-    );
-  });
-
-  const ext = outputMime === 'image/png' ? 'png' : 'jpg';
-  const baseName = originalFile.name.replace(/\.[^/.]+$/, '');
-  return new File([blob], `retouched_${baseName}.${ext}`, { type: outputMime });
 };

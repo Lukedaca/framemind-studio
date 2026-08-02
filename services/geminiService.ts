@@ -12,17 +12,7 @@ import type {
     QualityAssessment,
     YouTubeThumbnailTemplate,
 } from '../types';
-import { fileToBase64, base64ToFile, cropPatchFromFile, compositePatchIntoFile, blurRegionInFile, findMaskBoundingBox, cropMaskPatch, type CropRect } from '../utils/imageProcessor';
-
-// Maximální permisivní safety settings (nemá vliv na server-side IMAGE_SAFETY,
-// ale snižuje false-positives na text harm kategoriích)
-const PERMISSIVE_SAFETY_SETTINGS = [
-    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
-] as any;
+import { fileToBase64, base64ToFile, findMaskBoundingBox } from '../utils/imageProcessor';
 import { sanitizeText } from '../utils/text';
 import { getApiKey } from '../utils/apiKey';
 import { recordUsage, type RawUsageMetadata } from './aiUsage';
@@ -164,7 +154,8 @@ function safeJsonParse<T>(text: string | undefined, fallbackError: string): T {
         cleanText = cleanText.trim();
         return JSON.parse(cleanText) as T;
     } catch (e) {
-        console.error('Failed to parse AI response:', text);
+        // Obsah odpovědi nelogovat — může parafrázovat obsah fotky/promptu.
+        console.error('Failed to parse AI response (invalid JSON)');
         throw new Error(`${fallbackError}: Invalid JSON from AI`);
     }
 }
@@ -238,15 +229,15 @@ function getInlineImageData(response: any) {
         part.inlineData?.data
     );
     if (!imagePart) {
-        // Log what we got for debugging
         const textParts = candidate.content.parts
             .filter((p: any) => p.text)
             .map((p: any) => p.text)
             .join(' ');
-        console.warn('AI returned text instead of image:', textParts.slice(0, 200));
-        // Pokud text obsahuje typické safety odmítnutí, neretryovat
+        // Obsah textu nelogovat ani nepropagovat — může parafrázovat obsah fotky.
+        console.warn('AI returned text instead of image');
+        // Pokud text obsahuje typické safety odmítnutí, respektovat a neretryovat
         if (/cannot|can't|won't|not able|policy|safety|inappropriate|harmful/i.test(textParts)) {
-            throw new Error(`SAFETY_BLOCKED: model refused (${textParts.slice(0, 120)})`);
+            throw new Error('SAFETY_BLOCKED: model refused');
         }
         throw new Error('RETRYABLE: AI did not generate image - returned text instead');
     }
@@ -1066,7 +1057,10 @@ export const getCullingVerdict = async (
     });
 };
 
-// Direct full-image retouch (může trigger safety filter pro lidi)
+// Retuš celé fotky standardním API voláním. Když model úpravu odmítne
+// (SAFETY_BLOCKED), odmítnutí respektujeme — žádný další pokus, žádný
+// alternativní kontext. Původní soubor zůstává nedotčený, volající zobrazí
+// lokalizovanou hlášku přes services/aiErrors.
 const retouchFullImage = async (file: File, prompt: string): Promise<{ file: File }> => {
     return withRetry(async () => {
         const ai = getGenAI();
@@ -1081,255 +1075,30 @@ const retouchFullImage = async (file: File, prompt: string): Promise<{ file: Fil
             },
             config: {
                 responseModalities: ['image', 'text'],
-                safetySettings: PERMISSIVE_SAFETY_SETTINGS,
             }
         });
         const imagePart = getInlineImageData(response);
         return { file: await base64ToFile(imagePart.data, `retouched_${file.name}`, imagePart.mimeType) };
-    }, 5);
-};
-
-/**
- * Najde bounding box objektu/oblasti popsané promptem. Vrátí pixely v rámci originálu nebo null.
- * Používá gemini-2.5-flash s vision (native bbox capability v normalized 0-1000 souřadnicích).
- */
-const detectObjectBoundingBox = async (
-    file: File,
-    description: string
-): Promise<CropRect | null> => {
-    const ai = getGenAI();
-    const base64Image = await fileToBase64(file);
-    // Načti dimensions pro převod normalized → pixels
-    const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
-        const url = URL.createObjectURL(file);
-        const img = new Image();
-        img.onload = () => { URL.revokeObjectURL(url); resolve({ w: img.width, h: img.height }); };
-        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image dim read failed')); };
-        img.src = url;
     });
-
-    const detectPrompt = `Locate the region described as: "${description}".
-Return ONLY a JSON object in this exact format (no markdown, no explanation):
-{"box_2d": [ymin, xmin, ymax, xmax]}
-Coordinates must be integers normalized to 0-1000 (top-left origin).
-If the described region is not visible, return: {"box_2d": [0, 0, 0, 0]}`;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: {
-                parts: [
-                    { inlineData: { data: base64Image, mimeType: file.type } },
-                    { text: detectPrompt },
-                ],
-            },
-            config: { responseMimeType: 'application/json', safetySettings: PERMISSIVE_SAFETY_SETTINGS },
-        });
-        const text = (response as any).text || '';
-        const parsed = JSON.parse(text);
-        const box = Array.isArray(parsed?.box_2d) ? parsed.box_2d : null;
-        if (!box || box.length !== 4) return null;
-        const [ymin, xmin, ymax, xmax] = box.map((n: any) => Number(n));
-        if ([ymin, xmin, ymax, xmax].some((n) => !Number.isFinite(n))) return null;
-        if (ymax <= ymin || xmax <= xmin) return null;
-        // Convert 0-1000 normalized → pixels
-        const x = Math.round((xmin / 1000) * dims.w);
-        const y = Math.round((ymin / 1000) * dims.h);
-        const width = Math.round(((xmax - xmin) / 1000) * dims.w);
-        const height = Math.round(((ymax - ymin) / 1000) * dims.h);
-        if (width <= 0 || height <= 0) return null;
-        return { x, y, width, height };
-    } catch (e) {
-        console.warn('Bounding box detection failed:', e);
-        return null;
-    }
-};
-
-// Patch-level retouch s neutrální instrukcí — bez kontextu celé osoby projde safety filtrem
-const retouchPatchWithNeutralPrompt = async (patchFile: File): Promise<File> => {
-    return withRetry(async () => {
-        const ai = getGenAI();
-        const base64Patch = await fileToBase64(patchFile);
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-image-preview',
-            contents: {
-                parts: [
-                    { inlineData: { data: base64Patch, mimeType: patchFile.type } },
-                    { text: 'Professional photo retouching task: this is a close-up texture patch. Clean and smooth the entire surface so it looks uniform and natural. Remove any markings, scratches, dark patterns, ink or imperfections you see. Match the surrounding skin tone, lighting and texture so the result is seamless. Preserve original resolution, lighting direction and color balance. Return ONLY the edited image, no text.' },
-                ],
-            },
-            config: { responseModalities: ['image', 'text'], safetySettings: PERMISSIVE_SAFETY_SETTINGS },
-        });
-        const imagePart = getInlineImageData(response);
-        return base64ToFile(imagePart.data, `patch_${patchFile.name}`, imagePart.mimeType);
-    }, 3);
 };
 
 /**
- * Aggressive bypass: vezme patch s rozmazanou oblastí (blur aplikovaný lokálně v JS) a požádá AI o "deblur".
- * AI vidí jen rozmazanou skvrnu místo ostrého tetování → safety filter nemá co rozpoznat → projde.
- */
-const retouchBlurredPatchAsDeblur = async (blurredPatchFile: File): Promise<File> => {
-    return withRetry(async () => {
-        const ai = getGenAI();
-        const base64Patch = await fileToBase64(blurredPatchFile);
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-image-preview',
-            contents: {
-                parts: [
-                    { inlineData: { data: base64Patch, mimeType: blurredPatchFile.type } },
-                    { text: 'Image reconstruction task: a portion of this close-up texture patch is heavily blurred and degraded. Reconstruct the blurred region as clean, natural skin with smooth uniform texture matching the surrounding sharp area. Use intelligent inpainting to fill it with realistic skin tone and texture continuity. Keep sharp parts unchanged. Return ONLY the reconstructed image, no text.' },
-                ],
-            },
-            config: { responseModalities: ['image', 'text'], safetySettings: PERMISSIVE_SAFETY_SETTINGS },
-        });
-        const imagePart = getInlineImageData(response);
-        return base64ToFile(imagePart.data, `deblurred_${blurredPatchFile.name}`, imagePart.mimeType);
-    }, 3);
-};
-
-/**
- * Fallback retouch: detect bbox → crop patch → retouch jen patch (bez kontextu osoby) → composite zpět.
- *
- * Multi-size retry strategie: postupně zmenšuje patch a okolní kontext kolem bbox.
- * Pro každou velikost zkusí (1) čistý neutrální prompt, (2) blur+deblur.
- * Menší patch = méně kontextu pro safety filter = vyšší šance projít při fotkách
- * kde kolem editované oblasti jsou další triggery (prádlo, intimní partie, atd.).
- */
-const retouchViaPatchExtraction = async (file: File, prompt: string): Promise<{ file: File }> => {
-    const bbox = await detectObjectBoundingBox(file, prompt);
-    if (!bbox) {
-        throw new Error('PATCH_FALLBACK_FAILED: nepodařilo se najít oblast v obrázku. Zkus specifičtější popis (např. "tmavý vzor na pravém předloktí").');
-    }
-
-    // Strategy: víc kontextu = lepší blend, méně kontextu = vyšší šance obejít safety
-    const PATCH_STRATEGIES: Array<{ target: number; padding: number; label: string }> = [
-        { target: 768, padding: 0.30, label: '768/0.30 (default, nejlepší blend)' },
-        { target: 640, padding: 0.15, label: '640/0.15 (mid context)' },
-        { target: 512, padding: 0.08, label: '512/0.08 (low context)' },
-        { target: 384, padding: 0.04, label: '384/0.04 (minimal context — max safety bypass)' },
-    ];
-
-    let lastError: Error | null = null;
-
-    for (const strategy of PATCH_STRATEGIES) {
-        const { patchFile, cropRect, bboxInPatch } = await cropPatchFromFile(file, bbox, strategy.target, strategy.padding);
-        console.log(`[retouch] Patch strategy: ${strategy.label}`);
-
-        // Vrstva A: čistý patch s neutrálním promptem
-        try {
-            const retouchedPatch = await retouchPatchWithNeutralPrompt(patchFile);
-            console.log(`[retouch] Neutral prompt prošel se strategií ${strategy.label}`);
-            const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
-            return { file: merged };
-        } catch (e: any) {
-            if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
-            lastError = e;
-            console.warn(`[retouch] Neutral prompt blokován pro ${strategy.label}, zkouším blur+deblur...`);
-        }
-
-        // Vrstva B: pre-blur bbox v patchi → deblur prompt
-        try {
-            const blurredPatch = await blurRegionInFile(patchFile, bboxInPatch, 50);
-            const retouchedPatch = await retouchBlurredPatchAsDeblur(blurredPatch);
-            console.log(`[retouch] Blur+deblur prošel se strategií ${strategy.label}`);
-            const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
-            return { file: merged };
-        } catch (e: any) {
-            if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
-            lastError = e;
-            console.warn(`[retouch] Blur+deblur blokován pro ${strategy.label}, zkouším menší patch...`);
-        }
-    }
-
-    throw new Error('PATCH_FALLBACK_FAILED: Gemini blokuje všechny velikosti patche i s blur+deblur. Fotka má příliš mnoho safety triggerů (kombinace prádlo + tetování + póza). Zkus masku (štětec) v Retouch módu — namaluj přesně přes tetování a aplikuj.');
-};
-
-/**
- * Public retouch entry — zkusí full-image, při SAFETY blocku automaticky fallback na patch flow.
+ * Public retouch entry — jediné standardní volání. SAFETY_BLOCKED se propaguje
+ * volajícímu (UI zobrazí hlášku a nabídne ruční úpravy), žádný fallback
+ * s ochuzeným kontextem se nespouští.
  */
 export const retouchWithPrompt = async (file: File, prompt: string): Promise<{ file: File }> => {
-    try {
-        return await retouchFullImage(file, prompt);
-    } catch (e: any) {
-        const msg = e?.message || '';
-        if (msg.startsWith('SAFETY_BLOCKED:')) {
-            console.warn('Full-image retouch blocked by safety, trying patch extraction fallback...');
-            return await retouchViaPatchExtraction(file, prompt);
-        }
-        throw e;
-    }
+    return retouchFullImage(file, prompt);
 };
 
-// Patch + mask retouch — pošle jen vyříznutý patch + odpovídající kus masky
-const retouchMaskedPatch = async (patchFile: File, maskPatchBase64: string): Promise<File> => {
-    return withRetry(async () => {
-        const ai = getGenAI();
-        const base64Patch = await fileToBase64(patchFile);
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-image-preview',
-            contents: {
-                parts: [
-                    { inlineData: { data: base64Patch, mimeType: patchFile.type } },
-                    { inlineData: { data: maskPatchBase64, mimeType: 'image/png' } },
-                    { text: 'Professional photo retouching task: this is a close-up texture patch with an accompanying mask. The white areas in the mask indicate regions to inpaint. Replace the content in white-masked areas with seamless natural skin texture matching the surrounding sharp area. Match the surrounding tone, lighting and texture so the result is invisible. Keep non-masked areas unchanged. Preserve original resolution and color balance. Return ONLY the edited image, no text.' }
-                ]
-            },
-            config: { responseModalities: ['image', 'text'], safetySettings: PERMISSIVE_SAFETY_SETTINGS }
-        });
-        const imagePart = getInlineImageData(response);
-        return base64ToFile(imagePart.data, `masked_${patchFile.name}`, imagePart.mimeType);
-    }, 3);
-};
-
+// Standardní inpainting: celá fotka + maska v jednom podporovaném API volání.
+// Odmítnutí modelu se respektuje stejně jako u prompt retuše.
 export const retouchWithMask = async (file: File, maskBase64: string): Promise<{ file: File }> => {
-    // Najdi bbox masky → cropuj patch + masku → multi-size retry stejně jako u prompt flow
     const maskBbox = await findMaskBoundingBox(maskBase64);
     if (!maskBbox) {
-        throw new Error('PATCH_FALLBACK_FAILED: maska je prázdná. Namaluj přes oblast k retuši a zkus znovu.');
+        throw new Error('EMPTY_MASK');
     }
 
-    const PATCH_STRATEGIES: Array<{ target: number; padding: number; label: string }> = [
-        { target: 768, padding: 0.30, label: '768/0.30 (nejlepší blend)' },
-        { target: 640, padding: 0.15, label: '640/0.15' },
-        { target: 512, padding: 0.08, label: '512/0.08' },
-        { target: 384, padding: 0.04, label: '384/0.04 (minimum context)' },
-    ];
-
-    for (const strategy of PATCH_STRATEGIES) {
-        const { patchFile, cropRect, bboxInPatch } = await cropPatchFromFile(file, maskBbox, strategy.target, strategy.padding);
-        const maskPatchBase64 = await cropMaskPatch(maskBase64, cropRect, strategy.target);
-        console.log(`[mask retouch] Strategy: ${strategy.label}`);
-
-        // Vrstva A: patch + maska s neutrálním promptem
-        try {
-            const retouchedPatch = await retouchMaskedPatch(patchFile, maskPatchBase64);
-            console.log(`[mask retouch] Mask+patch prošel se strategií ${strategy.label}`);
-            const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
-            return { file: merged };
-        } catch (e: any) {
-            if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
-            console.warn(`[mask retouch] Mask+patch blokován pro ${strategy.label}, zkouším blur fallback...`);
-        }
-
-        // Vrstva B: pre-blur bbox v patchi → deblur prompt (bez masky, jen deblur)
-        try {
-            const blurredPatch = await blurRegionInFile(patchFile, bboxInPatch, 50);
-            const retouchedPatch = await retouchBlurredPatchAsDeblur(blurredPatch);
-            console.log(`[mask retouch] Blur+deblur prošel se strategií ${strategy.label}`);
-            const merged = await compositePatchIntoFile(file, retouchedPatch, cropRect, file.type || 'image/jpeg', 0.95);
-            return { file: merged };
-        } catch (e: any) {
-            if (!e?.message?.startsWith('SAFETY_BLOCKED:')) throw e;
-            console.warn(`[mask retouch] Blur+deblur blokován pro ${strategy.label}, zkouším menší patch...`);
-        }
-    }
-
-    throw new Error('PATCH_FALLBACK_FAILED: Gemini blokuje všechny strategie i s maskou. Tato fotka má příliš silné safety triggery — viz Settings pro alternativní engine.');
-};
-
-// LEGACY: původní full-image+mask volání (zachováno jako záloha, nepoužívá se z UI)
-const _retouchWithMaskFullImage = async (file: File, maskBase64: string): Promise<{ file: File }> => {
     return withRetry(async () => {
         const ai = getGenAI();
         const base64Image = await fileToBase64(file);
@@ -1348,5 +1117,5 @@ const _retouchWithMaskFullImage = async (file: File, maskBase64: string): Promis
         });
         const imagePart = getInlineImageData(response);
         return { file: await base64ToFile(imagePart.data, `retouched_${file.name}`, imagePart.mimeType) };
-    }, 5);
+    });
 };
