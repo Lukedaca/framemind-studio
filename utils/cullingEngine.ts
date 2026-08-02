@@ -22,6 +22,7 @@ import {
   laplacianVarianceOfPatch,
 } from './cullingMetrics';
 import { detectFaces, type FaceBoundingBox } from '../services/faceDetection';
+import { detectSubjects, type SubjectBox } from '../services/subjectDetection';
 import { blendFinalScore } from '../services/tasteEngine';
 
 export const HEURISTIC_MAX_SIDE = 420;
@@ -465,47 +466,44 @@ async function computeMetrics(imageData: ImageData): Promise<CullingMetrics> {
   }).catch(() => readMetrics(imageData.data, imageData.width, imageData.height));
 }
 
-// Mřížka 3×3 výřezů po 224 px z nativního rozlišení. Bereme MAXIMUM, ne průměr:
-// ostrá fotka má aspoň jedno místo s ostrými detaily, i když je pozadí měkké
-// bokehem nebo panningem. Rozmazaná fotka nemá ostré nic — tím se právě liší.
-// Průměr by trestal krátkou hloubku ostrosti, což je u sportu a portrétu záměr.
-const NATIVE_PATCH_SIZE = 224;
-const NATIVE_PATCH_GRID = 3;
+// Ostrost se měří uvnitř rámečku detekované osoby, v nativním rozlišení.
+//
+// Předchozí verze brala MAXIMUM z pevné mřížky 3×3 výřezů po 224 px. Na sadě
+// 114 fotek (fotbal) to nefungovalo: mřížka pokryje 1,9 % plochy snímku
+// 5616×3744, hráče systematicky míjí a měří hustotu textury scény — vysoko
+// tam, kde okno padlo na plný dav, nízko na prázdné tribuně. Rozptyl přes sadu
+// 982× mezi stejně ostrými snímky. Detekce subjektu tuhle loterii ruší.
+//
+// Strop 448 px drží měření levné i u hráče přes celý snímek a zároveň dělá
+// hodnoty srovnatelné napříč sadou. Bez škálování — jakýkoli resize by ostrost
+// změnil, a měřit chceme přesně to, co zaznamenal snímač.
+const SUBJECT_PATCH_MAX = 448;
 
-async function measureNativeSharpness(
+async function measureSubjectSharpness(
   source: CanvasImageSource,
+  subject: SubjectBox,
   width: number,
   height: number
 ): Promise<number> {
-  if (width < 32 || height < 32) return 0;
+  const patchW = Math.max(16, Math.min(SUBJECT_PATCH_MAX, Math.round(subject.w), width));
+  const patchH = Math.max(16, Math.min(SUBJECT_PATCH_MAX, Math.round(subject.h), height));
 
-  const patch = Math.min(NATIVE_PATCH_SIZE, width, height);
+  // Střed rámečku, zarovnaný dovnitř snímku.
+  const centerX = subject.x + subject.w / 2;
+  const centerY = subject.y + subject.h / 2;
+  const sourceX = Math.max(0, Math.min(width - patchW, Math.round(centerX - patchW / 2)));
+  const sourceY = Math.max(0, Math.min(height - patchH, Math.round(centerY - patchH / 2)));
+
   const canvas = document.createElement('canvas');
-  canvas.width = patch;
-  canvas.height = patch;
+  canvas.width = patchW;
+  canvas.height = patchH;
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) return 0;
-  // Žádné vyhlazování: výřez musí jít do měření přesně tak, jak je na snímku.
   context.imageSmoothingEnabled = false;
+  context.drawImage(source, sourceX, sourceY, patchW, patchH, 0, 0, patchW, patchH);
 
-  let best = 0;
-  for (let row = 0; row < NATIVE_PATCH_GRID; row += 1) {
-    for (let col = 0; col < NATIVE_PATCH_GRID; col += 1) {
-      // Středy buněk mřížky — pokryjí subjekt, ať je kdekoli v kompozici.
-      const centerX = ((col + 0.5) / NATIVE_PATCH_GRID) * width;
-      const centerY = ((row + 0.5) / NATIVE_PATCH_GRID) * height;
-      const sourceX = Math.max(0, Math.min(width - patch, Math.round(centerX - patch / 2)));
-      const sourceY = Math.max(0, Math.min(height - patch, Math.round(centerY - patch / 2)));
-
-      context.clearRect(0, 0, patch, patch);
-      context.drawImage(source, sourceX, sourceY, patch, patch, 0, 0, patch, patch);
-      const imageData = context.getImageData(0, 0, patch, patch);
-      const variance = laplacianVarianceOfPatch(imageData.data, patch, patch);
-      if (variance > best) best = variance;
-    }
-  }
-
-  return best;
+  const imageData = context.getImageData(0, 0, patchW, patchH);
+  return laplacianVarianceOfPatch(imageData.data, patchW, patchH);
 }
 
 async function measureFaceSharpness(
@@ -586,11 +584,27 @@ export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
     const imageData = hCtx.getImageData(0, 0, hWidth, hHeight);
 
     const metrics = await computeMetrics(imageData);
-    metrics.nativeSharpness = await measureNativeSharpness(
-      loaded.source,
-      loaded.width,
-      loaded.height
-    );
+
+    // Ostrost jen tam, kde je koho měřit. Když se osoba nenajde, zůstane 0 —
+    // classifySharpness to čte jako 'unknown' a pravidlo mlčí. To je správně:
+    // radši žádný verdikt než verdikt z náhodného místa snímku.
+    let subjectFound = false;
+    try {
+      const detected = await detectSubjects(loaded.source, loaded.width, loaded.height);
+      if (detected.primary) {
+        subjectFound = true;
+        metrics.nativeSharpness = await measureSubjectSharpness(
+          loaded.source,
+          detected.primary,
+          loaded.width,
+          loaded.height
+        );
+      }
+    } catch (error) {
+      console.warn(`Subject detection failed for ${file.name}:`, error);
+    }
+    metrics.subjectFound = subjectFound;
+
     let faceCount = 0;
     let eyeBlink = 0;
 

@@ -93,6 +93,9 @@ const CullingView: React.FC<CullingViewProps> = ({
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageTotals>(() => getUsageTotals());
   const [sharpnessStats, setSharpnessStats] = useState<SetSharpnessContext | null>(null);
+  // Kolika fotkám se našla osoba, na které jde ostrost změřit. Bez tohohle čísla
+  // nejde odlišit vyrovnanou sadu od sady, které detekce subjektu nesedla.
+  const [subjectStats, setSubjectStats] = useState<{ found: number; total: number } | null>(null);
 
   useEffect(() => subscribeUsage(setUsage), []);
 
@@ -169,10 +172,15 @@ const CullingView: React.FC<CullingViewProps> = ({
     // Ostrost se posuzuje proti mediánu sady, takže kontext jde spočítat až
     // teď, když jsou naměřené všechny fotky. Není to kvóta — u vyrovnané sady
     // nikdo pod práh nespadne a nevyřadí se nic.
+    const measured = Array.from(workMap.values());
     sharpnessContextRef.current = computeSetSharpnessContext(
-      Array.from(workMap.values()).map(r => r.metrics.nativeSharpness)
+      measured.map(r => r.metrics.nativeSharpness)
     );
     setSharpnessStats(sharpnessContextRef.current);
+    setSubjectStats({
+      found: measured.filter(r => r.metrics.subjectFound).length,
+      total: measured.length,
+    });
 
     // Série: union-find nad hashi, reprezentant = nejvyšší skóre.
     applySimilarity(workMap);
@@ -746,17 +754,32 @@ const CullingView: React.FC<CullingViewProps> = ({
             </div>
           )}
 
-          {/* Ostrost sady — proč culling vyřadil (nebo nevyřadil) to, co vyřadil. */}
-          {sharpnessStats && (
+          {/* Ostrost subjektu — proč culling vyřadil (nebo nevyřadil) to, co vyřadil. */}
+          {(sharpnessStats || subjectStats) && (
             <div className="glass-panel rounded-2xl p-4 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
                   {tr('cull_sharp_title')}
                 </span>
                 <span className="font-mono text-sm text-fm-blue">
-                  {Math.round(sharpnessStats.median)}
+                  {sharpnessStats ? Math.round(sharpnessStats.median) : '—'}
                 </span>
               </div>
+              {subjectStats && (
+                <div className="flex items-center justify-between text-[10px] text-gray-500">
+                  <span>{tr('cull_sharp_subject')}</span>
+                  <span className="font-mono text-gray-300">
+                    {subjectStats.found} / {subjectStats.total}
+                  </span>
+                </div>
+              )}
+              {subjectStats && subjectStats.total > 0 && subjectStats.found < subjectStats.total * 0.3 && (
+                <p className="text-[9px] text-gray-600 leading-snug pt-1">
+                  {tr('cull_sharp_no_subject')}
+                </p>
+              )}
+              {sharpnessStats && (
+              <>
               <div className="flex items-center justify-between text-[10px] text-gray-500">
                 <span>{tr('cull_sharp_range')}</span>
                 <span className="font-mono text-gray-300">
@@ -783,6 +806,8 @@ const CullingView: React.FC<CullingViewProps> = ({
                 <p className="text-[9px] text-gray-600 leading-snug pt-1">
                   {tr('cull_sharp_even_set')}
                 </p>
+              )}
+              </>
               )}
             </div>
           )}

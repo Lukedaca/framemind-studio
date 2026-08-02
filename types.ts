@@ -54,11 +54,14 @@ export interface CullingMetrics {
   contrastScore: number; // 0-1
   noiseScore: number; // 0-1, 1 = čistý
   compositionScore: number; // 0-1
-  // Syrová Laplacian variance z nejostřejšího místa fotky, měřená na NATIVNÍM
-  // rozlišení. Není normalizovaná — absolutní hodnota závisí na objektivu,
-  // světle i scéně, takže dává smysl jen v porovnání se zbytkem sady.
-  // 0 = neměřeno (starší výsledky, fallback bez plného dekódu).
+  // Syrová Laplacian variance uvnitř rámečku detekované osoby, měřená na
+  // NATIVNÍM rozlišení. Není normalizovaná — absolutní hodnota závisí na
+  // objektivu, světle i scéně, takže dává smysl jen v porovnání se zbytkem sady.
+  // 0 = neměřeno (osoba nenalezena, starší výsledky, fallback bez plného dekódu).
   nativeSharpness: number;
+  // Našel se na snímku někdo, na kom šlo ostrost změřit? Bez toho nejde poznat,
+  // jestli je nativeSharpness 0 kvůli chybě, nebo protože na fotce nikdo není.
+  subjectFound?: boolean;
 }
 
 export interface CullingAiVerdict {
