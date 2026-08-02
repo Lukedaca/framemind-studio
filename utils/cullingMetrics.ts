@@ -57,7 +57,32 @@ export function readMetrics(data: Uint8ClampedArray, width: number, height: numb
     contrastScore,
     noiseScore,
     compositionScore: composition.score,
+    nativeSharpness: 0, // doplní analyzePhotoPixels z plného rozlišení
   };
+}
+
+/**
+ * Laplacian variance jednoho výřezu měřeného na nativním rozlišení.
+ *
+ * Proč zvlášť od readMetrics: náhled 420 px zmenšuje fotku ze 6000 px zhruba
+ * 14×, takže pohybová neostrost 20 px z něj vyjde jako 1,4 px a bikubický
+ * downscale ji ještě vyhladí. Na zmenšenině proto rozmazaná fotka vypadá
+ * skoro stejně jako ostrá. Tohle měří pixely tak, jak je zaznamenal snímač.
+ */
+export function laplacianVarianceOfPatch(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): number {
+  const total = width * height;
+  if (total === 0) return 0;
+
+  const gray = new Float32Array(total);
+  for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
+    gray[p] = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+  }
+
+  return computeLaplacianVariance(gray, width, height);
 }
 
 function computeLaplacianVariance(gray: Float32Array, width: number, height: number): number {

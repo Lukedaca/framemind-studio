@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import type { UploadedFile, CullingResult, CullingGenre, CullingDecision, BatchGenreInfo } from '../types';
+import type { UploadedFile, CullingResult, CullingGenre, CullingDecision, CullingMode, CullingVerdictSource, BatchGenreInfo } from '../types';
 import { detectBatchGenre, getCullingVerdict } from '../services/geminiService';
 import {
   GENRE_PROFILES,
@@ -8,10 +8,18 @@ import {
   buildCullingResult,
   rescoreCullingResult,
   computeSimilarityGroups,
+  computeSetSharpnessContext,
+  classifySharpness,
   getEffectiveDecision,
+  getVerdictSource,
+  reconcileAiDecision,
+  selectAiCandidates,
   mapWithConcurrency,
   type PhotoAnalysis,
+  type SetSharpnessContext,
 } from '../utils/cullingEngine';
+import { getTasteProfile, recordTasteSample, tasteHintForAi } from '../services/tasteEngine';
+import { getUsageTotals, resetUsage, subscribeUsage, type UsageTotals } from '../services/aiUsage';
 import { SparklesIcon, StackIcon, XCircleIcon } from './icons';
 import Aperture from './common/Aperture';
 import Header from './Header';
@@ -33,10 +41,28 @@ type Filter = 'all' | CullingDecision;
 const AI_CONCURRENCY = 3;
 const DECODE_CONCURRENCY = 3;
 
+// Culling se pohybuje v setinách centu na fotku — dvě desetinná místa by celý
+// běh ukázala jako $0.00. Pod cent proto přepínáme na čtyři.
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '$0.00';
+  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+
+function formatTokens(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
+}
+
 const DECISION_STYLE: Record<CullingDecision, { chip: string; label: string; ring: string }> = {
   keep: { chip: 'bg-fm-green/90 text-black', label: 'K', ring: 'ring-fm-green' },
   review: { chip: 'bg-fm-blue/90 text-white', label: 'R', ring: 'ring-fm-blue' },
   reject: { chip: 'bg-fm-red/90 text-white', label: 'X', ring: 'ring-fm-red' },
+};
+
+// Zdroj verdiktu musí být na kartě vždy viditelný (heuristika ≠ AI ≠ ruční).
+const SOURCE_STYLE: Record<CullingVerdictSource, string> = {
+  manual: 'bg-white/15 backdrop-blur text-white',
+  ai: 'bg-fm-blue/25 text-fm-blue border border-fm-blue/40',
+  heuristic: 'bg-black/50 text-gray-300 border border-white/10',
 };
 
 const CullingView: React.FC<CullingViewProps> = ({
@@ -56,18 +82,27 @@ const CullingView: React.FC<CullingViewProps> = ({
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+  // Safe = výchozí. Economy jen po vědomé volbě uživatele (varování v UI).
+  const [mode, setMode] = useState<CullingMode>('safe');
   const [genreInfo, setGenreInfo] = useState<BatchGenreInfo | null>(null);
   const [brief, setBrief] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [collapseSeries, setCollapseSeries] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [usage, setUsage] = useState<UsageTotals>(() => getUsageTotals());
+  const [sharpnessStats, setSharpnessStats] = useState<SetSharpnessContext | null>(null);
+
+  useEffect(() => subscribeUsage(setUsage), []);
 
   const cancelRef = useRef(false);
   const mapRef = useRef(cullingMap);
   mapRef.current = cullingMap;
   const genreRef = useRef<BatchGenreInfo | null>(null);
   genreRef.current = genreInfo;
+  // Platí pro celý běh; přepočty po změně žánru ho musí použít taky, jinak by
+  // se relativní posouzení ostrosti při rescoru ztratilo.
+  const sharpnessContextRef = useRef<SetSharpnessContext | null>(null);
 
   const isRunning = phase === 'heuristics' || phase === 'genre' || phase === 'ai';
 
@@ -102,6 +137,9 @@ const CullingView: React.FC<CullingViewProps> = ({
   const runCulling = async () => {
     if (files.length === 0 || isRunning) return;
     cancelRef.current = false;
+    // Účet se počítá za běh, ne za session — jinak by se sady sčítaly dohromady
+    // a číslo by ztratilo vypovídací hodnotu.
+    resetUsage();
 
     // Fáze 1: lokální heuristiky (zdarma, bez API) — ostrost, expozice, šum,
     // kompozice, perceptual hash pro série. Worker drží UI plynulé.
@@ -126,6 +164,14 @@ const CullingView: React.FC<CullingViewProps> = ({
     });
 
     if (cancelRef.current) { finishRun(workMap); return; }
+
+    // Ostrost se posuzuje proti mediánu sady, takže kontext jde spočítat až
+    // teď, když jsou naměřené všechny fotky. Není to kvóta — u vyrovnané sady
+    // nikdo pod práh nespadne a nevyřadí se nic.
+    sharpnessContextRef.current = computeSetSharpnessContext(
+      Array.from(workMap.values()).map(r => r.metrics.nativeSharpness)
+    );
+    setSharpnessStats(sharpnessContextRef.current);
 
     // Série: union-find nad hashi, reprezentant = nejvyšší skóre.
     applySimilarity(workMap);
@@ -152,13 +198,21 @@ const CullingView: React.FC<CullingViewProps> = ({
 
     if (cancelRef.current) { finishRun(workMap); return; }
 
-    // Fáze 3: AI verdikty. Jisté rejecty přeskakujeme — heuristika už rozhodla,
-    // Gemini volání by jen pálilo kvótu (stejná optimalizace jako FrameMind Agent).
+    // Fáze 3: AI verdikty. Safe mode (výchozí) posílá do AI všechno včetně
+    // heuristických rejectů — heuristika je jen předběžný návrh. Economy mode
+    // jisté rejecty přeskočí a AI ověří jen auditní vzorek (5–20, ~10 %).
     setPhase('ai');
-    const candidates = files.filter(f => {
-      const result = workMap.get(f.id);
-      return result && result.decision !== 'reject' && analyses.has(f.id);
-    });
+    const selection = selectAiCandidates(
+      files
+        .filter(f => workMap.has(f.id) && analyses.has(f.id))
+        .map(f => {
+          const result = workMap.get(f.id)!;
+          return { id: f.id, decision: result.decision, finalScore: result.finalScore };
+        }),
+      mode
+    );
+    const candidateSet = new Set(selection.candidateIds);
+    const candidates = files.filter(f => candidateSet.has(f.id));
     // Kandidáti dostanou pending — na kartě se zapne scan-line „AI se dívá".
     for (const file of candidates) {
       const result = workMap.get(file.id)!;
@@ -181,15 +235,23 @@ const CullingView: React.FC<CullingViewProps> = ({
           isBestInGroup: result.isBestInGroup,
           genre: genreRef.current?.genre ?? null,
           brief,
+          faceCount: result.faceCount,
+          eyeBlink: result.eyeBlink,
+          taste: tasteHintForAi(),
+          sharpnessStanding: classifySharpness(result.metrics.nativeSharpness, sharpnessContextRef.current),
         });
+        const reconciled = reconcileAiDecision(result, verdict, sharpnessContextRef.current);
         workMap.set(file.id, {
           ...result,
           ai: verdict,
           aiStatus: 'done',
-          decision: verdict.decision,
+          decision: reconciled.decision,
+          aiDisagreement: reconciled.disagreement,
           genre: verdict.genre,
           reasons: verdict.reasons.length ? verdict.reasons : result.reasons,
-          risks: verdict.risks.length ? verdict.risks : result.risks,
+          risks: reconciled.disagreement
+            ? Array.from(new Set([...(verdict.risks.length ? verdict.risks : result.risks), 'cull_risk_ai_disagreement']))
+            : verdict.risks.length ? verdict.risks : result.risks,
         });
       } catch (error) {
         aiFailed += 1;
@@ -206,6 +268,21 @@ const CullingView: React.FC<CullingViewProps> = ({
     // AI mohla přehodit verdikty → přepočet reprezentantů sérií podle finálních skóre.
     applySimilarity(workMap);
     finishRun(workMap);
+
+    // Economy audit: kolik heuristických rejectů by AI zachránila? Významný
+    // podíl (≥20 % vzorku) = heuristika na téhle sadě střílí vedle → doporučit Safe.
+    if (mode === 'economy' && selection.auditIds.length > 0 && !cancelRef.current) {
+      const audited = selection.auditIds.filter(id => workMap.get(id)?.aiStatus === 'done');
+      const overturned = audited.filter(id => workMap.get(id)!.decision !== 'reject');
+      if (audited.length > 0) {
+        const summary = `${tr('cull_audit_result')} ${overturned.length}/${audited.length}`;
+        if (overturned.length / audited.length >= 0.2) {
+          addNotification(`${summary}. ${tr('cull_audit_recommend_safe')}`, 'error');
+        } else {
+          addNotification(summary, 'info');
+        }
+      }
+    }
 
     if (failed > 0) addNotification(`${failed} ${tr('cull_failed_count')}`, 'error');
     if (aiFailed > 0) addNotification(`${aiFailed} ${tr('cull_ai_failed_count')}`, 'error');
@@ -225,13 +302,13 @@ const CullingView: React.FC<CullingViewProps> = ({
       // AI a ruční verdikty jsou autoritativní; heuristické se s novou skupinou přepočítají.
       workMap.set(id, current.aiStatus === 'done' || current.manualDecision
         ? withGroup
-        : rescoreCullingResult(withGroup, genreRef.current?.genre ?? null));
+        : rescoreCullingResult(withGroup, genreRef.current?.genre ?? null, sharpnessContextRef.current));
     }
   };
 
   const rescoreAll = (workMap: Map<string, CullingResult>, genre: CullingGenre) => {
     for (const [id, result] of workMap) {
-      workMap.set(id, rescoreCullingResult(result, genre));
+      workMap.set(id, rescoreCullingResult(result, genre, sharpnessContextRef.current));
     }
     applySimilarity(workMap);
   };
@@ -255,7 +332,14 @@ const CullingView: React.FC<CullingViewProps> = ({
     if (!current) return;
     const next = new Map(mapRef.current);
     const toggledOff = current.manualDecision === decision;
-    next.set(id, { ...current, manualDecision: toggledOff ? undefined : decision });
+    const manualDecision = toggledOff ? undefined : decision;
+    next.set(id, { ...current, manualDecision });
+    if (
+      manualDecision &&
+      !(manualDecision === 'reject' && current.duplicateGroupId && !current.isBestInGroup)
+    ) {
+      recordTasteSample(current.metrics, manualDecision);
+    }
     setCullingMap(next);
     commitToFiles(next, tr('cull_manual_decision'));
   };
@@ -270,6 +354,7 @@ const CullingView: React.FC<CullingViewProps> = ({
         isBestInGroup: id === winnerId,
         groupRank: id === winnerId ? 1 : Math.max(2, result.groupRank ?? 2),
       });
+      if (id === winnerId) recordTasteSample(result.metrics, 'keep');
     }
     setCullingMap(next);
     commitToFiles(next, tr('cull_series_winner'));
@@ -291,14 +376,45 @@ const CullingView: React.FC<CullingViewProps> = ({
     }
   };
 
+  // Odstranění rejectů: vždy ukázat rozpad podle zdroje verdiktu. Heuristic-only
+  // rejecty (bez AI/ručního ověření) vyžadují samostatné explicitní potvrzení —
+  // jednoduchá heuristika nesmí sama definitivně vyřadit fotku. Akce jde přes
+  // App history, takže zůstává dostupné Undo.
   const removeRejects = () => {
-    const rejectIds = new Set(
-      files.filter(f => getEffectiveDecision(cullingMap.get(f.id)) === 'reject').map(f => f.id)
-    );
-    if (rejectIds.size === 0) return;
-    if (!window.confirm(`${tr('cull_remove_confirm')} (${rejectIds.size})`)) return;
-    onSetFiles(prev => prev.filter(f => !rejectIds.has(f.id)), tr('cull_remove_rejects'));
-    addNotification(`${rejectIds.size} ${tr('cull_removed_count')}`, 'info');
+    const rejects = files.filter(f => getEffectiveDecision(cullingMap.get(f.id)) === 'reject');
+    if (rejects.length === 0) return;
+
+    const bySource: Record<CullingVerdictSource, string[]> = { manual: [], ai: [], heuristic: [] };
+    for (const file of rejects) {
+      const source = getVerdictSource(cullingMap.get(file.id)) ?? 'heuristic';
+      bySource[source].push(file.id);
+    }
+
+    const summary = [
+      `${tr('cull_source_ai')}: ${bySource.ai.length}`,
+      `${tr('cull_source_manual')}: ${bySource.manual.length}`,
+      `${tr('cull_source_heuristic')}: ${bySource.heuristic.length}`,
+    ].join(' · ');
+
+    const confirmedIds = new Set<string>([...bySource.manual, ...bySource.ai]);
+    if (confirmedIds.size > 0) {
+      const ok = window.confirm(
+        `${tr('cull_remove_confirm')} (${confirmedIds.size})\n${summary}\n${tr('cull_remove_undo_hint')}`
+      );
+      if (!ok) return;
+    }
+    if (bySource.heuristic.length > 0) {
+      const alsoHeuristic = window.confirm(
+        `${tr('cull_remove_confirm_heur')} (${bySource.heuristic.length})`
+      );
+      if (alsoHeuristic) {
+        for (const id of bySource.heuristic) confirmedIds.add(id);
+      }
+    }
+    if (confirmedIds.size === 0) return;
+
+    onSetFiles(prev => prev.filter(f => !confirmedIds.has(f.id)), tr('cull_remove_rejects'));
+    addNotification(`${confirmedIds.size} ${tr('cull_removed_count')} — ${tr('cull_remove_undo_hint')}`, 'info');
   };
 
   // --- Odvozené pohledy ---
@@ -312,6 +428,7 @@ const CullingView: React.FC<CullingViewProps> = ({
     }
     return c;
   }, [files, cullingMap]);
+  const tasteProfile = getTasteProfile();
 
   const scored = files.length - counts.none;
 
@@ -372,6 +489,7 @@ const CullingView: React.FC<CullingViewProps> = ({
   const renderCard = (file: UploadedFile, inStrip = false) => {
     const result = cullingMap.get(file.id);
     const decision = getEffectiveDecision(result);
+    const source = getVerdictSource(result);
     const style = decision ? DECISION_STYLE[decision] : null;
     const isFocused = focusedId === file.id;
     const isRepresentative = !inStrip && result?.duplicateGroupId && result.isBestInGroup;
@@ -396,15 +514,27 @@ const CullingView: React.FC<CullingViewProps> = ({
               {style.label}
             </span>
           )}
-          {result?.manualDecision && (
-            <span className="bg-white/15 backdrop-blur text-white text-[8px] font-bold uppercase px-1.5 py-0.5 rounded-full">
-              {tr('cull_manual_tag')}
+          {source && (
+            <span className={`${SOURCE_STYLE[source]} text-[8px] font-bold uppercase px-1.5 py-0.5 rounded-full`}>
+              {tr(`cull_source_${source}`)}
             </span>
           )}
         </div>
         {result && (
-          <div className="absolute top-2 right-2 bg-black/60 backdrop-blur text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded">
-            {result.ai?.aiScore ?? result.finalScore}
+          <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+            <span className="bg-black/60 backdrop-blur text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded">
+              {result.ai?.aiScore ?? result.finalScore}
+            </span>
+            {(result.faceCount ?? 0) > 0 && (
+              <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full border backdrop-blur ${
+                (result.eyeBlink ?? 0) >= 0.5
+                  ? 'bg-fm-red/25 text-fm-red border-fm-red/40'
+                  : 'bg-black/55 text-gray-200 border-white/10'
+              }`}>
+                {result.faceCount} {tr('cull_faces')}
+                {(result.eyeBlink ?? 0) >= 0.5 ? ` · ${tr('cull_eyes_closed')}` : ''}
+              </span>
+            )}
           </div>
         )}
 
@@ -511,6 +641,55 @@ const CullingView: React.FC<CullingViewProps> = ({
             />
           </div>
 
+          {/* Režim AI kontroly */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_mode_label')}</label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(['safe', 'economy'] as CullingMode[]).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  disabled={isRunning}
+                  className={`py-2 rounded-lg text-[10px] font-bold uppercase transition-colors ${
+                    mode === m
+                      ? 'bg-white/10 text-white border border-white/25'
+                      : 'bg-elevated text-gray-500 border border-transparent hover:text-gray-300'
+                  }`}
+                >
+                  {tr(`cull_mode_${m}`)}
+                </button>
+              ))}
+            </div>
+            {mode === 'safe' ? (
+              <p className="text-[10px] text-gray-400 pl-1 leading-relaxed">{tr('cull_mode_safe_desc')}</p>
+            ) : (
+              <p className="text-[10px] text-fm-red leading-relaxed border border-fm-red/30 bg-fm-red/10 rounded-lg px-2.5 py-2">
+                {tr('cull_mode_economy_warning')}
+              </p>
+            )}
+          </div>
+
+          {/* Lokální profil vkusu */}
+          <div className="rounded-xl border border-border-subtle bg-elevated/70 px-3 py-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                {tr('cull_taste_title')}
+              </span>
+              <span className={`text-[9px] font-mono ${tasteProfile.ready ? 'text-fm-green' : 'text-gray-500'}`}>
+                {tasteProfile.samples}/{tasteProfile.minSamples}
+              </span>
+            </div>
+            <div className="h-1 rounded-full bg-black/40 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-fm-magenta via-fm-blue to-fm-green transition-all"
+                style={{ width: `${Math.min(100, (tasteProfile.samples / tasteProfile.minSamples) * 100)}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-gray-400 leading-relaxed">
+              {tasteProfile.ready ? tr('cull_taste_ready') : tr('cull_taste_learning')}
+            </p>
+          </div>
+
           {/* Spuštění */}
           {!isRunning ? (
             <button
@@ -560,6 +739,83 @@ const CullingView: React.FC<CullingViewProps> = ({
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Ostrost sady — proč culling vyřadil (nebo nevyřadil) to, co vyřadil. */}
+          {sharpnessStats && (
+            <div className="glass-panel rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
+                  {tr('cull_sharp_title')}
+                </span>
+                <span className="font-mono text-sm text-fm-blue">
+                  {Math.round(sharpnessStats.median)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_sharp_range')}</span>
+                <span className="font-mono text-gray-300">
+                  {Math.round(sharpnessStats.min)} – {Math.round(sharpnessStats.max)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_sharp_p10')}</span>
+                <span className="font-mono text-gray-300">{Math.round(sharpnessStats.p10)}</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_sharp_thresholds')}</span>
+                <span className="font-mono text-gray-300">
+                  {Math.round(sharpnessStats.softThreshold)} / {Math.round(sharpnessStats.badThreshold)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_sharp_below')}</span>
+                <span className="font-mono text-gray-300">
+                  {sharpnessStats.softCount} / {sharpnessStats.badCount}
+                </span>
+              </div>
+              {sharpnessStats.softCount === 0 && (
+                <p className="text-[9px] text-gray-600 leading-snug pt-1">
+                  {tr('cull_sharp_even_set')}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Spotřeba AI za tenhle běh — účtenka, ne odhad. */}
+          {usage.calls > 0 && (
+            <div className="glass-panel rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
+                  {tr('cull_usage_title')}
+                </span>
+                <span className="font-mono text-sm text-fm-green">
+                  {formatUsd(usage.costUsd)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_usage_calls')}</span>
+                <span className="font-mono text-gray-300">{usage.calls}</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_usage_per_photo')}</span>
+                <span className="font-mono text-gray-300">
+                  {formatUsd(usage.costUsd / usage.calls)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{tr('cull_usage_tokens')}</span>
+                <span className="font-mono text-gray-300">
+                  {formatTokens(usage.promptTokens)} / {formatTokens(usage.outputTokens)}
+                </span>
+              </div>
+              {usage.thoughtTokens > 0 && (
+                <div className="flex items-center justify-between text-[10px] text-gray-500">
+                  <span>{tr('cull_usage_thinking')}</span>
+                  <span className="font-mono text-gray-300">{formatTokens(usage.thoughtTokens)}</span>
+                </div>
+              )}
             </div>
           )}
 

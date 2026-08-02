@@ -7,11 +7,22 @@
 
 import type {
   CullingDecision,
+  CullingAiVerdict,
   CullingGenre,
   CullingMetrics,
+  CullingMode,
   CullingResult,
+  CullingVerdictSource,
 } from '../types';
-import { readMetrics, hashToWords, hammingWords, clamp01 } from './cullingMetrics';
+import {
+  readMetrics,
+  hashToWords,
+  hammingWords,
+  clamp01,
+  laplacianVarianceOfPatch,
+} from './cullingMetrics';
+import { detectFaces, type FaceBoundingBox } from '../services/faceDetection';
+import { blendFinalScore } from '../services/tasteEngine';
 
 export const HEURISTIC_MAX_SIDE = 420;
 export const AI_THUMB_MAX_SIDE = 768;
@@ -102,6 +113,77 @@ export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre |
   return Math.round(clamp01(weighted) * 100 - clippingPenalty);
 }
 
+// --- Ostrost v kontextu sady ---
+
+/**
+ * Absolutní práh ostrosti nejde stanovit: Laplacian variance závisí na objektivu,
+ * světle, textuře scény i ISO. Sada z večerního zápasu má jiná čísla než sada
+ * z poledne, a přesto v obou platí, že promáchnutá fotka je výrazně měkčí než
+ * její sousedky.
+ *
+ * Proto se měří odstup od mediánu sady. Není to kvóta: když jsou všechny fotky
+ * podobně ostré, medián je vysoko, nikdo pod prahy nespadne a nevyřadí se nic —
+ * což je u povedené série správná odpověď. Vyletí jen snímky, které se z řady
+ * vymykají směrem dolů.
+ */
+export const SHARPNESS_SOFT_RATIO = 0.45; // pod tímhle podílem mediánu = riziko
+export const SHARPNESS_BAD_RATIO = 0.22; // pod tímhle = skutečná vada
+// Pod tímhle počtem měřených fotek je medián nespolehlivý a relativní pravidlo
+// se vypne — u pěti snímků nelze říct, co je pro sadu „normální".
+export const SHARPNESS_CONTEXT_MIN_SAMPLES = 8;
+
+export interface SetSharpnessContext {
+  median: number;
+  softThreshold: number;
+  badThreshold: number;
+  samples: number;
+  // Diagnostika: bez rozsahu a percentilů nejde poznat, jestli sada nic
+  // nevyřadila proto, že je vyrovnaná, nebo proto, že jsou prahy mimo.
+  min: number;
+  max: number;
+  p10: number;
+  softCount: number;
+  badCount: number;
+}
+
+export function computeSetSharpnessContext(values: number[]): SetSharpnessContext | null {
+  const measured = values.filter((value) => Number.isFinite(value) && value > 0);
+  if (measured.length < SHARPNESS_CONTEXT_MIN_SAMPLES) return null;
+
+  const sorted = [...measured].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+  if (median <= 0) return null;
+
+  const softThreshold = median * SHARPNESS_SOFT_RATIO;
+  const badThreshold = median * SHARPNESS_BAD_RATIO;
+
+  return {
+    median,
+    softThreshold,
+    badThreshold,
+    samples: measured.length,
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    p10: sorted[Math.floor((sorted.length - 1) * 0.1)],
+    softCount: sorted.filter((value) => value < softThreshold).length,
+    badCount: sorted.filter((value) => value < badThreshold).length,
+  };
+}
+
+export type SharpnessStanding = 'unknown' | 'normal' | 'soft' | 'bad';
+
+export function classifySharpness(
+  nativeSharpness: number | undefined,
+  context: SetSharpnessContext | null | undefined
+): SharpnessStanding {
+  if (!context || !nativeSharpness || nativeSharpness <= 0) return 'unknown';
+  if (nativeSharpness < context.badThreshold) return 'bad';
+  if (nativeSharpness < context.softThreshold) return 'soft';
+  return 'normal';
+}
+
 export interface HeuristicDecision {
   decision: CullingDecision;
   reasons: string[]; // překladové klíče cull_reason_* / cull_risk_*
@@ -112,17 +194,31 @@ export function deriveHeuristicDecision(
   metrics: CullingMetrics,
   finalScore: number,
   genre: CullingGenre | null,
-  group: { duplicateGroupId?: string; isBestInGroup?: boolean }
+  context: {
+    duplicateGroupId?: string;
+    isBestInGroup?: boolean;
+    faceCount?: number;
+    eyeBlink?: number;
+    sharpnessContext?: SetSharpnessContext | null;
+  }
 ): HeuristicDecision {
   const profile = GENRE_PROFILES[genre || 'other'] || GENRE_PROFILES.other;
   const reasons: string[] = [];
   const risks: string[] = [];
+  const hasFace = (context.faceCount ?? 0) > 0;
+  const eyeBlink = context.eyeBlink ?? 0;
+  const eyesClosed = hasFace && profile.eyesMatter && eyeBlink >= 0.5;
+  const standing = classifySharpness(metrics.nativeSharpness, context.sharpnessContext);
 
   if (metrics.sharpnessScore >= 0.68) reasons.push('cull_reason_sharp');
+  if (hasFace && profile.eyesMatter && eyeBlink < 0.3) reasons.push('cull_reason_open_eyes');
   if (metrics.exposureScore >= 0.68) reasons.push('cull_reason_exposure');
   if (metrics.compositionScore >= 0.64) reasons.push('cull_reason_composition');
-  if (group.isBestInGroup) reasons.push('cull_reason_best_in_group');
+  if (context.isBestInGroup) reasons.push('cull_reason_best_in_group');
 
+  if (eyesClosed) risks.push('cull_risk_closed_eyes');
+  // Měkký proti zbytku sady je vlastní důvod: náhledová metrika tohle nepozná.
+  if (standing === 'soft' || standing === 'bad') risks.push('cull_risk_soft_vs_set');
   if (metrics.sharpnessScore < 0.36) risks.push('cull_risk_blur');
   if (metrics.exposureScore < 0.22) {
     risks.push(metrics.shadowClipping > metrics.highlightClipping ? 'cull_risk_underexposed' : 'cull_risk_exposure');
@@ -130,27 +226,30 @@ export function deriveHeuristicDecision(
   if (metrics.highlightClipping > 0.06) risks.push('cull_risk_highlights');
   if (metrics.shadowClipping > 0.08) risks.push('cull_risk_shadows');
   if (metrics.noiseScore < profile.noiseRiskBelow) risks.push('cull_risk_noise');
-  if (group.duplicateGroupId && !group.isBestInGroup) risks.push('cull_risk_duplicate');
+  if (context.duplicateGroupId && !context.isBestInGroup) risks.push('cull_risk_duplicate');
 
   const hasMajorRisk =
+    standing === 'bad' ||
     metrics.sharpnessScore < 0.28 ||
     metrics.exposureScore < 0.16 ||
     metrics.highlightClipping > 0.16 ||
     metrics.shadowClipping > 0.2 ||
-    metrics.noiseScore < profile.noiseMajorBelow;
+    metrics.noiseScore < profile.noiseMajorBelow ||
+    (hasFace && profile.eyesMatter && eyeBlink >= 0.62);
 
   let decision: CullingDecision = 'review';
   if (
     !hasMajorRisk &&
-    (!group.duplicateGroupId || group.isBestInGroup) &&
-    (finalScore >= 74 || (group.isBestInGroup && finalScore >= 60))
+    standing !== 'soft' &&
+    (!context.duplicateGroupId || context.isBestInGroup) &&
+    (finalScore >= 74 || (context.isBestInGroup && finalScore >= 60))
   ) {
     decision = 'keep';
   }
   if (finalScore < 42 || hasMajorRisk) {
     decision = 'reject';
   }
-  if (group.duplicateGroupId && !group.isBestInGroup) {
+  if (context.duplicateGroupId && !context.isBestInGroup) {
     decision = finalScore >= 58 && !hasMajorRisk ? 'review' : 'reject';
   }
 
@@ -174,8 +273,23 @@ export interface SimilarityAssignment {
   groupRank: number;
 }
 
+// Nad tímto počtem fotek se místo přesného O(n²) použije LSH banding.
+export const SIMILARITY_EXACT_LIMIT = 1000;
+const SIMILARITY_HAMMING_THRESHOLD = 20;
+const SIMILARITY_ASPECT_TOLERANCE = 0.12;
+// Počet 8bitových bandů (256bit hash / 8). Protože bandů (32) je víc než práh
+// rozdílných bitů (20), každý pár pod prahem sdílí aspoň jeden identický band
+// (pigeonhole) — banding tedy nedává false negatives a výsledek je shodný
+// s přesným porovnáním.
+const SIMILARITY_BAND_BITS = 8;
+// Pojistka pro degenerované buckety (např. samé jednobarevné hashe): porovnává
+// se jen klouzavé okno deterministicky seřazeného bucketu, ne celý bucket.
+const MAX_BUCKET_COMPARE_WINDOW = 1500;
+
 // Union-find nad perceptual hashi: levný aspect-ratio test odfiltruje většinu
-// párů, hamming přes bitová slova (XOR+popcount) rozhodne zbytek.
+// párů, hamming přes bitová slova (XOR+popcount) rozhodne zbytek. Do
+// SIMILARITY_EXACT_LIMIT fotek běží přesné porovnání všech párů; nad limitem
+// kandidátní páry generuje LSH banding nad prefixy/bandy hashe.
 export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, SimilarityAssignment> {
   const result = new Map<string, SimilarityAssignment>();
   for (const item of items) {
@@ -201,13 +315,55 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
 
   const words = new Map(withHash.map((item) => [item.id, hashToWords(item.hash)]));
 
-  for (let i = 0; i < withHash.length; i += 1) {
-    const first = withHash[i];
-    const firstWords = words.get(first.id)!;
-    for (let j = i + 1; j < withHash.length; j += 1) {
-      const second = withHash[j];
-      if (Math.abs((first.aspectRatio || 0) - (second.aspectRatio || 0)) >= 0.12) continue;
-      if (hammingWords(firstWords, words.get(second.id)!) <= 20) union(first.id, second.id);
+  const comparePair = (first: SimilarityInput, second: SimilarityInput) => {
+    if (Math.abs((first.aspectRatio || 0) - (second.aspectRatio || 0)) >= SIMILARITY_ASPECT_TOLERANCE) return;
+    if (hammingWords(words.get(first.id)!, words.get(second.id)!) <= SIMILARITY_HAMMING_THRESHOLD) {
+      union(first.id, second.id);
+    }
+  };
+
+  if (withHash.length <= SIMILARITY_EXACT_LIMIT) {
+    // Přesná cesta: všechny páry.
+    for (let i = 0; i < withHash.length; i += 1) {
+      for (let j = i + 1; j < withHash.length; j += 1) {
+        comparePair(withHash[i], withHash[j]);
+      }
+    }
+  } else {
+    // LSH banding: item padne do bucketu za každý 8bitový band svého hashe.
+    // Kandidáti = dvojice sdílející aspoň jeden bucket; přesná Hamming distance
+    // se počítá jen pro ně. Deterministické: pořadí bucketů i položek v nich
+    // sleduje pořadí vstupu.
+    const bandChars = SIMILARITY_BAND_BITS;
+    const buckets = new Map<string, number[]>();
+    withHash.forEach((item, index) => {
+      const hash = item.hash;
+      const bandCount = Math.floor(hash.length / bandChars);
+      for (let band = 0; band < bandCount; band += 1) {
+        // Délka hashe v klíči: různě dlouhé hashe nikdy nesdílí bucket.
+        const key = `${hash.length}:${band}:${hash.slice(band * bandChars, (band + 1) * bandChars)}`;
+        const bucket = buckets.get(key);
+        if (bucket) bucket.push(index);
+        else buckets.set(key, [index]);
+      }
+    });
+
+    const total = withHash.length;
+    const seenPairs = new Set<number>();
+    for (const bucket of buckets.values()) {
+      if (bucket.length < 2) continue;
+      const window = Math.min(bucket.length, MAX_BUCKET_COMPARE_WINDOW);
+      for (let a = 0; a < bucket.length; a += 1) {
+        const limit = Math.min(bucket.length, a + window);
+        for (let b = a + 1; b < limit; b += 1) {
+          const i = bucket[a];
+          const j = bucket[b];
+          const pairKey = i < j ? i * total + j : j * total + i;
+          if (seenPairs.has(pairKey)) continue;
+          seenPairs.add(pairKey);
+          comparePair(withHash[i], withHash[j]);
+        }
+      }
     }
   }
 
@@ -288,6 +444,78 @@ async function computeMetrics(imageData: ImageData): Promise<CullingMetrics> {
   }).catch(() => readMetrics(imageData.data, imageData.width, imageData.height));
 }
 
+// Mřížka 3×3 výřezů po 224 px z nativního rozlišení. Bereme MAXIMUM, ne průměr:
+// ostrá fotka má aspoň jedno místo s ostrými detaily, i když je pozadí měkké
+// bokehem nebo panningem. Rozmazaná fotka nemá ostré nic — tím se právě liší.
+// Průměr by trestal krátkou hloubku ostrosti, což je u sportu a portrétu záměr.
+const NATIVE_PATCH_SIZE = 224;
+const NATIVE_PATCH_GRID = 3;
+
+async function measureNativeSharpness(
+  source: CanvasImageSource,
+  width: number,
+  height: number
+): Promise<number> {
+  if (width < 32 || height < 32) return 0;
+
+  const patch = Math.min(NATIVE_PATCH_SIZE, width, height);
+  const canvas = document.createElement('canvas');
+  canvas.width = patch;
+  canvas.height = patch;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return 0;
+  // Žádné vyhlazování: výřez musí jít do měření přesně tak, jak je na snímku.
+  context.imageSmoothingEnabled = false;
+
+  let best = 0;
+  for (let row = 0; row < NATIVE_PATCH_GRID; row += 1) {
+    for (let col = 0; col < NATIVE_PATCH_GRID; col += 1) {
+      // Středy buněk mřížky — pokryjí subjekt, ať je kdekoli v kompozici.
+      const centerX = ((col + 0.5) / NATIVE_PATCH_GRID) * width;
+      const centerY = ((row + 0.5) / NATIVE_PATCH_GRID) * height;
+      const sourceX = Math.max(0, Math.min(width - patch, Math.round(centerX - patch / 2)));
+      const sourceY = Math.max(0, Math.min(height - patch, Math.round(centerY - patch / 2)));
+
+      context.clearRect(0, 0, patch, patch);
+      context.drawImage(source, sourceX, sourceY, patch, patch, 0, 0, patch, patch);
+      const imageData = context.getImageData(0, 0, patch, patch);
+      const variance = laplacianVarianceOfPatch(imageData.data, patch, patch);
+      if (variance > best) best = variance;
+    }
+  }
+
+  return best;
+}
+
+async function measureFaceSharpness(
+  source: CanvasImageSource,
+  bbox: FaceBoundingBox,
+  sourceWidth: number,
+  sourceHeight: number
+): Promise<number | null> {
+  const padding = 0.18;
+  const sourceX = Math.max(0, bbox.x - bbox.w * padding);
+  const sourceY = Math.max(0, bbox.y - bbox.h * padding);
+  const sourceW = Math.min(bbox.w * (1 + padding * 2), sourceWidth - sourceX);
+  const sourceH = Math.min(bbox.h * (1 + padding * 2), sourceHeight - sourceY);
+  if (sourceW < 8 || sourceH < 8) return null;
+
+  const maxSide = 320;
+  const scale = Math.min(1, maxSide / Math.max(sourceW, sourceH));
+  const width = Math.max(32, Math.round(sourceW * scale));
+  const height = Math.max(32, Math.round(sourceH * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(source, sourceX, sourceY, sourceW, sourceH, 0, 0, width, height);
+  const metrics = await computeMetrics(context.getImageData(0, 0, width, height));
+  return metrics.sharpnessScore;
+}
+
 async function loadImageSource(file: File): Promise<{ source: CanvasImageSource; width: number; height: number; close: () => void }> {
   if ('createImageBitmap' in window) {
     try {
@@ -316,6 +544,8 @@ export interface PhotoAnalysis {
   metrics: CullingMetrics;
   aspectRatio: number;
   aiThumbnailDataUrl: string;
+  faceCount: number;
+  eyeBlink: number;
 }
 
 export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
@@ -335,6 +565,30 @@ export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
     const imageData = hCtx.getImageData(0, 0, hWidth, hHeight);
 
     const metrics = await computeMetrics(imageData);
+    metrics.nativeSharpness = await measureNativeSharpness(
+      loaded.source,
+      loaded.width,
+      loaded.height
+    );
+    let faceCount = 0;
+    let eyeBlink = 0;
+
+    try {
+      const detected = await detectFaces(loaded.source, loaded.width, loaded.height);
+      faceCount = detected.faceCount;
+      if (detected.primary) {
+        eyeBlink = detected.primary.eyeBlink;
+        const faceSharpness = await measureFaceSharpness(
+          loaded.source,
+          detected.primary.bbox,
+          loaded.width,
+          loaded.height
+        );
+        if (faceSharpness !== null) metrics.sharpnessScore = faceSharpness;
+      }
+    } catch (error) {
+      console.warn(`Face detection failed for ${file.name}:`, error);
+    }
 
     const aiScale = Math.min(1, AI_THUMB_MAX_SIDE / Math.max(loaded.width, loaded.height));
     const aiWidth = Math.max(64, Math.round(loaded.width * aiScale));
@@ -353,6 +607,8 @@ export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
       metrics,
       aspectRatio: loaded.width > 0 && loaded.height > 0 ? loaded.width / loaded.height : 0,
       aiThumbnailDataUrl,
+      faceCount,
+      eyeBlink,
     };
   } finally {
     loaded.close();
@@ -361,10 +617,15 @@ export async function analyzePhotoPixels(file: File): Promise<PhotoAnalysis> {
 
 export function buildCullingResult(
   analysis: PhotoAnalysis,
-  genre: CullingGenre | null
+  genre: CullingGenre | null,
+  sharpnessContext?: SetSharpnessContext | null
 ): CullingResult {
-  const finalScore = computeFinalScore(analysis.metrics, genre);
-  const heuristic = deriveHeuristicDecision(analysis.metrics, finalScore, genre, {});
+  const finalScore = blendFinalScore(computeFinalScore(analysis.metrics, genre), analysis.metrics);
+  const heuristic = deriveHeuristicDecision(analysis.metrics, finalScore, genre, {
+    faceCount: analysis.faceCount,
+    eyeBlink: analysis.eyeBlink,
+    sharpnessContext,
+  });
   return {
     metrics: analysis.metrics,
     finalScore,
@@ -373,17 +634,26 @@ export function buildCullingResult(
     risks: heuristic.risks,
     aspectRatio: analysis.aspectRatio,
     genre: genre || undefined,
+    faceCount: analysis.faceCount,
+    eyeBlink: analysis.eyeBlink,
     aiStatus: 'idle',
   };
 }
 
 // Přepočet po změně žánru nebo doběhnutí skupin: skóre + heuristický verdikt.
 // AI verdikty a ruční rozhodnutí zůstávají autoritativní.
-export function rescoreCullingResult(result: CullingResult, genre: CullingGenre | null): CullingResult {
-  const finalScore = computeFinalScore(result.metrics, genre);
+export function rescoreCullingResult(
+  result: CullingResult,
+  genre: CullingGenre | null,
+  sharpnessContext?: SetSharpnessContext | null
+): CullingResult {
+  const finalScore = blendFinalScore(computeFinalScore(result.metrics, genre), result.metrics);
   const heuristic = deriveHeuristicDecision(result.metrics, finalScore, genre, {
     duplicateGroupId: result.duplicateGroupId,
     isBestInGroup: result.isBestInGroup,
+    faceCount: result.faceCount,
+    eyeBlink: result.eyeBlink,
+    sharpnessContext,
   });
   const aiAuthoritative = result.aiStatus === 'done' && result.ai;
   return {
@@ -399,6 +669,107 @@ export function rescoreCullingResult(result: CullingResult, genre: CullingGenre 
 export function getEffectiveDecision(result: CullingResult | undefined): CullingDecision | null {
   if (!result) return null;
   return result.manualDecision || result.decision || 'review';
+}
+
+// Zdroj verdiktu: ruční > AI > heuristika. UI badge + logika mazání rejectů.
+export function getVerdictSource(result: CullingResult | undefined): CullingVerdictSource | null {
+  if (!result) return null;
+  if (result.manualDecision) return 'manual';
+  if (result.aiStatus === 'done' && result.ai) return 'ai';
+  return 'heuristic';
+}
+
+/**
+ * AI is authoritative for ordinary cases. A direct disagreement over an extreme,
+ * deterministic technical failure is routed to Review instead of silently turning
+ * into Keep. That preserves Safe mode's human-review guarantee without letting a
+ * single optimistic model response erase strong local evidence.
+ */
+export function reconcileAiDecision(
+  result: CullingResult,
+  verdict: CullingAiVerdict,
+  sharpnessContext?: SetSharpnessContext | null
+): { decision: CullingDecision; disagreement: boolean } {
+  if (result.decision !== 'reject' || verdict.decision !== 'keep') {
+    return { decision: verdict.decision, disagreement: false };
+  }
+
+  const profile = GENRE_PROFILES[verdict.genre || result.genre || 'other'] || GENRE_PROFILES.other;
+  const metrics = result.metrics;
+  const certainTechnicalFailure =
+    // Model vidí náhled, na kterém rozostření prakticky nepozná. Když měření na
+    // nativním rozlišení říká, že je snímek výrazně měkčí než zbytek sady, jeho
+    // optimistické "keep" nesmí ten důkaz smazat.
+    classifySharpness(metrics.nativeSharpness, sharpnessContext) === 'bad' ||
+    metrics.sharpnessScore < 0.16 ||
+    metrics.exposureScore < 0.08 ||
+    metrics.highlightClipping > 0.28 ||
+    metrics.shadowClipping > 0.35 ||
+    metrics.noiseScore < profile.noiseMajorBelow * 0.5 ||
+    ((result.faceCount ?? 0) > 0 && profile.eyesMatter && (result.eyeBlink ?? 0) >= 0.78);
+
+  return certainTechnicalFailure
+    ? { decision: 'review', disagreement: true }
+    : { decision: verdict.decision, disagreement: false };
+}
+
+// --- Safe/Economy výběr kandidátů pro AI fázi ---
+
+export interface AiCandidateInput {
+  id: string;
+  decision: CullingDecision;
+  finalScore: number;
+}
+
+export interface AiCandidateSelection {
+  candidateIds: string[]; // fotky, které jdou do AI (včetně auditního vzorku)
+  skippedRejectIds: string[]; // heuristické rejecty přeskočené bez AI (jen economy)
+  auditIds: string[]; // podmnožina skipped rejectů poslaná do AI jako audit
+}
+
+export const AUDIT_MIN = 5;
+export const AUDIT_MAX = 20;
+export const AUDIT_RATIO = 0.1;
+
+/**
+ * Safe mode (výchozí): AI posoudí všechno — heuristický reject je jen předběžný
+ * návrh a nikdy nesmí sám o sobě fotku vyřadit.
+ * Economy mode: jisté heuristické rejecty AI přeskočí; deterministický auditní
+ * vzorek (5–20 fotek, ~10 %, rozprostřený přes rozsah skóre) jde do AI, aby šlo
+ * odhalit falešné rejecty.
+ */
+export function selectAiCandidates(items: AiCandidateInput[], mode: CullingMode): AiCandidateSelection {
+  if (mode === 'safe') {
+    return { candidateIds: items.map((item) => item.id), skippedRejectIds: [], auditIds: [] };
+  }
+
+  const rejects = items.filter((item) => item.decision === 'reject');
+  const nonRejects = items.filter((item) => item.decision !== 'reject');
+
+  // Deterministický vzorek: seřadit podle skóre (tiebreak id), vybrat rovnoměrně
+  // rozložené indexy — pokryje slabé i hraniční rejecty, výsledek je testovatelný.
+  const sorted = [...rejects].sort((a, b) => a.finalScore - b.finalScore || a.id.localeCompare(b.id));
+  const auditSize = Math.min(
+    sorted.length,
+    Math.min(AUDIT_MAX, Math.max(AUDIT_MIN, Math.round(sorted.length * AUDIT_RATIO)))
+  );
+
+  const auditIds: string[] = [];
+  if (auditSize > 0) {
+    const picked = new Set<number>();
+    for (let i = 0; i < auditSize; i += 1) {
+      const index = auditSize === 1 ? 0 : Math.round((i * (sorted.length - 1)) / (auditSize - 1));
+      picked.add(index);
+    }
+    for (const index of picked) auditIds.push(sorted[index].id);
+  }
+
+  const auditSet = new Set(auditIds);
+  return {
+    candidateIds: [...nonRejects.map((item) => item.id), ...auditIds],
+    skippedRejectIds: rejects.filter((item) => !auditSet.has(item.id)).map((item) => item.id),
+    auditIds,
+  };
 }
 
 export async function mapWithConcurrency<T, R>(

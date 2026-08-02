@@ -25,6 +25,14 @@ export interface QualityAssessment {
 
 export type CullingDecision = 'keep' | 'review' | 'reject';
 
+// Safe = výchozí: AI vizuálně posoudí i heuristické rejecty (žádná fotka
+// nevypadne jen kvůli heuristice). Economy = jisté heuristické rejecty
+// přeskočí AI, ověří se jen auditní vzorek — levnější, riskantnější.
+export type CullingMode = 'safe' | 'economy';
+
+// Odkud pochází aktuální verdikt fotky — UI to musí vždy zobrazit.
+export type CullingVerdictSource = 'heuristic' | 'ai' | 'manual';
+
 export type CullingGenre =
   | 'sport'
   | 'portrait'
@@ -46,6 +54,11 @@ export interface CullingMetrics {
   contrastScore: number; // 0-1
   noiseScore: number; // 0-1, 1 = čistý
   compositionScore: number; // 0-1
+  // Syrová Laplacian variance z nejostřejšího místa fotky, měřená na NATIVNÍM
+  // rozlišení. Není normalizovaná — absolutní hodnota závisí na objektivu,
+  // světle i scéně, takže dává smysl jen v porovnání se zbytkem sady.
+  // 0 = neměřeno (starší výsledky, fallback bez plného dekódu).
+  nativeSharpness: number;
 }
 
 export interface CullingAiVerdict {
@@ -71,6 +84,9 @@ export interface CullingResult {
   isBestInGroup?: boolean;
   groupRank?: number;
   genre?: CullingGenre;
+  faceCount?: number;
+  eyeBlink?: number; // 0=open, 1=closed; primary/largest face
+  aiDisagreement?: boolean; // strong local fail + AI keep => routed to review
   ai?: CullingAiVerdict;
   aiStatus: CullingAiStatus;
   aiError?: string;
