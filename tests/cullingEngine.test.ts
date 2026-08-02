@@ -11,6 +11,7 @@ import {
   AUDIT_MIN,
   AUDIT_MAX,
   SHARPNESS_CONTEXT_MIN_SAMPLES,
+  SHARPNESS_STANDING_AFFECTS_VERDICT,
   SIMILARITY_EXACT_LIMIT,
   type SimilarityInput,
 } from '../utils/cullingEngine';
@@ -79,26 +80,30 @@ describe('ostrost v kontextu sady', () => {
     expect(classifySharpness(undefined, context)).toBe('unknown');
   });
 
-  it('měkký snímek propadne na reject i s jinak slušným skóre', () => {
+  // Měření na mřížce 3×3 neumí odstup od sady doložit — na reálné sadě 114
+  // fotek dávalo nejnižší hodnoty ostrým snímkům. Proto je odpojené od verdiktu
+  // vypínačem SHARPNESS_STANDING_AFFECTS_VERDICT a testy hlídají, že mlčí.
+  it('odstup od sady sám o sobě nevyřadí, dokud ho měření neumí doložit', () => {
     const context = computeSetSharpnessContext(evenSet)!;
     const good = metrics({ nativeSharpness: 1000 });
     const soft = metrics({ nativeSharpness: 100 });
 
     // Stejné skóre i žánr, liší se jen ostrost proti sadě.
     const keepDecision = deriveHeuristicDecision(good, 80, 'sport', { sharpnessContext: context });
-    const rejectDecision = deriveHeuristicDecision(soft, 80, 'sport', { sharpnessContext: context });
+    const softDecision = deriveHeuristicDecision(soft, 80, 'sport', { sharpnessContext: context });
 
+    expect(SHARPNESS_STANDING_AFFECTS_VERDICT).toBe(false);
     expect(keepDecision.decision).toBe('keep');
-    expect(rejectDecision.decision).toBe('reject');
-    expect(rejectDecision.risks).toContain('cull_risk_soft_vs_set');
+    expect(softDecision.decision).toBe('keep');
+    expect(softDecision.risks).not.toContain('cull_risk_soft_vs_set');
   });
 
-  it('bez kontextu se chová jako dřív — žádná regrese na starých datech', () => {
+  it('bez kontextu se chová stejně jako s ním — žádná regrese na starých datech', () => {
     const soft = metrics({ nativeSharpness: 100 });
     expect(deriveHeuristicDecision(soft, 80, 'sport', {}).decision).toBe('keep');
   });
 
-  it('AI "keep" nepřebije měření na plném rozlišení', () => {
+  it('AI "keep" projde, dokud měření ostrosti nemíří na subjekt', () => {
     const context = computeSetSharpnessContext(evenSet)!;
     const result = {
       metrics: metrics({ nativeSharpness: 100 }),
@@ -121,6 +126,24 @@ describe('ostrost v kontextu sady', () => {
     } as CullingResult['ai'] & { decision: 'keep' };
 
     const reconciled = reconcileAiDecision(result, verdict as never, context);
+    expect(reconciled.decision).toBe('keep');
+    expect(reconciled.disagreement).toBe(false);
+  });
+
+  it('ostatní tvrdé vady AI "keep" pořád přebijí', () => {
+    const result = {
+      metrics: metrics({ sharpnessScore: 0.1, nativeSharpness: 1000 }),
+      finalScore: 30,
+      decision: 'reject',
+      reasons: [],
+      risks: [],
+      aspectRatio: 1.5,
+      aiStatus: 'idle',
+      genre: 'sport',
+    } as unknown as CullingResult;
+
+    const verdict = { decision: 'keep', genre: 'sport', aiScore: 85, summary: '', reasons: [], risks: [] };
+    const reconciled = reconcileAiDecision(result, verdict as never, null);
     expect(reconciled.decision).toBe('review');
     expect(reconciled.disagreement).toBe(true);
   });

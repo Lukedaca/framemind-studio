@@ -128,6 +128,25 @@ export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre |
  */
 export const SHARPNESS_SOFT_RATIO = 0.45; // pod tímhle podílem mediánu = riziko
 export const SHARPNESS_BAD_RATIO = 0.22; // pod tímhle = skutečná vada
+
+/**
+ * Odstup od mediánu je správná myšlenka, ale měření pod ní zatím nestojí.
+ *
+ * Změřeno na 114 fotkách (fotbal, Sigma–Karviná): mřížka 3×3 výřezů po 224 px
+ * pokrývá 1,9 % plochy snímku 5616×3744 a systematicky míjí hráče. MAXIMUM z ní
+ * pak neměří ostrost, ale hustotu textury scény — vyjde vysoko tam, kde okno
+ * padlo na plný dav, a nízko tam, kde padlo na prázdnou tribunu nebo trávu.
+ * Rozptyl přes sadu byl 982×, a nejnižší hodnoty patřily ostrým publikovatelným
+ * snímkům (IMG_9944 = 5, IMG_9951 = 8, IMG_9891 = 28). Pravidlo by v té sadě
+ * poslalo do rejectu 16 dobrých fotek.
+ *
+ * Dokud měření nemíří na subjekt, nesmí rozhodovat o verdiktu ani chodit do
+ * promptu jako „tvrdý důkaz neostrosti". Kontext se dál počítá — panel Ostrost
+ * sady je užitečná diagnostika a ukáže, jestli je sada vyrovnaná.
+ *
+ * Zapnout zpět, až ostrost poroste z výřezu okolo subjektu, ne z pevné mřížky.
+ */
+export const SHARPNESS_STANDING_AFFECTS_VERDICT = false;
 // Pod tímhle počtem měřených fotek je medián nespolehlivý a relativní pravidlo
 // se vypne — u pěti snímků nelze říct, co je pro sadu „normální".
 export const SHARPNESS_CONTEXT_MIN_SAMPLES = 8;
@@ -208,7 +227,9 @@ export function deriveHeuristicDecision(
   const hasFace = (context.faceCount ?? 0) > 0;
   const eyeBlink = context.eyeBlink ?? 0;
   const eyesClosed = hasFace && profile.eyesMatter && eyeBlink >= 0.5;
-  const standing = classifySharpness(metrics.nativeSharpness, context.sharpnessContext);
+  const standing: SharpnessStanding = SHARPNESS_STANDING_AFFECTS_VERDICT
+    ? classifySharpness(metrics.nativeSharpness, context.sharpnessContext)
+    : 'unknown';
 
   if (metrics.sharpnessScore >= 0.68) reasons.push('cull_reason_sharp');
   if (hasFace && profile.eyesMatter && eyeBlink < 0.3) reasons.push('cull_reason_open_eyes');
@@ -699,8 +720,10 @@ export function reconcileAiDecision(
   const certainTechnicalFailure =
     // Model vidí náhled, na kterém rozostření prakticky nepozná. Když měření na
     // nativním rozlišení říká, že je snímek výrazně měkčí než zbytek sady, jeho
-    // optimistické "keep" nesmí ten důkaz smazat.
-    classifySharpness(metrics.nativeSharpness, sharpnessContext) === 'bad' ||
+    // optimistické "keep" nesmí ten důkaz smazat. Podmíněné vypínačem — dnešní
+    // měření na mřížce ten důkaz nedodá, viz SHARPNESS_STANDING_AFFECTS_VERDICT.
+    (SHARPNESS_STANDING_AFFECTS_VERDICT &&
+      classifySharpness(metrics.nativeSharpness, sharpnessContext) === 'bad') ||
     metrics.sharpnessScore < 0.16 ||
     metrics.exposureScore < 0.08 ||
     metrics.highlightClipping > 0.28 ||
