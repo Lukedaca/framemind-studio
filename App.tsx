@@ -31,9 +31,10 @@ import { XCircleIcon } from './components/icons';
 import type { UploadedFile, View, EditorAction, History, HistoryEntry, Preset, JobTemplate, WorkflowStep } from './types';
 
 // Utils & Services
-import { clearLegacyKeys, enableSessionOnlyAutoClear } from './utils/apiKey';
+import { initApiKeyStorage } from './utils/apiKey';
 import { normalizeImageFile } from './utils/imageProcessor';
-import { getPresets, getUserProfile, updateCredits, markOnboardingSeen } from './services/userProfileService';
+import { getUserProfile, markOnboardingSeen } from './services/userProfileService';
+import { demoCreditProvider } from './services/creditProvider';
 import { useTranslation } from './contexts/LanguageContext';
 import { useProject } from './contexts/ProjectContext';
 
@@ -122,8 +123,7 @@ function App() {
   // --- Effects ---
 
   useEffect(() => {
-    clearLegacyKeys();
-    enableSessionOnlyAutoClear();
+    initApiKeyStorage();
   }, []);
 
   useEffect(() => {
@@ -202,11 +202,10 @@ function App() {
 
       creditOperationInProgress.current = true;
       try {
-        const currentProfile = getUserProfile();
-        const currentCredits = currentProfile.credits;
-        if (currentCredits >= amount) {
-            const newTotal = updateCredits(-amount);
-            setCredits(newTotal);
+        // Demo kredity (localStorage) — žádný skutečný billing. Viz creditProvider.
+        const ok = await demoCreditProvider.consume(amount, 'ai-operation');
+        if (ok) {
+            setCredits(await demoCreditProvider.getBalance());
             return true;
         }
         setShowPurchaseModal(true);
@@ -216,11 +215,11 @@ function App() {
       }
   }, [isAdmin]);
 
-  const handlePurchaseCredits = (amount: number) => {
-      const newTotal = updateCredits(amount);
+  const handlePurchaseCredits = async (amount: number) => {
+      const newTotal = await demoCreditProvider.addDemoCredits(amount);
       setCredits(newTotal);
       setShowPurchaseModal(false);
-      addNotification(`${t.store_success} +${amount} credits`, 'info');
+      addNotification(`${t.store_success} +${amount}`, 'info');
   };
   
   const handleOnboardingComplete = () => {

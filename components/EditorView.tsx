@@ -37,6 +37,7 @@ import type {
     YouTubeThumbnailTemplate,
 } from '../types';
 import * as geminiService from '../services/geminiService';
+import { describeAiError } from '../services/aiErrors';
 import { runAutopilot } from '../services/aiAutopilot';
 import { applyEditsAndExport } from '../utils/imageProcessor';
 import { getImageDimensionsFromBlob, saveAIGalleryAsset } from '../utils/aiGallery';
@@ -392,26 +393,10 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
         setRetouchPromptHistory(prev => [prompt, ...prev.filter(p => p !== prompt)].slice(0, 10));
         addNotification(language === 'cs' ? 'Retuš dokončena' : 'Retouch complete', 'info');
       } catch (e: any) {
-        const raw = e?.message || '';
-        const isSafety = raw.startsWith('SAFETY_BLOCKED:');
-        const isPatchFail = raw.startsWith('PATCH_FALLBACK_FAILED:');
-        let friendly: string;
-        if (isPatchFail) {
-          // Patch flow nezvládl - ukázat konkrétní hint
-          const detail = raw.replace('PATCH_FALLBACK_FAILED:', '').trim();
-          friendly = language === 'cs'
-            ? `Lokální retuš selhala: ${detail}`
-            : `Local retouch failed: ${detail}`;
-        } else if (isSafety) {
-          // Safety block, který ani patch flow neobešel
-          friendly = language === 'cs'
-            ? 'AI zablokovala i lokální retuš. Zkus masku (štětec) — namaluj přes oblast a aplikuj.'
-            : 'AI blocked even local retouch. Try the mask brush — paint over the area and apply.';
-        } else {
-          friendly = language === 'cs' ? `Retuš se nepovedla: ${raw}` : `Retouch failed: ${raw}`;
-        }
-        addNotification(friendly, 'error');
-        console.error('Retouch error:', e);
+        const { code, message } = describeAiError(e, language);
+        if (code === 'API_KEY_MISSING') onOpenApiKeyModal();
+        addNotification(message, 'error');
+        console.error('Retouch error code:', code);
       } finally {
         setRetouchProcessing(false);
         setIsLoading(false);
@@ -443,7 +428,10 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       setRetouchHasMask(false);
       addNotification(language === 'cs' ? 'Retuš dokončena' : 'Retouch complete', 'info');
     } catch (e: any) {
-      addNotification(`Retouch error: ${e.message}`, 'error');
+      const { code, message } = describeAiError(e, language);
+      if (code === 'API_KEY_MISSING') onOpenApiKeyModal();
+      addNotification(message, 'error');
+      console.error('Mask retouch error code:', code);
     } finally {
       setRetouchProcessing(false);
       setIsLoading(false);

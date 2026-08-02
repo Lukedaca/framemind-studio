@@ -29,7 +29,7 @@ export default defineConfig(({ mode }) => {
           manifest: {
             name: 'FrameMind Studio',
             short_name: 'FrameMind',
-            description: 'AI fotostudio pro fotografy — žánrový culling, úpravy, RAW, galerie',
+            description: 'AI fotostudio pro fotografy — žánrový culling, úpravy, RAW náhledy, galerie',
             theme_color: '#0a0a0a',
             background_color: '#0a0a0a',
             display: 'standalone',

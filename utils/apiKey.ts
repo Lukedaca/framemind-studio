@@ -1,8 +1,9 @@
 
-import { apiKeyManager } from '../services/apiKeyManager';
+import { apiKeyManager, type ApiKeyStorageMode } from '../services/apiKeyManager';
 
-export const clearLegacyKeys = () => {
+export const initApiKeyStorage = () => {
     apiKeyManager.clearLegacyKeys();
+    apiKeyManager.init();
 };
 
 export const setApiKey = (key: string) => {
@@ -21,14 +22,10 @@ export const clearApiKey = () => {
     apiKeyManager.clear();
 };
 
-export const setSessionOnly = (enabled: boolean) => {
-    apiKeyManager.setSessionOnly(enabled);
+export const setApiKeyStorageMode = (mode: ApiKeyStorageMode) => {
+    apiKeyManager.setMode(mode);
 };
 
 export const isSessionOnly = (): boolean => {
     return apiKeyManager.isSessionOnly();
-};
-
-export const enableSessionOnlyAutoClear = () => {
-    apiKeyManager.enableSessionOnlyAutoClear();
 };

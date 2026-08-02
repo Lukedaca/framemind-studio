@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { KeyIcon, XIcon } from './icons';
 import { useTranslation } from '../contexts/LanguageContext';
 import Button from './common/Button';
-import { clearApiKey, getApiKey, isSessionOnly, setApiKey, setSessionOnly } from '../utils/apiKey';
+import { clearApiKey, getApiKey, isSessionOnly, setApiKey, setApiKeyStorageMode } from '../utils/apiKey';
 
 interface ApiKeyModalProps {
     isOpen: boolean;
@@ -13,7 +13,7 @@ const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose }) => {
   const { t } = useTranslation();
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [storedKey, setStoredKey] = useState<string | null>(null);
-  const [sessionOnly, setSessionOnlyState] = useState(false);
+  const [sessionOnly, setSessionOnlyState] = useState(true);
 
   useEffect(() => {
       if (!isOpen) return;
@@ -101,14 +101,21 @@ const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose }) => {
                                 checked={sessionOnly}
                                 onChange={(e) => {
                                     const next = e.target.checked;
+                                    if (!next) {
+                                        // Persistent (localStorage) jen po explicitním souhlasu
+                                        if (!window.confirm(t.apikey_persist_confirm)) return;
+                                    }
                                     setSessionOnlyState(next);
-                                    setSessionOnly(next);
+                                    setApiKeyStorageMode(next ? 'session' : 'persistent');
                                 }}
                             />
                             {t.apikey_session_only}
                         </label>
                         <div className="text-[11px] text-text-secondary leading-relaxed border border-border-subtle p-3 bg-elevated">
                             {t.apikey_privacy}
+                        </div>
+                        <div className="text-[11px] text-text-secondary leading-relaxed border border-border-subtle p-3 bg-elevated">
+                            {t.apikey_session_note}
                         </div>
                     </div>
 
