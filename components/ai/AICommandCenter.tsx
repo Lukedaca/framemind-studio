@@ -5,6 +5,7 @@ import { SparklesIcon } from '../icons';
 import { useTranslation } from '../../contexts/LanguageContext';
 import type { EnhancementMode, UploadedFile } from '../../types';
 import { runAutopilot } from '../../services/aiAutopilot';
+import { describeAiError } from '../../services/aiErrors';
 import MagneticButton from '../common/MagneticButton';
 
 interface AICommandCenterProps {
@@ -42,9 +43,11 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
   onDeductCredits,
   addNotification,
 }) => {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [mode, setMode] = useState<EnhancementMode>('auto');
   const [smartAutoCrop, setSmartAutoCrop] = useState(true);
+  const [customInstruction, setCustomInstruction] = useState('');
+  const [lastAppliedInstruction, setLastAppliedInstruction] = useState('');
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
@@ -59,6 +62,13 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
     ? activeFile.previewUrl
     : null;
   const totalCreditCost = selectedFiles.length * AUTOPILOT_COST;
+  const normalizedInstruction = customInstruction.trim();
+  const hasCustomInstruction = normalizedInstruction.length > 0;
+  const instructionExamples = [
+    t.aicc_instruction_example_portrait,
+    t.aicc_instruction_example_color,
+    t.aicc_instruction_example_cleanup,
+  ];
 
   useEffect(() => {
     if (!activeFileId && files.length > 0) {
@@ -130,6 +140,7 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
   const handleRun = useCallback(async () => {
     if (selectedFiles.length === 0) return;
 
+    const instruction = customInstruction.trim();
     const total = selectedFiles.length;
     let processed = 0;
     let succeeded = 0;
@@ -150,7 +161,10 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
         }
 
         try {
-          const result = await runAutopilot(file.file, mode, { autoCrop: smartAutoCrop });
+          const result = await runAutopilot(file.file, mode, {
+            autoCrop: smartAutoCrop && !instruction,
+            customInstruction: instruction || undefined,
+          });
           setStylePresets(result.stylePresets.map((preset) => ({ id: preset.id, name: preset.name })));
 
           if (!result.enhancedFile) {
@@ -169,7 +183,9 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
                 ? { ...currentFile, file: result.enhancedFile!, previewUrl }
                 : currentFile
             )),
-            `${t.aicc_title}: ${file.file.name}`
+            instruction
+              ? `${t.aicc_instruction_history}: ${instruction.slice(0, 64)}`
+              : `${t.aicc_title}: ${file.file.name}`
           );
           if (previousPreviewUrl) {
             setTimeout(() => URL.revokeObjectURL(previousPreviewUrl), 0);
@@ -177,14 +193,14 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
           succeeded += 1;
         } catch (error) {
           failed += 1;
-          const message = error instanceof Error ? error.message : '';
-          if (message.includes('API_KEY_MISSING') || message.toLowerCase().includes('api key')) {
+          const { code, message } = describeAiError(error, language);
+          if (code === 'API_KEY_MISSING') {
             onOpenApiKeyModal?.();
-            addNotification(t.msg_api_missing, 'error');
+            addNotification(message, 'error');
             interrupted = true;
             break;
           }
-          addNotification(`${t.batch_error}: ${file.file.name}`, 'error');
+          addNotification(`${file.file.name}: ${message}`, 'error');
         } finally {
           processed += 1;
           setBatchProgress({ current: processed, total, activeFileName: file.file.name });
@@ -198,12 +214,17 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
       } else if (failed > 0 && !interrupted) {
         addNotification(`${t.aicc_batch_failed} (${failed}/${total})`, 'error');
       }
+      if (succeeded > 0 && instruction) {
+        setLastAppliedInstruction(instruction);
+      }
     } finally {
       setIsRunning(false);
       setBatchProgress(null);
     }
   }, [
     addNotification,
+    customInstruction,
+    language,
     mode,
     onDeductCredits,
     onOpenApiKeyModal,
@@ -212,10 +233,9 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
     smartAutoCrop,
     t.aicc_batch_failed,
     t.aicc_batch_partial,
+    t.aicc_instruction_history,
     t.aicc_title,
     t.batch_complete,
-    t.batch_error,
-    t.msg_api_missing,
   ]);
 
   return (
@@ -228,15 +248,21 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
         onOpenApiKeyModal={onOpenApiKeyModal}
       />
 
-      <div className="flex-1 grid lg:grid-cols-[1.2fr_0.8fr] gap-6 p-6 overflow-hidden">
-        <div className="flex flex-col gap-6">
+      <div className="flex-1 grid lg:grid-cols-[1.2fr_0.8fr] gap-6 p-6 overflow-y-auto lg:overflow-hidden">
+        <div className="flex flex-col gap-6 lg:overflow-y-auto lg:pr-1 lg:pb-6 custom-scrollbar">
           <div className="border border-border-subtle bg-surface p-5">
             <div className="flex items-center justify-between mb-4 border-b border-border-subtle pb-3">
               <div>
                 <h2 className="text-2xl heading">{t.aicc_title}</h2>
                 <p className="text-xs text-text-secondary uppercase tracking-widest">{t.aicc_subtitle}</p>
               </div>
-              <span className="text-[10px] font-mono text-text-secondary uppercase tracking-widest">{t.aicc_status}</span>
+              <span className="text-[10px] font-mono text-text-secondary uppercase tracking-widest">
+                {isRunning
+                  ? t.aicc_status_running
+                  : hasCustomInstruction
+                    ? t.aicc_status_instruction
+                    : t.aicc_status_ready}
+              </span>
             </div>
             <div className="mb-4">
               <label className="text-[11px] text-text-secondary uppercase tracking-widest">{t.aicc_source_file}</label>
@@ -375,7 +401,71 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-6 lg:overflow-y-auto lg:pr-1 lg:pb-6 custom-scrollbar">
+          <div className="border border-accent/40 bg-surface p-5 shadow-[0_0_30px_rgba(47,111,224,0.08)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-text-primary">
+                  {t.aicc_instruction_title}
+                </h3>
+                <p className="mt-2 text-xs leading-relaxed text-text-secondary">
+                  {t.aicc_instruction_hint}
+                </p>
+              </div>
+              <SparklesIcon className={`h-5 w-5 shrink-0 ${isRunning ? 'animate-pulse text-accent' : 'text-accent'}`} />
+            </div>
+
+            <div className="mt-4 border border-border-subtle bg-elevated focus-within:border-accent transition-colors">
+              <textarea
+                value={customInstruction}
+                onChange={(event) => setCustomInstruction(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                    event.preventDefault();
+                    void handleRun();
+                  }
+                }}
+                disabled={isRunning}
+                maxLength={800}
+                rows={5}
+                aria-label={t.aicc_instruction_title}
+                placeholder={t.aicc_instruction_placeholder}
+                className="w-full resize-y bg-transparent px-4 pt-4 text-sm leading-relaxed text-text-primary outline-none placeholder:text-text-secondary/60 disabled:opacity-60"
+              />
+              <div className="flex items-center justify-between gap-3 px-4 pb-3 text-[10px] uppercase tracking-widest text-text-secondary">
+                <span>{t.aicc_instruction_shortcut}</span>
+                <span>{customInstruction.length}/800</span>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {instructionExamples.map((example) => (
+                <button
+                  key={example}
+                  type="button"
+                  onClick={() => setCustomInstruction(example)}
+                  disabled={isRunning}
+                  className="border border-border-subtle bg-elevated px-3 py-2 text-left text-[11px] text-text-secondary transition-colors hover:border-accent hover:text-text-primary disabled:opacity-50"
+                >
+                  {example}
+                </button>
+              ))}
+            </div>
+
+            {hasCustomInstruction && (
+              <div className="mt-4 border-l-2 border-accent bg-elevated px-3 py-2 text-xs text-text-secondary">
+                {t.aicc_instruction_priority}
+              </div>
+            )}
+
+            {lastAppliedInstruction && (
+              <div className="mt-3 text-[11px] leading-relaxed text-text-secondary">
+                <span className="font-bold uppercase tracking-widest text-text-primary">{t.aicc_instruction_last}: </span>
+                {lastAppliedInstruction}
+              </div>
+            )}
+          </div>
+
           <div className="border border-border-subtle bg-surface p-5">
             <h3 className="text-sm font-black uppercase tracking-widest text-text-secondary mb-4">{t.aicc_enhancement_modes}</h3>
             <div className="grid grid-cols-2 gap-3">
@@ -397,12 +487,14 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[11px] uppercase tracking-widest text-text-secondary">{t.aicc_autocrop_label}</div>
-                  <p className="mt-1 text-xs text-text-secondary">{t.aicc_autocrop_hint}</p>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    {hasCustomInstruction ? t.aicc_autocrop_instruction_disabled : t.aicc_autocrop_hint}
+                  </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setSmartAutoCrop((current) => !current)}
-                  disabled={isRunning}
+                  disabled={isRunning || hasCustomInstruction}
                   className={`border px-3 py-2 text-[11px] font-bold uppercase tracking-widest disabled:opacity-50 ${
                     smartAutoCrop
                       ? 'border-accent bg-surface text-text-primary'
@@ -422,9 +514,13 @@ const AICommandCenter: React.FC<AICommandCenterProps> = ({
               <SparklesIcon className="w-4 h-4" />
               {isRunning
                 ? t.aicc_running
-                : selectedFiles.length > 1
-                  ? `${t.batch_run} ${selectedFiles.length}`
-                  : t.aicc_run_autopilot}
+                : hasCustomInstruction
+                  ? selectedFiles.length > 1
+                    ? `${t.aicc_run_instruction} · ${selectedFiles.length}`
+                    : t.aicc_run_instruction
+                  : selectedFiles.length > 1
+                    ? `${t.batch_run} ${selectedFiles.length}`
+                    : t.aicc_run_autopilot}
             </MagneticButton>
             <p className="text-[11px] text-text-secondary mt-3">{t.credits_cost}: {totalCreditCost}</p>
             {batchProgress && (
