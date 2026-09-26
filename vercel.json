@@ -8,5 +8,5 @@
       ]
     }
   ],
-  "rewrites": [{ "source": "/((?!assets/|brand/|.*\..*).*)", "destination": "/index.html" }]
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
