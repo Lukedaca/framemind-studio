@@ -16,7 +16,8 @@ import type { InpaintModelId } from '../utils/inpaintModels';
 export type InpaintBackend = 'webgpu' | 'wasm';
 
 export interface InpaintProgress {
-  phase: 'download' | 'compute';
+  // init = model je stažený a runtime ho připravuje (kompilace pro GPU/CPU)
+  phase: 'download' | 'init' | 'compute';
   loaded?: number;
   total?: number;
   cached?: boolean;
@@ -26,11 +27,29 @@ interface PendingJob {
   resolve: (value: any) => void;
   reject: (reason: Error) => void;
   onProgress?: (progress: InpaintProgress) => void;
+  initTimer?: ReturnType<typeof setTimeout>;
 }
 
+// Příprava staženého modelu trvá běžně sekundy (LaMa na CPU do ~20 s). Když
+// se do limitu neozve, runtime visí: worker se zahodí a zkusí se to znovu na
+// jednom vlákně, které nepotřebuje pomocné workery ani SharedArrayBuffer.
+const INIT_TIMEOUT_MS = 90_000;
+const INIT_TIMEOUT = 'INPAINT_INIT_TIMEOUT';
+
 let worker: Worker | null = null;
+let singleThread = false;
 let seq = 0;
 const jobs = new Map<number, PendingJob>();
+
+const resetWorker = (error: Error) => {
+  jobs.forEach((job) => {
+    clearTimeout(job.initTimer);
+    job.reject(error);
+  });
+  jobs.clear();
+  worker?.terminate();
+  worker = null;
+};
 
 const getWorker = () => {
   if (worker) return worker;
@@ -40,31 +59,55 @@ const getWorker = () => {
     const job = jobs.get(msg.id);
     if (!job) return;
     if (msg.type === 'progress') {
-      job.onProgress?.({ phase: 'download', loaded: msg.loaded, total: msg.total, cached: msg.cached });
+      if (msg.phase === 'init') {
+        job.onProgress?.({ phase: 'init' });
+        clearTimeout(job.initTimer);
+        job.initTimer = setTimeout(() => {
+          singleThread = true;
+          resetWorker(new Error(INIT_TIMEOUT));
+        }, INIT_TIMEOUT_MS);
+      } else {
+        job.onProgress?.({ phase: 'download', loaded: msg.loaded, total: msg.total, cached: msg.cached });
+      }
       return;
     }
+    clearTimeout(job.initTimer);
     jobs.delete(msg.id);
     if (msg.type === 'error') job.reject(new Error(msg.error));
     else job.resolve(msg);
   };
   worker.onerror = (event) => {
-    // Pád workeru (typicky nedostatek paměti u LaMa) — odmítnout všechno
+    // Pád workeru (typicky nedostatek paměti u LaMa): odmítnout všechno
     // rozběhnuté a příště začít s čistým workerem.
-    const error = new Error(`INPAINT_WORKER_CRASHED: ${event.message || 'unknown'}`);
-    jobs.forEach((job) => job.reject(error));
-    jobs.clear();
-    worker?.terminate();
-    worker = null;
+    resetWorker(new Error(`INPAINT_WORKER_CRASHED: ${event.message || 'unknown'}`));
   };
+  if (singleThread) {
+    // Worker zprávy zpracuje v pořadí, config tedy proběhne dřív než load.
+    const id = ++seq;
+    jobs.set(id, { resolve: () => {}, reject: () => {} });
+    worker.postMessage({ type: 'config', numThreads: 1, id });
+  }
   return worker;
 };
 
-const send = <T>(message: Record<string, unknown>, onProgress?: PendingJob['onProgress'], transfer: Transferable[] = []) =>
+const sendOnce = <T>(message: Record<string, unknown>, onProgress?: PendingJob['onProgress'], transfer: Transferable[] = []) =>
   new Promise<T>((resolve, reject) => {
     const id = ++seq;
     jobs.set(id, { resolve, reject, onProgress });
     getWorker().postMessage({ ...message, id }, transfer);
   });
+
+// Zaseknutá příprava modelu se jednou zopakuje na jednom vlákně (model už je
+// v Cache Storage, takže se znovu nestahuje).
+const send = async <T>(message: Record<string, unknown>, onProgress?: PendingJob['onProgress'], transfer: Transferable[] = []) => {
+  const retryCopy = transfer.length ? structuredClone(message) : message;
+  try {
+    return await sendOnce<T>(message, onProgress, transfer);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== INIT_TIMEOUT) throw error;
+    return sendOnce<T>(retryCopy, onProgress);
+  }
+};
 
 // Stáhne a připraví model dopředu (např. při otevření retuše), aby první tah
 // štětcem nečekal na stažení.

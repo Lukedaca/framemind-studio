@@ -419,6 +419,15 @@ body::after {
   transition: width 0.2s ease;
 }
 
+.fm-progress-indeterminate {
+  background: var(--spectrum);
+  animation: fm-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes fm-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
 .fm-spinner {
   width: 12px;
   height: 12px;
@@ -572,6 +581,7 @@ body::after {
 @media (prefers-reduced-motion: reduce) {
   .fm-aperture-spin,
   .fm-lens-scale,
+  .fm-progress-indeterminate,
   .fm-spinner,
   .animate-fade-in,
   .animate-fade-in-right {

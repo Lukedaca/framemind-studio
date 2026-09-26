@@ -7,6 +7,7 @@ import { PanelSection, Range, Segmented } from './ui';
 export type ModelStatus =
   | { state: 'idle' }
   | { state: 'downloading'; loaded: number; total: number }
+  | { state: 'preparing' }
   | { state: 'ready'; backend: string }
   | { state: 'error'; message: string };
 
@@ -50,6 +51,18 @@ const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
           </div>
         );
       }
+      case 'preparing':
+        return (
+          <div>
+            <div className="mb-1.5 flex items-center gap-2 text-[11px] text-ink-300">
+              <span className="fm-spinner" />
+              <span>{t.retouch_preparing}</span>
+            </div>
+            <div className="h-[3px] overflow-hidden rounded-full bg-ink-700">
+              <div className="fm-progress-indeterminate h-full w-1/3 rounded-full" />
+            </div>
+          </div>
+        );
       case 'ready':
         return (
           <p className="flex items-center gap-2 text-[11px] text-ink-300">
