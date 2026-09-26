@@ -5,7 +5,7 @@ import React, { useRef, useEffect, useCallback, useState, forwardRef, useImperat
 // MAX_MASK_SIDE) — u 24MP fotky by maska v plném rozlišení zbytečně žrala
 // paměť; do plného rozlišení ji převádí až services/localInpaint.ts.
 
-export type RetouchTool = 'none' | 'brush';
+export type RetouchTool = 'none' | 'brush' | 'lasso';
 
 export interface CanvasViewportHandle {
   fitToScreen: () => void;
@@ -21,6 +21,11 @@ export interface CanvasViewportHandle {
   applyPatch: (source: HTMLCanvasElement, layer: HTMLCanvasElement, x: number, y: number) => number;
   /** Soubor uložený z verze `version` je totéž, co už je vidět — nenačítat ho znovu. */
   commitSource: (url: string, version: number) => void;
+  /** Nahradí masku výběrem z lasa (stejné rozlišení jako maska), null = smazat. */
+  setMask: (mask: HTMLCanvasElement | null) => void;
+  /** Mění se s každou změnou obsahu plátna (načtení, vložená retuš). */
+  getContentVersion: () => number;
+  getImageSize: () => { width: number; height: number } | null;
 }
 
 type Source = HTMLImageElement | HTMLCanvasElement;
@@ -35,6 +40,8 @@ interface CanvasViewportProps {
   /** 0 = zcela měkký okraj, 1 = tvrdý. Alfa masky pak nese váhu retuše. */
   brushHardness?: number;
   onStrokeEnd?: () => void;
+  /** Klik chytrým lasem v souřadnicích fotky; `subtract` = s Alt. */
+  onLassoClick?: (point: { x: number; y: number }, subtract: boolean) => void;
   /** Maska zůstane vidět a pulzuje, dokud model počítá. */
   processing?: boolean;
   className?: string;
@@ -47,7 +54,7 @@ const MAX_MASK_SIDE = 2048;
 const MASK_COLOR = 'rgb(214, 92, 255)';
 
 const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
-  ({ imageSrc, activeTool, brushSize, brushHardness = 1, onStrokeEnd, processing = false, className }, ref) => {
+  ({ imageSrc, activeTool, brushSize, brushHardness = 1, onStrokeEnd, onLassoClick, processing = false, className }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -163,6 +170,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       img.onload = () => {
         if (cancelled) return;
         shownSrcRef.current = imageSrc;
+        versionRef.current += 1;
         const prev = imageRef.current;
         const sameSize = prev && widthOf(prev) === widthOf(img) && heightOf(prev) === heightOf(img);
         imageRef.current = img;
@@ -307,6 +315,11 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       }
       if (e.button !== 0) return;
       const ip = screenToImage(p.x, p.y);
+      if (activeTool === 'lasso') {
+        const img = imageRef.current;
+        if (img && ip.x >= 0 && ip.y >= 0 && ip.x < widthOf(img) && ip.y < heightOf(img)) onLassoClick?.(ip, e.altKey);
+        return;
+      }
       startStroke();
       drawingRef.current = { pointerId: e.pointerId, last: ip };
       paintSegment(ip, ip);
@@ -381,9 +394,23 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       commitSource: (url, version) => {
         if (version === versionRef.current && shownSrcRef.current === null) shownSrcRef.current = url;
       },
+      setMask: (selection) => {
+        const mask = maskCanvasRef.current;
+        const ctx = mask?.getContext('2d');
+        if (!mask || !ctx) return;
+        ctx.clearRect(0, 0, mask.width, mask.height);
+        if (selection) ctx.drawImage(selection, 0, 0, mask.width, mask.height);
+        maskDirtyRef.current = !!selection;
+        render();
+      },
+      getContentVersion: () => versionRef.current,
+      getImageSize: () => {
+        const img = imageRef.current;
+        return img ? { width: widthOf(img), height: heightOf(img) } : null;
+      },
     }), [fitToScreen, render]);
 
-    const cursorStyle = processing ? 'progress' : activeTool === 'brush' ? 'none' : 'grab';
+    const cursorStyle = processing ? 'progress' : activeTool === 'brush' ? 'none' : activeTool === 'lasso' ? 'crosshair' : 'grab';
 
     return (
       <div ref={containerRef} className={`relative w-full h-full overflow-hidden touch-none select-none ${className || ''}`}>

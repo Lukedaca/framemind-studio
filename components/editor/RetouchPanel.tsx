@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from '../../contexts/LanguageContext';
 import { INPAINT_MODELS } from '../../utils/inpaintModels';
+import { SEGMENT_TOTAL_BYTES } from '../../utils/segmentModel';
 import type { InpaintChoice } from '../../services/localInpaint';
 import RetouchPrompt from './RetouchPrompt';
 import { PanelSection, Range, Segmented } from './ui';
@@ -12,7 +13,29 @@ export type ModelStatus =
   | { state: 'ready'; backend: string }
   | { state: 'error'; message: string };
 
+export type LassoStatus =
+  | { state: 'idle' }
+  | { state: 'downloading'; loaded: number; total: number }
+  | { state: 'reading' }
+  | { state: 'ready' }
+  | { state: 'error'; message: string };
+
+interface LassoProps {
+  status: LassoStatus;
+  busy: boolean;
+  objectCount: number;
+  /** Zvolená velikost posledního objektu (index do seřazených kandidátů). */
+  level: number | null;
+  levelCount: number;
+  onLevelChange: (level: number) => void;
+  onRemove: () => void;
+  onClear: () => void;
+}
+
 interface RetouchPanelProps {
+  tool: 'brush' | 'lasso';
+  onToolChange: (tool: 'brush' | 'lasso') => void;
+  lasso: LassoProps;
   model: InpaintChoice;
   onModelChange: (model: InpaintChoice) => void;
   modelStatus: ModelStatus;
@@ -34,6 +57,63 @@ interface RetouchPanelProps {
 }
 
 const mb = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
+
+const LassoControls: React.FC<LassoProps & { strength: number; onStrengthChange: (v: number) => void }> = (props) => {
+  const { t } = useTranslation();
+  const { status } = props;
+  const levelLabels = [t.lasso_level_part, t.lasso_level_object, t.lasso_level_whole];
+  return (
+    <div className="space-y-4">
+      <p className="text-[12px] leading-relaxed text-ink-300">{t.lasso_hint}</p>
+      {status.state === 'downloading' && (
+        <div>
+          <div className="mb-1.5 flex justify-between text-[11px] text-ink-300">
+            <span>{t.lasso_downloading}</span>
+            <span className="font-mono tabular-nums">{Math.round((status.loaded / Math.max(1, status.total)) * 100)} %</span>
+          </div>
+          <div className="h-[3px] overflow-hidden rounded-full bg-ink-700">
+            <div className="fm-progress h-full rounded-full" style={{ width: `${Math.round((status.loaded / Math.max(1, status.total)) * 100)}%` }} />
+          </div>
+        </div>
+      )}
+      {(status.state === 'reading' || props.busy) && (
+        <p className="flex items-center gap-2 text-[11px] text-ink-300">
+          <span className="fm-spinner" />
+          {status.state === 'reading' ? t.lasso_reading : t.lasso_finding}
+        </p>
+      )}
+      {status.state === 'error' && <p className="text-[11px] leading-relaxed text-fm-red">{status.message}</p>}
+      {status.state === 'idle' && (
+        <p className="text-[11px] text-ink-500">{t.lasso_first_download.replace('{size}', mb(SEGMENT_TOTAL_BYTES))}</p>
+      )}
+
+      {props.objectCount > 0 && props.level !== null && props.levelCount > 1 && (
+        <div className="space-y-2">
+          <p className="text-[12px] text-ink-200">{t.lasso_level}</p>
+          <Segmented
+            value={String(props.level)}
+            onChange={(v) => props.onLevelChange(Number(v))}
+            options={Array.from({ length: props.levelCount }, (_, i) => ({
+              value: String(i),
+              label: levelLabels[Math.round((i * (levelLabels.length - 1)) / Math.max(1, props.levelCount - 1))],
+            }))}
+          />
+        </div>
+      )}
+
+      <Range label={t.retouch_strength} value={props.strength} min={10} max={100} unit=" %" defaultValue={100} onChange={props.onStrengthChange} />
+
+      <div className="flex gap-2">
+        <button onClick={props.onRemove} disabled={props.objectCount === 0 || props.busy} className="fm-btn-primary flex-1">
+          {t.lasso_remove}
+        </button>
+        <button onClick={props.onClear} disabled={props.objectCount === 0} className="fm-btn-ghost">
+          {t.lasso_clear}
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
   const { t } = useTranslation();
@@ -95,12 +175,26 @@ const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
         <p className="mt-2 text-[13px] leading-relaxed text-ink-300">{t.retouch_lead}</p>
       </div>
 
+      <PanelSection title={t.retouch_tool}>
+        <Segmented
+          value={props.tool}
+          onChange={props.onToolChange}
+          options={[
+            { value: 'brush', label: t.retouch_tool_brush },
+            { value: 'lasso', label: t.retouch_tool_lasso },
+          ]}
+        />
+        {props.tool === 'lasso' && <LassoControls {...props.lasso} strength={props.strength} onStrengthChange={props.onStrengthChange} />}
+      </PanelSection>
+
+      {props.tool === 'brush' && (
       <PanelSection title={t.retouch_brush}>
         <Range label={t.retouch_brush_size} value={props.brushSize} min={8} max={240} unit=" px" onChange={props.onBrushSizeChange} />
         <Range label={t.retouch_brush_hardness} value={props.brushHardness} min={0} max={100} unit=" %" defaultValue={85} onChange={props.onBrushHardnessChange} />
         <Range label={t.retouch_strength} value={props.strength} min={10} max={100} unit=" %" defaultValue={100} onChange={props.onStrengthChange} />
         <p className="text-[11px] text-ink-500">{t.retouch_shortcuts}</p>
       </PanelSection>
+      )}
 
       <PanelSection title={t.retouch_quality}>
         <Segmented

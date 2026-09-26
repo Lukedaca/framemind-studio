@@ -8,6 +8,16 @@ import type { UploadedFile, EditorAction, History, ManualEdits, View } from '../
 import * as geminiService from '../services/geminiService';
 import { describeAiError } from '../services/aiErrors';
 import { encodeCanvas, inpaintRegion, outputType, preloadInpaintModel, type InpaintChoice } from '../services/localInpaint';
+import { encodeForSegment, loadSegmentModel, renderSegmentMask, segmentAt, type SegmentCandidate } from '../services/localSegment';
+import { SEGMENT_TOTAL_BYTES } from '../utils/segmentModel';
+import type { LassoStatus } from './editor/RetouchPanel';
+
+// Jeden objekt vybraný lasem: tři velikosti (část/objekt/celek) a zvolená.
+interface LassoObject {
+  candidates: SegmentCandidate[];
+  level: number;
+  subtract: boolean;
+}
 import type { InpaintModelId } from '../utils/inpaintModels';
 import { computeAutoAdjust } from '../utils/autoAdjust';
 import { applyEditsAndExport } from '../utils/imageProcessor';
@@ -115,6 +125,16 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const [modelStatus, setModelStatus] = useState<ModelStatus>({ state: 'idle' });
   const [retouching, setRetouching] = useState(false);
   const [lastRunMs, setLastRunMs] = useState<number | null>(null);
+
+  // --- Chytré laso ---
+  const [retouchTool, setRetouchTool] = useState<'brush' | 'lasso'>('brush');
+  const [lassoObjects, setLassoObjects] = useState<LassoObject[]>([]);
+  const [lassoStatus, setLassoStatus] = useState<LassoStatus>({ state: 'idle' });
+  const [lassoBusy, setLassoBusy] = useState(false);
+  const lassoBusyRef = useRef(false);
+  const segmentLoadedRef = useRef(false);
+  const encodedKeyRef = useRef<string | null>(null);
+  const encodingRef = useRef<{ key: string; promise: Promise<string | null> } | null>(null);
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
 
@@ -238,7 +258,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     }
   }, [onSetFiles, addNotification, t]);
 
-  const runRetouch = useCallback(async () => {
+  const runRetouch = useCallback(async (fromLasso = false) => {
     const vp = viewportRef.current;
     const mask = vp?.getMaskCanvas();
     if (!activeFile || !vp || !mask || !vp.hasMask() || retouching) return;
@@ -250,7 +270,8 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       const patch = await inpaintRegion(source, mask, model, (p) => {
         if (p.phase === 'init') setModelStatus({ state: 'preparing' });
         else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
-      }, { hardness: brushHardness / 100, strength: retouchStrength / 100 });
+        // Výběr z lasa má ostrý obrys — tvrdá díra s okrajem, jinak by po objektu zůstal obrys.
+      }, { hardness: fromLasso ? 1 : brushHardness / 100, strength: retouchStrength / 100 });
       // Výsledek je vidět hned; soubor se uloží potom.
       setModelStatus({ state: 'ready', backend: patch.backend });
       setLastRunMs(patch.ms);
@@ -271,6 +292,105 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       setRetouching(false);
     }
   }, [activeFile, model, retouching, addNotification, t, saveRetouched, brushHardness, retouchStrength]);
+
+  // Laso: model se stáhne jednou, fotka se „přečte" jednou na každou verzi obsahu.
+  const ensureEncoded = useCallback(async () => {
+    const vp = viewportRef.current;
+    const source = vp?.getSourceCanvas();
+    if (!vp || !source || !activeFile) return null;
+    const key = `${activeFile.id}|${vp.getContentVersion()}`;
+    if (encodedKeyRef.current === key) return key;
+    // Stejnou verzi už někdo čte (otevření lasa + rychlý klik) — počkat na ni.
+    if (encodingRef.current?.key === key) return encodingRef.current.promise;
+    const promise = (async () => {
+      if (!segmentLoadedRef.current) {
+        setLassoStatus({ state: 'downloading', loaded: 0, total: SEGMENT_TOTAL_BYTES });
+        await loadSegmentModel((p) => setLassoStatus({ state: 'downloading', loaded: p.loaded, total: p.total }));
+        segmentLoadedRef.current = true;
+      }
+      setLassoStatus({ state: 'reading' });
+      await encodeForSegment(source, key);
+      encodedKeyRef.current = key;
+      setLassoStatus({ state: 'ready' });
+      return key;
+    })();
+    encodingRef.current = { key, promise };
+    try {
+      return await promise;
+    } finally {
+      if (encodingRef.current?.promise === promise) encodingRef.current = null;
+    }
+  }, [activeFile]);
+
+  const lassoError = useCallback((e: unknown) => {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error('Smart lasso failed:', e);
+    setLassoStatus({ state: 'error', message: `${t.lasso_error} (${message})` });
+  }, [t.lasso_error]);
+
+  // Otevření lasa rovnou připraví model i fotku, ať první klik nečeká.
+  useEffect(() => {
+    if (mode !== 'retouch' || retouchTool !== 'lasso' || retouching) return;
+    ensureEncoded().catch(lassoError);
+  }, [mode, retouchTool, retouching, activeFile?.id, ensureEncoded, lassoError]);
+
+  // Jiná fotka = starý výběr neplatí.
+  useEffect(() => {
+    setLassoObjects([]);
+  }, [activeFile?.id]);
+
+  // Výběr = sjednocení objektů, Alt+klik ubírá; kreslí se do masky plátna.
+  useEffect(() => {
+    if (retouchTool !== 'lasso') return;
+    const vp = viewportRef.current;
+    const mask = vp?.getMaskCanvas();
+    if (!vp || !mask) return;
+    if (lassoObjects.length === 0) {
+      vp.setMask(null);
+      return;
+    }
+    const selection = document.createElement('canvas');
+    selection.width = mask.width;
+    selection.height = mask.height;
+    const ctx = selection.getContext('2d')!;
+    for (const obj of lassoObjects) {
+      ctx.globalCompositeOperation = obj.subtract ? 'destination-out' : 'source-over';
+      ctx.drawImage(renderSegmentMask(obj.candidates[obj.level].logits, mask.width, mask.height), 0, 0);
+    }
+    vp.setMask(selection);
+  }, [lassoObjects, retouchTool]);
+
+  const onLassoClick = useCallback(async (point: { x: number; y: number }, subtract: boolean) => {
+    if (lassoBusyRef.current || retouching) return;
+    lassoBusyRef.current = true;
+    setLassoBusy(true);
+    try {
+      const key = await ensureEncoded();
+      const size = viewportRef.current?.getImageSize();
+      if (!key || !size) return;
+      const { candidates, best } = await segmentAt(key, point, size.width, size.height);
+      if (candidates.length) setLassoObjects((prev) => [...prev, { candidates, level: best, subtract }]);
+    } catch (e) {
+      lassoError(e);
+    } finally {
+      lassoBusyRef.current = false;
+      setLassoBusy(false);
+    }
+  }, [ensureEncoded, lassoError, retouching]);
+
+  const changeLassoLevel = (level: number) =>
+    setLassoObjects((prev) => prev.map((obj, i) => (i === prev.length - 1 ? { ...obj, level } : obj)));
+
+  const removeLassoSelection = async () => {
+    await runRetouch(true);
+    setLassoObjects([]);
+  };
+
+  const changeRetouchTool = (tool: 'brush' | 'lasso') => {
+    // Výběr z lasa zůstane v masce — štětcem se dá doladit a puštěním tahu odstranit.
+    setLassoObjects([]);
+    setRetouchTool(tool);
+  };
 
   // Úprava textem přes Gemini — volitelná, potřebuje vlastní API klíč.
   const runPromptRetouch = async (prompt: string, batch: boolean) => {
@@ -482,10 +602,11 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
           <CanvasViewport
             ref={viewportRef}
             imageSrc={viewportSrc}
-            activeTool={mode === 'retouch' && !isComparing ? 'brush' : 'none'}
+            activeTool={mode === 'retouch' && !isComparing ? retouchTool : 'none'}
             brushSize={brushSize}
             brushHardness={brushHardness / 100}
-            onStrokeEnd={runRetouch}
+            onStrokeEnd={() => runRetouch()}
+            onLassoClick={onLassoClick}
             processing={retouching}
           />
           {isComparing && <span className="fm-chip is-active pointer-events-none absolute left-1/2 top-4 -translate-x-1/2">{t.editor_original}</span>}
@@ -533,6 +654,18 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               promptHistory={promptHistory}
               fileCount={files.length}
               batchProgress={batchProgress}
+              tool={retouchTool}
+              onToolChange={changeRetouchTool}
+              lasso={{
+                status: lassoStatus,
+                busy: lassoBusy,
+                objectCount: lassoObjects.length,
+                level: lassoObjects.length ? lassoObjects[lassoObjects.length - 1].level : null,
+                levelCount: lassoObjects.length ? lassoObjects[lassoObjects.length - 1].candidates.length : 0,
+                onLevelChange: changeLassoLevel,
+                onRemove: removeLassoSelection,
+                onClear: () => setLassoObjects([]),
+              }}
             />
           )}
           {mode === 'export' && (
