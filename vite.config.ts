@@ -15,11 +15,24 @@ const detectApiKeys = () => ({
   },
 });
 
+const ISOLATION_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
+};
+
 export default defineConfig(({ mode }) => {
     return {
+      // Cross-origin izolace odemyká SharedArrayBuffer → vícevláknový WASM pro
+      // lokální retuš (LaMa na jednom vlákně běží několikrát déle). "credentialless"
+      // pouští cizí zdroje bez CORP hlaviček (Google Fonts, MediaPipe, Hugging Face).
+      // Na produkci totéž nastavuje vercel.json.
       server: {
         port: 3000,
         host: '0.0.0.0',
+        headers: ISOLATION_HEADERS,
+      },
+      preview: {
+        headers: ISOLATION_HEADERS,
       },
       plugins: [
         react(),
@@ -29,20 +42,33 @@ export default defineConfig(({ mode }) => {
           manifest: {
             name: 'FrameMind Studio',
             short_name: 'FrameMind',
-            description: 'AI fotostudio pro fotografy — žánrový culling, úpravy, RAW náhledy, galerie',
-            theme_color: '#0a0a0a',
-            background_color: '#0a0a0a',
+            description: 'Fotostudio v prohlížeči — výběr, úpravy, lokální retuš štětcem, export',
+            theme_color: '#09090d',
+            background_color: '#09090d',
             display: 'standalone',
             icons: [
               { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
               { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-              { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+              { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
             ],
           },
           workbox: {
             skipWaiting: true,
             clientsClaim: true,
+            // WASM runtime ONNX (~25 MB) je nad limitem precache; cachuje se při
+            // prvním použití retuše, aby pak šla offline. Modely si drží worker
+            // sám v Cache Storage (fm-inpaint-models-v1).
+            globIgnores: ['**/*.wasm'],
             runtimeCaching: [
+              {
+                urlPattern: /\.wasm$/i,
+                handler: 'CacheFirst',
+                options: {
+                  cacheName: 'fm-ort-wasm',
+                  expiration: { maxEntries: 4 },
+                  cacheableResponse: { statuses: [0, 200] },
+                },
+              },
               {
                 urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
                 handler: 'CacheFirst',
