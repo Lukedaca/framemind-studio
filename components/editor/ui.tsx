@@ -23,23 +23,26 @@ interface RangeProps {
   max?: number;
   step?: number;
   unit?: string;
+  /** Hodnota po dvojkliku; bez ní 0, u jednostranného posuvníku minimum. */
+  defaultValue?: number;
   onChange: (value: number) => void;
 }
 
 // Posuvník s nulou uprostřed (−100…100) vybarvuje od středu, jednostranný od kraje.
 // Dvojklik na popisek vrací výchozí hodnotu.
-export const Range: React.FC<RangeProps> = ({ label, value, min = -100, max = 100, step = 1, unit = '', onChange }) => {
+export const Range: React.FC<RangeProps> = ({ label, value, min = -100, max = 100, step = 1, unit = '', defaultValue, onChange }) => {
   const origin = min < 0 ? 0 : min;
+  const reset = defaultValue ?? origin;
   const pct = (v: number) => ((v - min) / (max - min)) * 100;
   const from = Math.min(pct(origin), pct(value));
   const to = Math.max(pct(origin), pct(value));
   return (
     <label className="block">
       <span className="mb-2 flex items-baseline justify-between text-[13px]">
-        <span className="cursor-default text-ink-200" onDoubleClick={() => onChange(origin)} title="Dvojklik = výchozí">
+        <span className="cursor-default text-ink-200" onDoubleClick={() => onChange(reset)} title="Dvojklik = výchozí">
           {label}
         </span>
-        <span className={`font-mono text-xs tabular-nums ${value === origin ? 'text-ink-500' : 'text-ink-100'}`}>
+        <span className={`font-mono text-xs tabular-nums ${value === reset ? 'text-ink-500' : 'text-ink-100'}`}>
           {value > 0 && min < 0 ? '+' : ''}
           {value}
           {unit}

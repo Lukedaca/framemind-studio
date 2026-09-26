@@ -171,7 +171,7 @@ const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole:
     const m = toModel(i);
     return ring[m] === 1 && hole[m] === 0;
   }, pixels, step);
-  const filled = grainSigma(layerData.data, blurOf(layer), (i) => layerData.data[i * 4 + 3] > 250, pixels, step);
+  const filled = grainSigma(layerData.data, blurOf(layer), (i) => layerData.data[i * 4 + 3] > 0 && hole[toModel(i)] === 1, pixels, step);
   if (!around || !filled) return;
   const add = missingGrain(around, filled);
   if (add[0] + add[1] + add[2] < 0.3) return;
@@ -199,11 +199,23 @@ const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole:
  * @param maskCanvas maska v libovolném rozlišení se stejným poměrem stran jako
  *   fotka; retušuje se všude, kde má alfa > 0.
  */
+export interface BlendOptions {
+  /** 0–1: měkký okraj bere váhu z alfy masky, tvrdý z díry s okrajem. */
+  hardness: number;
+  /** 0–1: kolik doplnění se použije. */
+  strength: number;
+}
+
+// Alfa masky pod touto hodnotou do díry nepatří — jen dozvuk měkkého okraje;
+// model by jinak dostal zbytečně velkou díru.
+const HOLE_ALPHA_THRESHOLD = 12;
+
 export const inpaintRegion = async (
   source: HTMLCanvasElement,
   maskCanvas: HTMLCanvasElement,
   choice: InpaintChoice,
   onProgress?: PendingJob['onProgress'],
+  blend: BlendOptions = { hardness: 1, strength: 1 },
 ): Promise<InpaintPatch> => {
   const mw = maskCanvas.width;
   const mh = maskCanvas.height;
@@ -212,7 +224,7 @@ export const inpaintRegion = async (
   const maskRgba = maskCtx.getImageData(0, 0, mw, mh).data;
   const alpha = new Uint8Array(mw * mh);
   for (let i = 0; i < alpha.length; i++) alpha[i] = maskRgba[i * 4 + 3];
-  const maskBox = maskBoundingBox(alpha, mw, mh);
+  const maskBox = maskBoundingBox(alpha, mw, mh, HOLE_ALPHA_THRESHOLD);
   if (!maskBox) throw new Error('EMPTY_MASK');
 
   const W = source.width;
@@ -226,7 +238,7 @@ export const inpaintRegion = async (
     height: Math.ceil(maskBox.height * sy),
   };
   let holeArea = 0;
-  for (let i = 0; i < alpha.length; i++) if (alpha[i] > 0) holeArea++;
+  for (let i = 0; i < alpha.length; i++) if (alpha[i] > HOLE_ALPHA_THRESHOLD) holeArea++;
   const model: InpaintModelId = choice === 'auto' ? pickAutoModel(holeArea * sx * sy) : choice;
   const crop = computeInpaintCrop(fullBox, W, H, CONTEXT_FACTOR[model]);
 
@@ -243,7 +255,7 @@ export const inpaintRegion = async (
   msCtx.drawImage(maskCanvas, crop.x / sx, crop.y / sy, crop.width / sx, crop.height / sy, 0, 0, MODEL_SIZE, MODEL_SIZE);
   const msData = msCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data;
   const binary = new Uint8Array(MODEL_SIZE * MODEL_SIZE);
-  for (let i = 0; i < binary.length; i++) binary[i] = msData[i * 4 + 3] > 0 ? 1 : 0;
+  for (let i = 0; i < binary.length; i++) binary[i] = msData[i * 4 + 3] > HOLE_ALPHA_THRESHOLD ? 1 : 0;
   const hole = dilateMask(binary, MODEL_SIZE, MODEL_SIZE, MASK_DILATION_PX);
 
   onProgress?.({ phase: 'compute' });
@@ -270,9 +282,17 @@ export const inpaintRegion = async (
   layerCtx.imageSmoothingQuality = 'high';
   layerCtx.drawImage(resultSmall, 0, 0, crop.width, crop.height);
   layerCtx.globalCompositeOperation = 'destination-in';
-  // Měkký přechod ~1,5 px modelu, ať není vidět šev mezi doplněním a originálem.
-  layerCtx.filter = `blur(${Math.max(1, (crop.width / MODEL_SIZE) * 1.5)}px)`;
-  layerCtx.drawImage(holeCanvas, 0, 0, crop.width, crop.height);
+  // Váha retuše. Tvrdý štětec: díra s okrajem a měkkým přechodem ~1,5 px
+  // modelu (bez švu, bez duchů po obrysu). Měkký štětec: přímo alfa masky,
+  // takže se retuš k okraji plynule vytrácí. Síla váhu celou násobí.
+  layerCtx.globalAlpha = Math.min(1, Math.max(0, blend.strength));
+  if (blend.hardness >= 0.99) {
+    layerCtx.filter = `blur(${Math.max(1, (crop.width / MODEL_SIZE) * 1.5)}px)`;
+    layerCtx.drawImage(holeCanvas, 0, 0, crop.width, crop.height);
+  } else {
+    layerCtx.drawImage(maskCanvas, crop.x / sx, crop.y / sy, crop.width / sx, crop.height / sy, 0, 0, crop.width, crop.height);
+  }
+  layerCtx.globalAlpha = 1;
   layerCtx.globalCompositeOperation = 'source-over';
   layerCtx.filter = 'none';
 
