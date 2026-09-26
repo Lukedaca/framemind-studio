@@ -913,8 +913,8 @@ const CullingView: React.FC<CullingViewProps> = ({
               <p className="text-sm">{tr('cull_empty')}</p>
             </div>
           ) : (
-            <div className="max-w-7xl mx-auto space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-3">
+            <div className="space-y-4">
+              <div className="fm-grid-photos">
                 {visibleFiles.map(file => renderCard(file))}
               </div>
 
@@ -935,7 +935,7 @@ const CullingView: React.FC<CullingViewProps> = ({
                         ✕
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 md:grid-cols-5 xl:grid-cols-6 gap-2">
+                    <div className="fm-grid-thumbs">
                       {members.map(member => (
                         <div key={member.id} className="space-y-1.5">
                           {renderCard(member, true)}

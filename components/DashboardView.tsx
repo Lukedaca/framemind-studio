@@ -8,7 +8,7 @@ import FmMark from './common/FmMark';
 const F_STOPS = ['1.4', '2', '2.8', '4', '5.6', '8', '11', '16', '22'];
 
 const LensStage: React.FC = () => (
-  <div className="relative mx-auto w-full max-w-[440px]">
+  <div className="fm-lens-wrap relative mx-auto">
     <div className="fm-halo" />
     <div className="fm-lens">
       <svg viewBox="0 0 200 200" className="fm-lens-scale" aria-hidden>
@@ -67,17 +67,17 @@ const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onToggleSideb
         </button>
       </div>
 
-      <div className="mx-auto w-full max-w-[1180px] px-5 pb-16 sm:px-10 lg:pt-14">
+      <div className="fm-page">
         {/* Úvod: vlevo co appka dělá, vpravo značka v objektivu se clonovou stupnicí */}
-        <section className="grid items-center gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:gap-16">
+        <section className="grid items-center gap-[clamp(32px,5vw,96px)] lg:grid-cols-[1.15fr_0.85fr]">
           <div className="animate-fade-in">
             <p className="fm-eyebrow">FrameMind Studio</p>
-            <h1 className="mt-5 font-display text-[44px] leading-[1.04] text-ink-50 sm:text-[64px]">
+            <h1 className="fm-hero-title mt-5 font-display leading-[1.04] text-ink-50">
               {t.dash_title_1}
               <br />
               <span className="fm-gradient-text">{t.dash_title_2}</span>
             </h1>
-            <p className="mt-6 max-w-[520px] text-[16px] leading-[1.65] text-ink-300">{t.dash_lead}</p>
+            <p className="fm-hero-lead mt-6 max-w-[34em] leading-[1.65] text-ink-300">{t.dash_lead}</p>
             <div className="mt-8 flex flex-wrap gap-3">
               <button onClick={() => onNavigate({ view: 'upload' })} className="fm-btn-primary h-12 px-6 text-[14px]">
                 <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M10 13V3m0 0L6 7m4-4 4 4M3.5 13v2.5a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V13" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -95,12 +95,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onToggleSideb
         </section>
 
         {/* Postup práce */}
-        <section className="mt-16 lg:mt-24">
+        <section className="mt-[clamp(48px,9vh,112px)]">
           <div className="mb-5 flex items-end justify-between">
             <h2 className="fm-eyebrow">{t.dash_workflow}</h2>
             <span className="text-[12px] text-ink-500">{t.dash_local_badge}</span>
           </div>
-          <div className="fm-surface grid overflow-hidden rounded-2xl sm:grid-cols-2 lg:grid-cols-5">
+          <div className="fm-grid-steps overflow-hidden rounded-2xl border border-hairline shadow-[0_18px_40px_-20px_rgba(0,0,0,0.8)]">
             {steps.map((s) => {
               const disabled = s.needsFiles && fileCount === 0;
               return (
@@ -108,7 +108,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onToggleSideb
                   key={s.n}
                   disabled={disabled}
                   onClick={() => onNavigate({ view: s.view, action: s.action })}
-                  className="group relative border-b border-hairline p-6 text-left transition-colors last:border-b-0 hover:bg-white/[0.025] disabled:cursor-default disabled:hover:bg-transparent sm:border-r lg:border-b-0 lg:last:border-r-0"
+                  className="group relative bg-ink-900 p-[clamp(18px,1.6vw,28px)] text-left transition-colors hover:bg-ink-850 disabled:cursor-default disabled:hover:bg-ink-900"
                 >
                   <span className="font-mono text-[11px] text-ink-400">{s.n}</span>
                   <h3 className="mt-6 font-display text-[19px] leading-tight text-ink-50">{s.title}</h3>
@@ -133,7 +133,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onToggleSideb
           {recent.length === 0 ? (
             <p className="rounded-2xl border border-dashed border-hairline p-8 text-center text-[13px] text-ink-500">{t.dash_no_projects}</p>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="fm-grid-cards">
               {recent.map((p) => (
                 <button
                   key={p.id}

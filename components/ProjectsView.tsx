@@ -39,7 +39,7 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({ title, onToggleSidebar, onO
     <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar">
       <Header title={title} onToggleSidebar={onToggleSidebar} />
 
-      <div className="p-6 lg:p-12 max-w-7xl mx-auto w-full space-y-8 animate-fade-in">
+      <div className="fm-page w-full space-y-8 animate-fade-in">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-3xl font-black text-white">{t.crm_projects_title}</h2>
@@ -82,7 +82,7 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({ title, onToggleSidebar, onO
             {t.crm_no_projects}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          <div className="fm-grid-cards">
             {filteredProjects.map((project) => (
               <ProjectCard
                 key={project.id}

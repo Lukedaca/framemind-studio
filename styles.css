@@ -497,6 +497,62 @@ body::after {
   animation: fm-fade-in 0.25s ease-out both;
 }
 
+/* --- Plynulé rozměry: stránky se roztahují podle obrazovky, ne podle breakpointů --- */
+/* V @layer components, aby jednotlivé stránky mohly okraje přebít utilitami (pt-24 apod.). */
+@layer components {
+  .fm-page {
+    width: 100%;
+    max-width: 1840px;
+    margin-inline: auto;
+    padding-inline: clamp(16px, 3.2vw, 64px);
+    padding-block: clamp(20px, 4vh, 56px);
+  }
+
+  /* Karty projektů a klientů: tolik sloupců, kolik se vejde. */
+  .fm-grid-cards {
+    display: grid;
+    gap: clamp(12px, 1.2vw, 20px);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  }
+
+  /* Fotky ve výběru: velikost karty roste s obrazovkou, počet sloupců dopočítá mřížka. */
+  .fm-grid-photos {
+    display: grid;
+    gap: clamp(8px, 0.8vw, 14px);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, clamp(150px, 13vw, 280px)), 1fr));
+  }
+  .fm-grid-thumbs {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, clamp(110px, 9vw, 200px)), 1fr));
+  }
+
+  /* Kroky postupu: předěly jsou mezera 1 px nad vlásečnicí, takže sedí při jakémkoli počtu sloupců. */
+  .fm-grid-steps {
+    display: grid;
+    gap: 1px;
+    background: var(--hair);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  }
+
+  /* Titulek úvodu hlídá šířku i výšku okna — na nízkém širokém monitoru nepřeroste. */
+  .fm-hero-title {
+    font-size: clamp(34px, min(5.2vw, 8.5vh), 96px);
+  }
+  .fm-hero-lead {
+    font-size: clamp(15px, min(1.1vw, 2.1vh), 19px);
+  }
+  .fm-lens-wrap {
+    width: clamp(220px, min(34vw, 56vh), 600px);
+    max-width: 100%;
+  }
+  @media (max-width: 1023px) {
+    .fm-lens-wrap {
+      width: min(78vw, 44vh, 420px);
+    }
+  }
+}
+
 .custom-scrollbar::-webkit-scrollbar,
 ::-webkit-scrollbar {
   width: 6px;

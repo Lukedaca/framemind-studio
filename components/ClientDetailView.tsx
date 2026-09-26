@@ -22,7 +22,7 @@ const ClientDetailView: React.FC<ClientDetailViewProps> = ({ title, onToggleSide
     <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar">
       <Header title={title} onToggleSidebar={onToggleSidebar} />
 
-      <div className="p-6 lg:p-12 max-w-6xl mx-auto w-full space-y-8 animate-fade-in">
+      <div className="fm-page w-full space-y-8 animate-fade-in">
         {!client ? (
           <div className="bg-surface/40 border border-border-subtle rounded-3xl p-12 text-center text-text-secondary">
             {t.crm_client_missing}
