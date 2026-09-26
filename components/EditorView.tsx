@@ -7,7 +7,7 @@ import { Segmented } from './editor/ui';
 import type { UploadedFile, EditorAction, History, ManualEdits, View } from '../types';
 import * as geminiService from '../services/geminiService';
 import { describeAiError } from '../services/aiErrors';
-import { inpaintFile, preloadInpaintModel } from '../services/localInpaint';
+import { encodeCanvas, inpaintRegion, outputType, preloadInpaintModel } from '../services/localInpaint';
 import type { InpaintModelId } from '../utils/inpaintModels';
 import { computeAutoAdjust } from '../utils/autoAdjust';
 import { applyEditsAndExport } from '../utils/imageProcessor';
@@ -88,6 +88,15 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
 
   const viewportRef = useRef<CanvasViewportHandle>(null);
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  // Verze obsahu plátna po posledním vloženém výřezu a URL souboru, ze kterého retuš vyšla.
+  const currentVersionRef = useRef(0);
+  const baseUrlRef = useRef<string | null>(null);
+  const workingCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [savingRetouch, setSavingRetouch] = useState(false);
+  const savingRef = useRef(false);
+  savingRef.current = savingRetouch;
   const activeFile = useMemo(() => files.find((f) => f.id === activeFileId), [files, activeFileId]);
   const manualEdits = (activeFileId && editsById[activeFileId]) || INITIAL_EDITS;
   const activeIndex = files.findIndex((f) => f.id === activeFileId);
@@ -157,22 +166,68 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     }
   };
 
+  // Uložení retušované fotky do souboru běží na pozadí a vždy jen jedno;
+  // tahy mezi tím se do souboru dostanou dalším kolem (bere se nejnovější verze).
+  const saveRef = useRef<{ running: boolean; pending: boolean }>({ running: false, pending: false });
+
+  const saveRetouched = useCallback(async (fileId: string, name: string, type: string) => {
+    const state = saveRef.current;
+    if (state.running) {
+      state.pending = true;
+      return;
+    }
+    state.running = true;
+    setSavingRetouch(true);
+    try {
+      do {
+        state.pending = false;
+        const vp = viewportRef.current;
+        // Ukládá se plátno, do kterého se retuš vložila — ne to, co je zrovna
+        // vidět (při Porovnat je na plátně originál).
+        const source = workingCanvasRef.current;
+        if (!vp || !source) return;
+        const version = currentVersionRef.current;
+        const file = await encodeCanvas(source, name, type);
+        // Mezitím přišel další tah → uložit znovu až s ním.
+        if (state.pending || version !== currentVersionRef.current) continue;
+        // Mezitím se fotka změnila jinak (zpět, jiná fotka) → výsledek zahodit.
+        const current = filesRef.current.find((f) => f.id === fileId);
+        if (!current || current.previewUrl !== baseUrlRef.current) return;
+        const url = URL.createObjectURL(file);
+        vp.commitSource(url, version);
+        baseUrlRef.current = url;
+        onSetFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, file, previewUrl: url } : f)), t.retouch_history_entry);
+      } while (state.pending);
+    } catch (e) {
+      console.error('Saving retouched photo failed:', e);
+      addNotification(t.retouch_failed, 'error');
+    } finally {
+      state.running = false;
+      setSavingRetouch(false);
+    }
+  }, [onSetFiles, addNotification, t]);
+
   const runRetouch = useCallback(async () => {
     const vp = viewportRef.current;
     const mask = vp?.getMaskCanvas();
     if (!activeFile || !vp || !mask || !vp.hasMask() || retouching) return;
+    const source = vp.getSourceCanvas();
+    if (!source) return;
     setRetouching(true);
+    if (!saveRef.current.running) baseUrlRef.current = activeFile.previewUrl;
     try {
-      const result = await inpaintFile(activeFile.file, mask, model, (p) => {
+      const patch = await inpaintRegion(source, mask, model, (p) => {
         if (p.phase === 'init') setModelStatus({ state: 'preparing' });
         else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
       });
-      setModelStatus({ state: 'ready', backend: result.backend });
-      setLastRunMs(result.ms);
-      const url = URL.createObjectURL(result.file);
-      // Masku nemazat hned: zmizí sama, až se načte nový obrázek — jinak by
-      // objekt na okamžik znovu probleskl.
-      onSetFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, file: result.file, previewUrl: url } : f)), t.retouch_history_entry);
+      // Výsledek je vidět hned; soubor se uloží potom.
+      setModelStatus({ state: 'ready', backend: patch.backend });
+      setLastRunMs(patch.ms);
+      const version = vp.applyPatch(source, patch.layer, patch.x, patch.y);
+      if (version < 0) return; // mezitím jiná fotka
+      currentVersionRef.current = version;
+      workingCanvasRef.current = source;
+      saveRetouched(activeFile.id, activeFile.file.name, outputType(activeFile.file));
     } catch (e) {
       vp.clearMask();
       const message = e instanceof Error ? e.message : String(e);
@@ -184,7 +239,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     } finally {
       setRetouching(false);
     }
-  }, [activeFile, model, retouching, onSetFiles, addNotification, t]);
+  }, [activeFile, model, retouching, addNotification, t, saveRetouched]);
 
   // Úprava textem přes Gemini — volitelná, potřebuje vlastní API klíč.
   const runPromptRetouch = async (prompt: string, batch: boolean) => {
@@ -307,6 +362,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
+        if (savingRef.current) return;
         if (e.shiftKey) onRedo();
         else onUndo();
         return;
@@ -371,7 +427,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
           />
         </div>
         <div className="flex flex-1 items-center justify-end gap-1">
-          <button onClick={onUndo} disabled={history.past.length === 0 || retouching} className="fm-icon-btn" title={`${t.retouch_undo} (Ctrl+Z)`}>
+          <button onClick={onUndo} disabled={history.past.length === 0 || retouching || savingRetouch} className="fm-icon-btn" title={`${t.retouch_undo} (Ctrl+Z)`}>
             <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M7.5 5 3.5 9l4 4M4 9h8a4.5 4.5 0 0 1 0 9h-2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
           <button onClick={onRedo} disabled={history.future.length === 0 || retouching} className="fm-icon-btn" title="Ctrl+Shift+Z">
@@ -435,7 +491,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               onBrushSizeChange={setBrushSize}
               isProcessing={retouching}
               lastRunMs={lastRunMs}
-              canUndo={history.past.length > 0}
+              canUndo={history.past.length > 0 && !savingRetouch}
               onUndo={onUndo}
               onPromptSubmit={runPromptRetouch}
               promptHistory={promptHistory}
