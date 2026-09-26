@@ -20,7 +20,7 @@ const ClientDetailView: React.FC<ClientDetailViewProps> = ({ title, onToggleSide
 
   return (
     <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar">
-      <Header title={title} onToggleSidebar={onToggleSidebar} onOpenApiKeyModal={onOpenApiKeyModal} />
+      <Header title={title} onToggleSidebar={onToggleSidebar} />
 
       <div className="p-6 lg:p-12 max-w-6xl mx-auto w-full space-y-8 animate-fade-in">
         {!client ? (

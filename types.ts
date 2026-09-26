@@ -218,15 +218,10 @@ export type EditorAction = {
 } | null;
 
 export type View =
-  | 'home'
   | 'dashboard'
   | 'upload'
+  | 'culling'
   | 'editor'
-  | 'batch'
-  | 'ai-command'
-  | 'generate'
-  | 'raw-converter'
-  | 'ai-gallery'
   | 'projects'
   | 'project-detail'
   | 'clients'
