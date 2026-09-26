@@ -32,6 +32,8 @@ interface CanvasViewportProps {
   activeTool: RetouchTool;
   /** Průměr štětce v pixelech obrazovky — při zoomu zůstává stejně velký pod rukou. */
   brushSize: number;
+  /** 0 = zcela měkký okraj, 1 = tvrdý. Alfa masky pak nese váhu retuše. */
+  brushHardness?: number;
   onStrokeEnd?: () => void;
   /** Maska zůstane vidět a pulzuje, dokud model počítá. */
   processing?: boolean;
@@ -45,10 +47,15 @@ const MAX_MASK_SIDE = 2048;
 const MASK_COLOR = 'rgb(214, 92, 255)';
 
 const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
-  ({ imageSrc, activeTool, brushSize, onStrokeEnd, processing = false, className }, ref) => {
+  ({ imageSrc, activeTool, brushSize, brushHardness = 1, onStrokeEnd, processing = false, className }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    // Rozpracovaný tah: kreslí se tvrdě sem a do masky se sloučí až rozmazaný,
+    // jinak by se měkké okraje překrývajících se kousků tahu sčítaly do tvrda.
+    const strokeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const softStrokeRef = useRef<HTMLCanvasElement | null>(null);
+    const strokeBlurRef = useRef(0);
     const imageRef = useRef<Source | null>(null);
     // Co je právě vidět: URL načteného souboru, nebo null po vložení retuše,
     // dokud se nový soubor neuloží (verze roste s každým vloženým výřezem).
@@ -104,9 +111,11 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       ctx.drawImage(img, 0, 0);
 
       const mask = maskCanvasRef.current;
-      if (mask && maskDirtyRef.current) {
+      const stroke = drawingRef.current ? softStrokeRef.current ?? strokeCanvasRef.current : null;
+      if (mask && (maskDirtyRef.current || stroke)) {
         ctx.globalAlpha = processing ? 0.35 + 0.25 * Math.sin(pulse) : 0.55;
         ctx.drawImage(mask, 0, 0, widthOf(img), heightOf(img));
+        if (stroke) ctx.drawImage(stroke, 0, 0, widthOf(img), heightOf(img));
         ctx.globalAlpha = 1;
       }
       ctx.restore();
@@ -235,21 +244,57 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       return () => observer.disconnect();
     }, [render]);
 
-    const paintSegment = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const startStroke = () => {
       const mask = maskCanvasRef.current;
-      const ctx = mask?.getContext('2d');
-      if (!mask || !ctx) return;
+      if (!mask) return;
+      const make = () => {
+        const c = document.createElement('canvas');
+        c.width = mask.width;
+        c.height = mask.height;
+        return c;
+      };
+      strokeCanvasRef.current = make();
+      const h = Math.min(1, Math.max(0, brushHardness));
+      // Poloměr rozmazání v pixelech masky: u nulové tvrdosti přes půl štětce.
+      const radius = ((brushSize / transformRef.current.scale) * maskScale()) / 2;
+      strokeBlurRef.current = h >= 0.99 ? 0 : radius * (1 - h) * 0.55;
+      softStrokeRef.current = strokeBlurRef.current > 0 ? make() : null;
+    };
+
+    const paintSegment = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+      const stroke = strokeCanvasRef.current;
+      const ctx = stroke?.getContext('2d');
+      if (!stroke || !ctx) return;
       const s = maskScale();
+      const h = Math.min(1, Math.max(0, brushHardness));
       ctx.strokeStyle = MASK_COLOR;
-      ctx.fillStyle = MASK_COLOR;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.lineWidth = (brushSize / transformRef.current.scale) * s;
+      // Měkký štětec má tvrdé jádro menší, zbytek poloměru dělá rozmazání.
+      ctx.lineWidth = (brushSize / transformRef.current.scale) * s * (0.55 + 0.45 * h);
       ctx.beginPath();
       ctx.moveTo(from.x * s, from.y * s);
       ctx.lineTo(to.x * s, to.y * s);
       ctx.stroke();
-      maskDirtyRef.current = true;
+      const soft = softStrokeRef.current;
+      if (soft) {
+        const sctx = soft.getContext('2d')!;
+        sctx.clearRect(0, 0, soft.width, soft.height);
+        sctx.filter = `blur(${strokeBlurRef.current}px)`;
+        sctx.drawImage(stroke, 0, 0);
+        sctx.filter = 'none';
+      }
+    };
+
+    const commitStroke = () => {
+      const mask = maskCanvasRef.current;
+      const stroke = softStrokeRef.current ?? strokeCanvasRef.current;
+      if (mask && stroke) {
+        mask.getContext('2d')!.drawImage(stroke, 0, 0);
+        maskDirtyRef.current = true;
+      }
+      strokeCanvasRef.current = null;
+      softStrokeRef.current = null;
     };
 
     const onPointerDown = (e: React.PointerEvent) => {
@@ -262,6 +307,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       }
       if (e.button !== 0) return;
       const ip = screenToImage(p.x, p.y);
+      startStroke();
       drawingRef.current = { pointerId: e.pointerId, last: ip };
       paintSegment(ip, ip);
       render();
@@ -293,6 +339,8 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       }
       if (drawingRef.current?.pointerId === e.pointerId) {
         drawingRef.current = null;
+        commitStroke();
+        render();
         onStrokeEnd?.();
       }
     };

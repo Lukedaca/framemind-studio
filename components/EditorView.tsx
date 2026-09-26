@@ -61,6 +61,25 @@ const modeFromAction = (action: EditorAction): Mode => {
 };
 
 const MODEL_KEY = 'fm_inpaint_model';
+const BRUSH_KEY = 'fm_retouch_brush';
+
+// Nastavení štětce si studio pamatuje mezi spuštěními (jen preference v prohlížeči).
+const loadBrush = () => {
+  const fallback = { size: 48, hardness: 85, strength: 100 };
+  try {
+    const saved = JSON.parse(localStorage.getItem(BRUSH_KEY) || 'null');
+    if (!saved) return fallback;
+    const clamp = (v: unknown, min: number, max: number, d: number) =>
+      typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : d;
+    return {
+      size: clamp(saved.size, 8, 240, fallback.size),
+      hardness: clamp(saved.hardness, 0, 100, fallback.hardness),
+      strength: clamp(saved.strength, 10, 100, fallback.strength),
+    };
+  } catch {
+    return fallback;
+  }
+};
 
 const EditorView: React.FC<EditorViewProps> = (props) => {
   const { files, activeFileId, onSetFiles, onSetActiveFileId, activeAction, addNotification, history, onUndo, onRedo, onOpenApiKeyModal } = props;
@@ -73,7 +92,18 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [isComparing, setIsComparing] = useState(false);
 
-  const [brushSize, setBrushSize] = useState(48);
+  const [initialBrush] = useState(loadBrush);
+  const [brushSize, setBrushSize] = useState(initialBrush.size);
+  // Tvrdost a síla v procentech, jak je ukazují posuvníky.
+  const [brushHardness, setBrushHardness] = useState(initialBrush.hardness);
+  const [retouchStrength, setRetouchStrength] = useState(initialBrush.strength);
+  useEffect(() => {
+    try {
+      localStorage.setItem(BRUSH_KEY, JSON.stringify({ size: brushSize, hardness: brushHardness, strength: retouchStrength }));
+    } catch {
+      /* jen preference */
+    }
+  }, [brushSize, brushHardness, retouchStrength]);
   const [model, setModel] = useState<InpaintChoice>(() => {
     try {
       const saved = localStorage.getItem(MODEL_KEY);
@@ -220,7 +250,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       const patch = await inpaintRegion(source, mask, model, (p) => {
         if (p.phase === 'init') setModelStatus({ state: 'preparing' });
         else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
-      });
+      }, { hardness: brushHardness / 100, strength: retouchStrength / 100 });
       // Výsledek je vidět hned; soubor se uloží potom.
       setModelStatus({ state: 'ready', backend: patch.backend });
       setLastRunMs(patch.ms);
@@ -240,7 +270,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     } finally {
       setRetouching(false);
     }
-  }, [activeFile, model, retouching, addNotification, t, saveRetouched]);
+  }, [activeFile, model, retouching, addNotification, t, saveRetouched, brushHardness, retouchStrength]);
 
   // Úprava textem přes Gemini — volitelná, potřebuje vlastní API klíč.
   const runPromptRetouch = async (prompt: string, batch: boolean) => {
@@ -454,6 +484,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
             imageSrc={viewportSrc}
             activeTool={mode === 'retouch' && !isComparing ? 'brush' : 'none'}
             brushSize={brushSize}
+            brushHardness={brushHardness / 100}
             onStrokeEnd={runRetouch}
             processing={retouching}
           />
@@ -490,6 +521,10 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               modelStatus={modelStatus}
               brushSize={brushSize}
               onBrushSizeChange={setBrushSize}
+              brushHardness={brushHardness}
+              onBrushHardnessChange={setBrushHardness}
+              strength={retouchStrength}
+              onStrengthChange={setRetouchStrength}
               isProcessing={retouching}
               lastRunMs={lastRunMs}
               canUndo={history.past.length > 0 && !savingRetouch}

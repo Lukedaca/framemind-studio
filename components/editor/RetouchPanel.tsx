@@ -18,6 +18,10 @@ interface RetouchPanelProps {
   modelStatus: ModelStatus;
   brushSize: number;
   onBrushSizeChange: (size: number) => void;
+  brushHardness: number;
+  onBrushHardnessChange: (value: number) => void;
+  strength: number;
+  onStrengthChange: (value: number) => void;
   isProcessing: boolean;
   lastRunMs: number | null;
   canUndo: boolean;
@@ -93,6 +97,8 @@ const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
 
       <PanelSection title={t.retouch_brush}>
         <Range label={t.retouch_brush_size} value={props.brushSize} min={8} max={240} unit=" px" onChange={props.onBrushSizeChange} />
+        <Range label={t.retouch_brush_hardness} value={props.brushHardness} min={0} max={100} unit=" %" defaultValue={85} onChange={props.onBrushHardnessChange} />
+        <Range label={t.retouch_strength} value={props.strength} min={10} max={100} unit=" %" defaultValue={100} onChange={props.onStrengthChange} />
         <p className="text-[11px] text-ink-500">{t.retouch_shortcuts}</p>
       </PanelSection>
 
