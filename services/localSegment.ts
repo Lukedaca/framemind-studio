@@ -101,6 +101,36 @@ export const segmentAt = async (
 };
 
 /**
+ * Objekty v obdélnících (px fotky) — pro vyhledání textem. U každého se vezme
+ * kandidát, kterému model věří nejvíc; obdélník velikost objektu už určuje.
+ */
+export const segmentBoxes = async (
+  key: string,
+  boxes: { x0: number; y0: number; x1: number; y1: number }[],
+  imageWidth: number,
+  imageHeight: number,
+): Promise<{ candidates: SegmentCandidate[]; best: number }[]> => {
+  if (!boxes.length) return [];
+  const sx = SEGMENT_INPUT / imageWidth;
+  const sy = SEGMENT_INPUT / imageHeight;
+  const flat = boxes.flatMap((b) => [b.x0 * sx, b.y0 * sy, b.x1 * sx, b.y1 * sy]);
+  const { masks, iou } = await send<{ masks: Float32Array; iou: number[] }>({ type: 'decode', key, points: [], labels: [], boxes: flat });
+  const size = SEGMENT_MASK * SEGMENT_MASK;
+  const perBox = Math.floor(iou.length / boxes.length);
+  return boxes.map((_, b) => {
+    const candidates: SegmentCandidate[] = [];
+    for (let k = 0; k < perBox; k++) {
+      const offset = (b * perBox + k) * size;
+      const logits = masks.slice(offset, offset + size);
+      candidates.push({ logits, iou: iou[b * perBox + k], area: maskArea(logits) });
+    }
+    const bestCandidate = candidates.reduce((a, c) => (c.iou > a.iou ? c : a));
+    candidates.sort((a, c) => a.area - c.area);
+    return { candidates, best: candidates.indexOf(bestCandidate) };
+  });
+};
+
+/**
  * Logity 256×256 → binární maska v rozlišení `width`×`height`. Zvětšují se
  * logity (hladce), ne už prahovaná maska — okraj pak kopíruje tvar, ne schody.
  */

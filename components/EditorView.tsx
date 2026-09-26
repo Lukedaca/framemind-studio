@@ -8,7 +8,7 @@ import type { UploadedFile, EditorAction, History, ManualEdits, View } from '../
 import * as geminiService from '../services/geminiService';
 import { describeAiError } from '../services/aiErrors';
 import { encodeCanvas, inpaintRegion, outputType, preloadInpaintModel, type InpaintChoice } from '../services/localInpaint';
-import { encodeForSegment, loadSegmentModel, renderSegmentMask, segmentAt, type SegmentCandidate } from '../services/localSegment';
+import { encodeForSegment, loadSegmentModel, renderSegmentMask, segmentAt, segmentBoxes, type SegmentCandidate } from '../services/localSegment';
 import { SEGMENT_TOTAL_BYTES } from '../utils/segmentModel';
 import type { LassoStatus } from './editor/RetouchPanel';
 
@@ -386,6 +386,43 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     setLassoObjects([]);
   };
 
+  // Výběr textem: Gemini najde obdélníky, masky z nich udělá lokální SAM.
+  const findByText = async (query: string) => {
+    if (!query.trim() || lassoBusyRef.current || retouching) return;
+    lassoBusyRef.current = true;
+    setLassoBusy(true);
+    try {
+      const key = await ensureEncoded();
+      const vp = viewportRef.current;
+      const source = vp?.getSourceCanvas();
+      const size = vp?.getImageSize();
+      if (!key || !source || !size) return;
+      // Gemini stačí zmenšená fotka (delší strana 1536 px); obdélníky se přepočítají.
+      const scale = Math.min(1, 1536 / Math.max(size.width, size.height));
+      const small = document.createElement('canvas');
+      small.width = Math.round(size.width * scale);
+      small.height = Math.round(size.height * scale);
+      small.getContext('2d')!.drawImage(source, 0, 0, small.width, small.height);
+      const found = await geminiService.locateObjects(small.toDataURL('image/jpeg', 0.9), small.width, small.height, query);
+      if (!found.length) {
+        addNotification(t.lasso_text_none, 'info');
+        return;
+      }
+      const boxes = found.map(({ box }) => ({ x0: box.x0 / scale, y0: box.y0 / scale, x1: box.x1 / scale, y1: box.y1 / scale }));
+      const objects = await segmentBoxes(key, boxes, size.width, size.height);
+      setLassoObjects((prev) => [...prev, ...objects.map((o) => ({ candidates: o.candidates, level: o.best, subtract: false }))]);
+      addNotification(`${t.lasso_text_found}: ${found.length}`, 'info');
+    } catch (e) {
+      const { code, message } = describeAiError(e, language);
+      if (code === 'API_KEY_MISSING') onOpenApiKeyModal();
+      else if (/SEGMENT_/.test(String((e as Error)?.message))) lassoError(e);
+      else addNotification(message, 'error');
+    } finally {
+      lassoBusyRef.current = false;
+      setLassoBusy(false);
+    }
+  };
+
   const changeRetouchTool = (tool: 'brush' | 'lasso') => {
     // Výběr z lasa zůstane v masce — štětcem se dá doladit a puštěním tahu odstranit.
     setLassoObjects([]);
@@ -665,6 +702,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
                 onLevelChange: changeLassoLevel,
                 onRemove: removeLassoSelection,
                 onClear: () => setLassoObjects([]),
+                onFindByText: findByText,
               }}
             />
           )}
