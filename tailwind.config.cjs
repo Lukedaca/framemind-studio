@@ -6,11 +6,11 @@
 const ink = {
   50: '#f5f5f8',
   100: '#e6e6ee',
-  200: '#c8c8d6',
-  300: '#a0a0b4',
-  400: '#76768c',
-  500: '#56566a',
-  600: '#3a3a4a',
+  200: '#d4d4de',
+  300: '#b9b9c8',
+  400: '#9a9aae',
+  500: '#7e7e94',
+  600: '#55556a',
   700: '#262632',
   800: '#1a1a23',
   850: '#14141c',
@@ -77,8 +77,8 @@ module.exports = {
         },
       },
       fontFamily: {
-        sans: ['Geist', 'system-ui', 'sans-serif'],
-        display: ['"Instrument Serif"', 'Georgia', 'serif'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        display: ['Manrope', 'Inter', 'system-ui', 'sans-serif'],
         mono: ['"Geist Mono"', 'ui-monospace', 'monospace'],
       },
       borderRadius: {

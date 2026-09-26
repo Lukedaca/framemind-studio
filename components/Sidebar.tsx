@@ -11,6 +11,7 @@ import {
   FmRetouchIcon,
   FmExportIcon,
 } from './FmIcons';
+import FmMark from './common/FmMark';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -71,14 +72,14 @@ const Sidebar = ({ isOpen, onClose, onNavigate, onOpenApiKeyModal, currentView, 
         key={item.label}
         onClick={() => go(item)}
         disabled={disabled}
-        className={`group relative flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[13px] transition-colors ${
+        className={`group relative flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[13.5px] font-medium transition-colors ${
           active ? 'bg-white/[0.06] text-ink-50' : 'text-ink-300 hover:bg-white/[0.03] hover:text-ink-100'
         } disabled:pointer-events-none disabled:opacity-35`}
       >
         {active && <span className="absolute left-0 top-2.5 bottom-2.5 w-[2px] rounded-full" style={{ background: 'var(--spectrum)' }} />}
         <span className={active ? 'text-ink-50' : 'text-ink-400 group-hover:text-ink-200'}>{item.icon}</span>
         <span className="flex-1 text-left">{item.label}</span>
-        {item.step && <span className="font-mono text-[10px] text-ink-600">0{item.step}</span>}
+        {item.step && <span className="font-mono text-[11px] text-ink-500">0{item.step}</span>}
       </button>
     );
   };
@@ -94,11 +95,17 @@ const Sidebar = ({ isOpen, onClose, onNavigate, onOpenApiKeyModal, currentView, 
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <button onClick={() => go({ icon: null, label: '', view: 'dashboard' })} className="flex h-16 flex-shrink-0 items-center gap-3 px-5 text-left">
-          <img src="/brand/mark.webp" alt="FrameMind" className="h-7 w-auto" />
+        <button
+          onClick={() => go({ icon: null, label: '', view: 'dashboard' })}
+          className="flex h-[68px] flex-shrink-0 items-center gap-3 px-5 text-left"
+          aria-label="FrameMind Studio"
+        >
+          <FmMark className="h-8 w-auto flex-shrink-0 drop-shadow-[0_0_14px_rgba(111,80,255,0.35)]" />
           <span className="leading-none">
-            <span className="block text-[14px] font-semibold tracking-tight text-ink-50">FrameMind</span>
-            <span className="mt-1 block font-display text-[15px] italic text-ink-300">Studio</span>
+            <span className="fm-wordmark block text-[17px] text-ink-50">
+              Frame<span className="fm-gradient-text">Mind</span>
+            </span>
+            <span className="mt-1.5 block font-mono text-[11px] uppercase tracking-[0.3em] text-ink-400">Studio</span>
           </span>
         </button>
         <div className="fm-hairline mx-5" />

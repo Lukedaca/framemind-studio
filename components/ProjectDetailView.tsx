@@ -213,7 +213,7 @@ const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                     >
                       <img src={file.previewUrl} alt="" className="w-full h-full object-cover" />
                       <div className={`absolute inset-0 ${isSelected ? 'bg-accent/10' : 'bg-black/10'}`} />
-                      <div className="absolute top-2 right-2 text-[10px] px-2 py-1 rounded-full bg-black/60 text-white">
+                      <div className="absolute top-2 right-2 text-[11px] px-2 py-1 rounded-full bg-black/60 text-white">
                         {isSelected ? t.crm_selected : t.crm_select}
                       </div>
                     </button>

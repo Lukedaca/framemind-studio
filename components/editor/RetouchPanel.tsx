@@ -72,7 +72,7 @@ const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
   return (
     <div>
       <div className="px-5 pb-5 pt-6">
-        <h2 className="font-display text-[22px] leading-tight text-ink-50">{t.retouch_title}</h2>
+        <h2 className="font-display text-[20px] leading-tight text-ink-50">{t.retouch_title}</h2>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-300">{t.retouch_lead}</p>
       </div>
 

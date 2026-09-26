@@ -85,7 +85,7 @@ const RetouchPrompt: React.FC<RetouchPromptProps> = ({ onSubmit, isProcessing, l
             onClick={() => setBatchMode(!batchMode)}
             disabled={isProcessing}
             title={isCz ? 'Hromadná retuš na všech snímcích' : 'Batch retouch all images'}
-            className={`flex-shrink-0 px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all border disabled:opacity-50 ${
+            className={`flex-shrink-0 px-2 py-1 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all border disabled:opacity-50 ${
               batchMode
                 ? 'bg-accent/20 text-accent border-accent/40'
                 : 'bg-elevated text-text-secondary border-border-subtle hover:text-text-primary hover:border-accent'
@@ -98,7 +98,7 @@ const RetouchPrompt: React.FC<RetouchPromptProps> = ({ onSubmit, isProcessing, l
         <button
           onClick={handleSubmit}
           disabled={!prompt.trim() || isProcessing}
-          className={`flex-shrink-0 px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all disabled:opacity-30 ${
+          className={`flex-shrink-0 px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all disabled:opacity-30 ${
             batchMode ? 'bg-orange-500 text-white hover:bg-orange-400' : 'bg-accent text-void hover:bg-accent/80'
           }`}
         >
