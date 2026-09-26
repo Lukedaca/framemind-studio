@@ -8,7 +8,7 @@ import { fetchCachedModel } from './modelFetch';
 type Request =
   | { type: 'load'; id: number }
   | { type: 'encode'; id: number; key: string; pixels: Float32Array }
-  | { type: 'decode'; id: number; key: string; points: number[]; labels: number[] };
+  | { type: 'decode'; id: number; key: string; points: number[]; labels: number[]; boxes?: number[] };
 
 const CACHE_NAME = 'fm-segment-models-v1';
 
@@ -97,11 +97,14 @@ const handle = async (event: MessageEvent<Request>) => {
       return;
     }
     if (!embedded || embedded.key !== msg.key) throw new Error('SEGMENT_NOT_ENCODED');
+    // Body (klik) nebo obdélníky (z vyhledání textem) — model chce oba vstupy,
+    // nepoužitý jde jako prázdný tenzor (ověřeno v Node).
     const n = msg.labels.length;
+    const boxes = msg.boxes ?? [];
     const out = await decoder.run({
       input_points: new ort.Tensor('float32', Float32Array.from(msg.points), [1, 1, n, 2]),
       input_labels: new ort.Tensor('int64', BigInt64Array.from(msg.labels.map((l) => BigInt(l))), [1, 1, n]),
-      input_boxes: new ort.Tensor('float32', new Float32Array(0), [1, 0, 4]),
+      input_boxes: new ort.Tensor('float32', Float32Array.from(boxes), [1, boxes.length / 4, 4]),
       'image_embeddings.0': embedded.outputs['image_embeddings.0'],
       'image_embeddings.1': embedded.outputs['image_embeddings.1'],
       'image_embeddings.2': embedded.outputs['image_embeddings.2'],

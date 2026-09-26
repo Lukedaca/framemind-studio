@@ -417,3 +417,69 @@ const retouchFullImage = async (file: File, prompt: string): Promise<{ file: Fil
 export const retouchWithPrompt = async (file: File, prompt: string): Promise<{ file: File }> => {
     return retouchFullImage(file, prompt);
 };
+
+// --- Chytré laso textem: Gemini jen najde, kde objekty jsou ---
+// Vrací obdélníky; přesnou masku z nich dělá lokální SAM (services/localSegment).
+// Konvence Gemini pro detekci: box_2d = [ymin, xmin, ymax, xmax] v 0–1000.
+
+const LOCATE_SCHEMA = {
+    type: 'object',
+    properties: {
+        objects: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    label: { type: 'string' },
+                    box_2d: { type: 'array', items: { type: 'integer' } },
+                },
+                required: ['label', 'box_2d'],
+            },
+        },
+    },
+    required: ['objects'],
+} as any;
+
+const LOCATE_PROMPT = `Jsi přesný detektor objektů na fotografii. Najdi VŠECHNY výskyty toho, co uživatel popíše (i malé, částečně zakryté nebo na více lidech). Pro každý výskyt vrať těsný obdélník box_2d = [ymin, xmin, ymax, xmax] normalizovaný na 0–1000 a krátký popisek. Když nic takového na fotce není, vrať prázdné pole. Nic si nevymýšlej.`;
+
+export interface LocatedObject {
+    label: string;
+    /** Obdélník v pixelech předaného obrázku. */
+    box: { x0: number; y0: number; x1: number; y1: number };
+}
+
+export const locateObjects = async (imageDataUrl: string, width: number, height: number, query: string): Promise<LocatedObject[]> => {
+    const request = query.trim().slice(0, 200);
+    if (!request) return [];
+    return withRetry(async () => {
+        const ai = getGenAI();
+        const parsed = await generateCullingJson<{ objects: { label: string; box_2d: number[] }[] }>(
+            (model) => ai.models.generateContent({
+                model,
+                contents: { parts: [{ text: `Najdi: ${request}` }, dataUrlToInlinePart(imageDataUrl)] },
+                config: {
+                    systemInstruction: LOCATE_PROMPT,
+                    thinkingConfig: CULLING_THINKING,
+                    // Detekce drobností (tetování, šperk) potřebuje víc detailu než culling.
+                    mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
+                    maxOutputTokens: 2048,
+                    responseMimeType: 'application/json',
+                    responseSchema: LOCATE_SCHEMA,
+                },
+            }),
+            'Object location failed'
+        );
+        const clamp = (v: number) => Math.max(0, Math.min(1000, Number(v) || 0));
+        return (parsed.objects || [])
+            .filter((o) => Array.isArray(o.box_2d) && o.box_2d.length === 4)
+            .slice(0, 24)
+            .map((o) => {
+                const [ymin, xmin, ymax, xmax] = o.box_2d.map(clamp);
+                return {
+                    label: typeof o.label === 'string' ? o.label.slice(0, 60) : '',
+                    box: { x0: (xmin / 1000) * width, y0: (ymin / 1000) * height, x1: (xmax / 1000) * width, y1: (ymax / 1000) * height },
+                };
+            })
+            .filter((o) => o.box.x1 - o.box.x0 > 2 && o.box.y1 - o.box.y0 > 2);
+    });
+};

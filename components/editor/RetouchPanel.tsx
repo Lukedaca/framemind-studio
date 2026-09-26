@@ -30,6 +30,8 @@ interface LassoProps {
   onLevelChange: (level: number) => void;
   onRemove: () => void;
   onClear: () => void;
+  /** Volitelné: najít objekty podle popisu přes Gemini (vlastní API klíč). */
+  onFindByText: (query: string) => void;
 }
 
 interface RetouchPanelProps {
@@ -62,6 +64,7 @@ const LassoControls: React.FC<LassoProps & { strength: number; onStrengthChange:
   const { t } = useTranslation();
   const { status } = props;
   const levelLabels = [t.lasso_level_part, t.lasso_level_object, t.lasso_level_whole];
+  const [query, setQuery] = useState('');
   return (
     <div className="space-y-4">
       <p className="text-[12px] leading-relaxed text-ink-300">{t.lasso_hint}</p>
@@ -100,6 +103,29 @@ const LassoControls: React.FC<LassoProps & { strength: number; onStrengthChange:
           />
         </div>
       )}
+
+      <form
+        className="space-y-2 rounded-xl border border-hairline p-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          props.onFindByText(query);
+        }}
+      >
+        <p className="text-[12px] text-ink-200">{t.lasso_text_title}</p>
+        <div className="flex gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t.lasso_text_placeholder}
+            maxLength={200}
+            className="fm-input flex-1"
+          />
+          <button type="submit" disabled={!query.trim() || props.busy} className="fm-btn-ghost h-[38px] px-3">
+            {t.lasso_text_find}
+          </button>
+        </div>
+        <p className="text-[11px] leading-relaxed text-ink-500">{t.lasso_text_privacy}</p>
+      </form>
 
       <Range label={t.retouch_strength} value={props.strength} min={10} max={100} unit=" %" defaultValue={100} onChange={props.onStrengthChange} />
 
