@@ -127,7 +127,8 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const loadModel = useCallback((id: InpaintModelId) => {
     setModelStatus((s) => (s.state === 'ready' ? s : { state: 'downloading', loaded: 0, total: 1 }));
     return preloadInpaintModel(id, (p) => {
-      if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
+      if (p.phase === 'init') setModelStatus({ state: 'preparing' });
+      else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
     })
       .then((backend) => {
         setModelStatus({ state: 'ready', backend });
@@ -163,7 +164,8 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     setRetouching(true);
     try {
       const result = await inpaintFile(activeFile.file, mask, model, (p) => {
-        if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
+        if (p.phase === 'init') setModelStatus({ state: 'preparing' });
+        else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
       });
       setModelStatus({ state: 'ready', backend: result.backend });
       setLastRunMs(result.ms);
@@ -407,7 +409,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
           {(retouching || busyLabel) && (
             <div className="pointer-events-none absolute left-1/2 top-4 flex -translate-x-1/2 items-center gap-2.5 rounded-full border border-hairline bg-ink-950/80 px-4 py-1.5 text-[12px] text-ink-100 backdrop-blur-md">
               <span className="fm-spinner" />
-              {busyLabel || (modelStatus.state === 'downloading' ? t.retouch_downloading : t.retouch_running)}
+              {busyLabel || (modelStatus.state === 'downloading' ? t.retouch_downloading : modelStatus.state === 'preparing' ? t.retouch_preparing : t.retouch_running)}
             </div>
           )}
         </main>

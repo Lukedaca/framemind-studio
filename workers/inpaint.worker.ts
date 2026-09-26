@@ -9,6 +9,7 @@ import { INPAINT_MODELS, type InpaintModelId } from '../utils/inpaintModels';
 import { MODEL_SIZE } from '../utils/inpaintMath';
 
 type Request =
+  | { type: 'config'; id: number; numThreads: number }
   | { type: 'load'; id: number; model: InpaintModelId }
   | { type: 'run'; id: number; model: InpaintModelId; image: Uint8Array; mask: Uint8Array };
 
@@ -16,11 +17,36 @@ const CACHE_NAME = 'fm-inpaint-models-v1';
 const sessions = new Map<InpaintModelId, Promise<ort.InferenceSession>>();
 const backends = new Map<InpaintModelId, string>();
 
+// Pomocná vlákna WASM spouští onnxruntime z TOHOTO souboru (bundler do něj
+// vložil i runtime) se jménem "em-pthread". V takovém vlákně nesmíme sahat na
+// self.onmessage ani na nastavení: přepsali bychom obsluhu vlákna, to by se
+// nikdy nenahlásilo a vytvoření modelu by čekalo donekonečna (zamrzlé
+// "Stahuji model 100 %" na produkci, kde je stránka cross-origin izolovaná).
+const IS_ORT_THREAD = typeof self.name === 'string' && self.name.startsWith('em-pthread');
+
 // Vlákna WASM jdou jen v cross-origin izolované stránce (SharedArrayBuffer).
-// Bez izolace ort spadne na jedno vlákno sám, ale explicitně je to čitelnější.
-ort.env.wasm.numThreads = self.crossOriginIsolated
-  ? Math.min(8, Math.max(1, (self.navigator?.hardwareConcurrency ?? 4) - 1))
-  : 1;
+if (!IS_ORT_THREAD) {
+  ort.env.wasm.numThreads = self.crossOriginIsolated
+    ? Math.min(8, Math.max(1, (self.navigator?.hardwareConcurrency ?? 4) - 1))
+    : 1;
+}
+
+const WEBGPU_INIT_TIMEOUT_MS = 30_000;
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, code: string) =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(code)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 
 const post = (message: unknown, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer);
@@ -80,7 +106,12 @@ const createSession = async (model: InpaintModelId, bytes: Uint8Array) => {
   const hasWebGpu = typeof (self.navigator as Navigator & { gpu?: unknown })?.gpu !== 'undefined';
   if (hasWebGpu) {
     try {
-      const session = await ort.InferenceSession.create(bytes, { executionProviders: ['webgpu'] });
+      // Některé ovladače GPU inicializaci nikdy nedokončí, pak radši CPU.
+      const session = await withTimeout(
+        ort.InferenceSession.create(bytes, { executionProviders: ['webgpu'] }),
+        WEBGPU_INIT_TIMEOUT_MS,
+        'WEBGPU_INIT_TIMEOUT',
+      );
       backends.set(model, 'webgpu');
       return session;
     } catch {
@@ -95,7 +126,10 @@ const createSession = async (model: InpaintModelId, bytes: Uint8Array) => {
 const getSession = (model: InpaintModelId, id: number) => {
   let pending = sessions.get(model);
   if (!pending) {
-    pending = fetchModel(model, id).then((bytes) => createSession(model, bytes));
+    pending = fetchModel(model, id).then((bytes) => {
+      post({ type: 'progress', id, phase: 'init' });
+      return createSession(model, bytes);
+    });
     // Při chybě zapomenout, ať jde zkusit znovu.
     pending.catch(() => sessions.delete(model));
     sessions.set(model, pending);
@@ -141,8 +175,14 @@ const runModel = async (
   return result;
 };
 
-self.onmessage = async (event: MessageEvent<Request>) => {
+const handle = async (event: MessageEvent<Request>) => {
   const msg = event.data;
+  if (msg.type === 'config') {
+    // Jen před první session, potom už runtime počet vláken nezmění.
+    if (sessions.size === 0) ort.env.wasm.numThreads = Math.max(1, msg.numThreads);
+    post({ type: 'ready', id: msg.id });
+    return;
+  }
   try {
     const session = await getSession(msg.model, msg.id);
     if (msg.type === 'load') {
@@ -159,3 +199,5 @@ self.onmessage = async (event: MessageEvent<Request>) => {
     post({ type: 'error', id: msg.id, error: error instanceof Error ? error.message : String(error) });
   }
 };
+
+if (!IS_ORT_THREAD) self.onmessage = handle;
