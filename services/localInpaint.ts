@@ -30,10 +30,11 @@ interface PendingJob {
   initTimer?: ReturnType<typeof setTimeout>;
 }
 
-// Příprava staženého modelu trvá běžně sekundy (LaMa na CPU do ~20 s). Když
+// Příprava staženého modelu (vč. zahřátí a změření GPU/CPU) trvá běžně
+// sekundy, LaMa na slabém stroji desítky sekund. Když
 // se do limitu neozve, runtime visí: worker se zahodí a zkusí se to znovu na
 // jednom vlákně, které nepotřebuje pomocné workery ani SharedArrayBuffer.
-const INIT_TIMEOUT_MS = 90_000;
+const INIT_TIMEOUT_MS = 150_000;
 const INIT_TIMEOUT = 'INPAINT_INIT_TIMEOUT';
 
 let worker: Worker | null = null;
@@ -121,18 +122,32 @@ const canvas = (width: number, height: number) => {
   return c;
 };
 
-const outputType = (file: File) => (file.type === 'image/png' || file.type === 'image/webp' ? file.type : 'image/jpeg');
+export const outputType = (file: File) => (file.type === 'image/png' || file.type === 'image/webp' ? file.type : 'image/jpeg');
+
+/** Doplněný kus fotky: vrstva s průhledností mimo masku, vkládá se na (x, y). */
+export interface InpaintPatch {
+  layer: HTMLCanvasElement;
+  x: number;
+  y: number;
+  ms: number;
+  backend: InpaintBackend;
+}
 
 /**
+ * Spočítá jen doplněný výřez. Fotku nedekóduje ani nekóduje — zdrojem je
+ * plátno, které editor už drží v paměti, a výsledek se do něj rovnou vloží.
+ * Tím odpadají sekundy na dekódování a JPEG kódování 24MP fotky při každém tahu.
+ *
+ * @param source fotka v plném rozlišení (canvas nebo obrázek)
  * @param maskCanvas maska v libovolném rozlišení se stejným poměrem stran jako
  *   fotka; retušuje se všude, kde má alfa > 0.
  */
-export const inpaintFile = async (
-  file: File,
+export const inpaintRegion = async (
+  source: HTMLCanvasElement,
   maskCanvas: HTMLCanvasElement,
   model: InpaintModelId,
   onProgress?: PendingJob['onProgress'],
-): Promise<{ file: File; ms: number; backend: InpaintBackend }> => {
+): Promise<InpaintPatch> => {
   const mw = maskCanvas.width;
   const mh = maskCanvas.height;
   const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
@@ -143,74 +158,68 @@ export const inpaintFile = async (
   const maskBox = maskBoundingBox(alpha, mw, mh);
   if (!maskBox) throw new Error('EMPTY_MASK');
 
-  const bitmap = await createImageBitmap(file);
-  try {
-    const W = bitmap.width;
-    const H = bitmap.height;
-    const sx = W / mw;
-    const sy = H / mh;
-    const fullBox = {
-      x: Math.floor(maskBox.x * sx),
-      y: Math.floor(maskBox.y * sy),
-      width: Math.ceil(maskBox.width * sx),
-      height: Math.ceil(maskBox.height * sy),
-    };
-    const crop = computeInpaintCrop(fullBox, W, H);
+  const W = source.width;
+  const H = source.height;
+  const sx = W / mw;
+  const sy = H / mh;
+  const fullBox = {
+    x: Math.floor(maskBox.x * sx),
+    y: Math.floor(maskBox.y * sy),
+    width: Math.ceil(maskBox.width * sx),
+    height: Math.ceil(maskBox.height * sy),
+  };
+  const crop = computeInpaintCrop(fullBox, W, H);
 
-    // Výřez fotky → 512×512.
-    const imgSmall = canvas(MODEL_SIZE, MODEL_SIZE);
-    const imgCtx = imgSmall.getContext('2d', { willReadFrequently: true })!;
-    imgCtx.imageSmoothingQuality = 'high';
-    imgCtx.drawImage(bitmap, crop.x, crop.y, crop.width, crop.height, 0, 0, MODEL_SIZE, MODEL_SIZE);
-    const image = rgbaToPlanar(imgCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data, MODEL_SIZE * MODEL_SIZE);
+  // Výřez fotky → 512×512.
+  const imgSmall = canvas(MODEL_SIZE, MODEL_SIZE);
+  const imgCtx = imgSmall.getContext('2d', { willReadFrequently: true })!;
+  imgCtx.imageSmoothingQuality = 'high';
+  imgCtx.drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, MODEL_SIZE, MODEL_SIZE);
+  const image = rgbaToPlanar(imgCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data, MODEL_SIZE * MODEL_SIZE);
 
-    // Odpovídající výřez masky → 512×512, binárně (alfa > 0) a s okrajem.
-    const maskSmall = canvas(MODEL_SIZE, MODEL_SIZE);
-    const msCtx = maskSmall.getContext('2d', { willReadFrequently: true })!;
-    msCtx.drawImage(maskCanvas, crop.x / sx, crop.y / sy, crop.width / sx, crop.height / sy, 0, 0, MODEL_SIZE, MODEL_SIZE);
-    const msData = msCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data;
-    const binary = new Uint8Array(MODEL_SIZE * MODEL_SIZE);
-    for (let i = 0; i < binary.length; i++) binary[i] = msData[i * 4 + 3] > 0 ? 1 : 0;
-    const hole = dilateMask(binary, MODEL_SIZE, MODEL_SIZE, MASK_DILATION_PX);
+  // Odpovídající výřez masky → 512×512, binárně (alfa > 0) a s okrajem.
+  const maskSmall = canvas(MODEL_SIZE, MODEL_SIZE);
+  const msCtx = maskSmall.getContext('2d', { willReadFrequently: true })!;
+  msCtx.drawImage(maskCanvas, crop.x / sx, crop.y / sy, crop.width / sx, crop.height / sy, 0, 0, MODEL_SIZE, MODEL_SIZE);
+  const msData = msCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data;
+  const binary = new Uint8Array(MODEL_SIZE * MODEL_SIZE);
+  for (let i = 0; i < binary.length; i++) binary[i] = msData[i * 4 + 3] > 0 ? 1 : 0;
+  const hole = dilateMask(binary, MODEL_SIZE, MODEL_SIZE, MASK_DILATION_PX);
 
-    onProgress?.({ phase: 'compute' });
-    const { result, ms, backend } = await send<{ result: Uint8Array; ms: number; backend: InpaintBackend }>(
-      { type: 'run', model, image, mask: hole },
-      onProgress,
-      [image.buffer], // `hole` se ještě použije na ořez výsledku, nepřenášet
-    );
+  onProgress?.({ phase: 'compute' });
+  const { result, ms, backend } = await send<{ result: Uint8Array; ms: number; backend: InpaintBackend }>(
+    { type: 'run', model, image, mask: hole },
+    onProgress,
+    [image.buffer], // `hole` se ještě použije na ořez výsledku, nepřenášet
+  );
 
-    // Výsledek modelu → vrstva ve velikosti výřezu, oříznutá změkčenou maskou.
-    const resultSmall = canvas(MODEL_SIZE, MODEL_SIZE);
-    resultSmall.getContext('2d')!.putImageData(
-      new ImageData(planarToRgba(result, MODEL_SIZE * MODEL_SIZE), MODEL_SIZE, MODEL_SIZE),
-      0,
-      0,
-    );
-    const holeRgba = new Uint8ClampedArray(MODEL_SIZE * MODEL_SIZE * 4);
-    for (let i = 0; i < hole.length; i++) holeRgba[i * 4 + 3] = hole[i] ? 255 : 0;
-    const holeCanvas = canvas(MODEL_SIZE, MODEL_SIZE);
-    holeCanvas.getContext('2d')!.putImageData(new ImageData(holeRgba, MODEL_SIZE, MODEL_SIZE), 0, 0);
+  // Výsledek modelu → vrstva ve velikosti výřezu, oříznutá změkčenou maskou.
+  const resultSmall = canvas(MODEL_SIZE, MODEL_SIZE);
+  resultSmall.getContext('2d')!.putImageData(
+    new ImageData(planarToRgba(result, MODEL_SIZE * MODEL_SIZE), MODEL_SIZE, MODEL_SIZE),
+    0,
+    0,
+  );
+  const holeRgba = new Uint8ClampedArray(MODEL_SIZE * MODEL_SIZE * 4);
+  for (let i = 0; i < hole.length; i++) holeRgba[i * 4 + 3] = hole[i] ? 255 : 0;
+  const holeCanvas = canvas(MODEL_SIZE, MODEL_SIZE);
+  holeCanvas.getContext('2d')!.putImageData(new ImageData(holeRgba, MODEL_SIZE, MODEL_SIZE), 0, 0);
 
-    const layer = canvas(crop.width, crop.height);
-    const layerCtx = layer.getContext('2d')!;
-    layerCtx.imageSmoothingQuality = 'high';
-    layerCtx.drawImage(resultSmall, 0, 0, crop.width, crop.height);
-    layerCtx.globalCompositeOperation = 'destination-in';
-    // Měkký přechod ~1,5 px modelu, ať není vidět šev mezi doplněním a originálem.
-    layerCtx.filter = `blur(${Math.max(1, (crop.width / MODEL_SIZE) * 1.5)}px)`;
-    layerCtx.drawImage(holeCanvas, 0, 0, crop.width, crop.height);
+  const layer = canvas(crop.width, crop.height);
+  const layerCtx = layer.getContext('2d')!;
+  layerCtx.imageSmoothingQuality = 'high';
+  layerCtx.drawImage(resultSmall, 0, 0, crop.width, crop.height);
+  layerCtx.globalCompositeOperation = 'destination-in';
+  // Měkký přechod ~1,5 px modelu, ať není vidět šev mezi doplněním a originálem.
+  layerCtx.filter = `blur(${Math.max(1, (crop.width / MODEL_SIZE) * 1.5)}px)`;
+  layerCtx.drawImage(holeCanvas, 0, 0, crop.width, crop.height);
 
-    const out = canvas(W, H);
-    const outCtx = out.getContext('2d')!;
-    outCtx.drawImage(bitmap, 0, 0);
-    outCtx.drawImage(layer, crop.x, crop.y);
+  return { layer, x: crop.x, y: crop.y, ms, backend };
+};
 
-    const type = outputType(file);
-    const blob = await new Promise<Blob | null>((resolve) => out.toBlob(resolve, type, 0.96));
-    if (!blob) throw new Error('INPAINT_ENCODE_FAILED');
-    return { file: new File([blob], file.name, { type, lastModified: Date.now() }), ms, backend };
-  } finally {
-    bitmap.close();
-  }
+/** Uloží plátno do souboru. Běží až po zobrazení výsledku, uživatel na něj nečeká. */
+export const encodeCanvas = async (source: HTMLCanvasElement, name: string, type: string): Promise<File> => {
+  const blob = await new Promise<Blob | null>((resolve) => source.toBlob(resolve, type, 0.96));
+  if (!blob) throw new Error('INPAINT_ENCODE_FAILED');
+  return new File([blob], name, { type, lastModified: Date.now() });
 };

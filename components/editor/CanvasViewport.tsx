@@ -12,7 +12,20 @@ export interface CanvasViewportHandle {
   getMaskCanvas: () => HTMLCanvasElement | null;
   hasMask: () => boolean;
   clearMask: () => void;
+  /** Fotka v plném rozlišení jako plátno — zdroj pro další tah retuše. */
+  getSourceCanvas: () => HTMLCanvasElement | null;
+  /**
+   * Vloží doplněný výřez rovnou do zobrazené fotky a smaže masku. Vrací verzi
+   * obsahu, nebo -1, když se mezitím zobrazila jiná fotka (výřez patří ke `source`).
+   */
+  applyPatch: (source: HTMLCanvasElement, layer: HTMLCanvasElement, x: number, y: number) => number;
+  /** Soubor uložený z verze `version` je totéž, co už je vidět — nenačítat ho znovu. */
+  commitSource: (url: string, version: number) => void;
 }
+
+type Source = HTMLImageElement | HTMLCanvasElement;
+const widthOf = (s: Source) => (s instanceof HTMLImageElement ? s.naturalWidth : s.width);
+const heightOf = (s: Source) => (s instanceof HTMLImageElement ? s.naturalHeight : s.height);
 
 interface CanvasViewportProps {
   imageSrc: string;
@@ -36,7 +49,11 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
-    const imageRef = useRef<HTMLImageElement | null>(null);
+    const imageRef = useRef<Source | null>(null);
+    // Co je právě vidět: URL načteného souboru, nebo null po vložení retuše,
+    // dokud se nový soubor neuloží (verze roste s každým vloženým výřezem).
+    const shownSrcRef = useRef<string | null>(null);
+    const versionRef = useRef(0);
 
     const transformRef = useRef({ scale: 1, offsetX: 0, offsetY: 0 });
     const [displayScale, setDisplayScale] = useState(1);
@@ -50,7 +67,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
     const maskScale = () => {
       const img = imageRef.current;
       if (!img) return 1;
-      return Math.min(1, MAX_MASK_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+      return Math.min(1, MAX_MASK_SIDE / Math.max(widthOf(img), heightOf(img)));
     };
 
     const render = useCallback(() => {
@@ -81,7 +98,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       ctx.shadowColor = 'rgba(0,0,0,0.55)';
       ctx.shadowBlur = 40 / t.scale;
       ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, img.naturalWidth, img.naturalHeight);
+      ctx.fillRect(0, 0, widthOf(img), heightOf(img));
       ctx.shadowColor = 'transparent';
       ctx.shadowBlur = 0;
       ctx.drawImage(img, 0, 0);
@@ -89,7 +106,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       const mask = maskCanvasRef.current;
       if (mask && maskDirtyRef.current) {
         ctx.globalAlpha = processing ? 0.35 + 0.25 * Math.sin(pulse) : 0.55;
-        ctx.drawImage(mask, 0, 0, img.naturalWidth, img.naturalHeight);
+        ctx.drawImage(mask, 0, 0, widthOf(img), heightOf(img));
         ctx.globalAlpha = 1;
       }
       ctx.restore();
@@ -117,11 +134,11 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       if (!container || !img) return;
       const cw = container.clientWidth;
       const ch = container.clientHeight;
-      const scale = Math.min(cw / img.naturalWidth, ch / img.naturalHeight) * 0.9;
+      const scale = Math.min(cw / widthOf(img), ch / heightOf(img)) * 0.9;
       transformRef.current = {
         scale,
-        offsetX: (cw - img.naturalWidth * scale) / 2,
-        offsetY: (ch - img.naturalHeight * scale) / 2,
+        offsetX: (cw - widthOf(img) * scale) / 2,
+        offsetY: (ch - heightOf(img) * scale) / 2,
       };
       setDisplayScale(scale);
       render();
@@ -130,17 +147,20 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
     // Nová fotka: nový obrázek i prázdná maska. Když se jen vyměnil soubor
     // stejné velikosti (po retuši), zoom a posun zůstanou, kde byly.
     useEffect(() => {
+      // Soubor uložený z retuše, která už je na plátně: znovu nenačítat.
+      if (imageSrc === shownSrcRef.current) return;
       let cancelled = false;
       const img = new Image();
       img.onload = () => {
         if (cancelled) return;
+        shownSrcRef.current = imageSrc;
         const prev = imageRef.current;
-        const sameSize = prev && prev.naturalWidth === img.naturalWidth && prev.naturalHeight === img.naturalHeight;
+        const sameSize = prev && widthOf(prev) === widthOf(img) && heightOf(prev) === heightOf(img);
         imageRef.current = img;
         const s = maskScale();
         const mask = document.createElement('canvas');
-        mask.width = Math.max(1, Math.round(img.naturalWidth * s));
-        mask.height = Math.max(1, Math.round(img.naturalHeight * s));
+        mask.width = Math.max(1, Math.round(widthOf(img) * s));
+        mask.height = Math.max(1, Math.round(heightOf(img) * s));
         maskCanvasRef.current = mask;
         maskDirtyRef.current = false;
         if (sameSize) render();
@@ -286,6 +306,32 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
         mask?.getContext('2d')?.clearRect(0, 0, mask.width, mask.height);
         maskDirtyRef.current = false;
         render();
+      },
+      getSourceCanvas: () => {
+        const img = imageRef.current;
+        if (!img) return null;
+        if (img instanceof HTMLCanvasElement) return img;
+        // Poprvé z obrázku udělat plátno (jednou za fotku), dál se kreslí do něj.
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        c.getContext('2d')!.drawImage(img, 0, 0);
+        imageRef.current = c;
+        return c;
+      },
+      applyPatch: (source, layer, x, y) => {
+        if (imageRef.current !== source) return -1;
+        source.getContext('2d')!.drawImage(layer, x, y);
+        const mask = maskCanvasRef.current;
+        mask?.getContext('2d')?.clearRect(0, 0, mask.width, mask.height);
+        maskDirtyRef.current = false;
+        shownSrcRef.current = null;
+        versionRef.current += 1;
+        render();
+        return versionRef.current;
+      },
+      commitSource: (url, version) => {
+        if (version === versionRef.current && shownSrcRef.current === null) shownSrcRef.current = url;
       },
     }), [fitToScreen, render]);
 

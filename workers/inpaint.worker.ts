@@ -100,27 +100,75 @@ const fetchModel = async (model: InpaintModelId, id: number): Promise<Uint8Array
   return buffer;
 };
 
+const N = MODEL_SIZE * MODEL_SIZE;
+
+// Zkušební průchod na prázdném vstupu. První inference kompiluje shadery
+// (WebGPU) a alokuje buffery — bez zahřátí by na to čekal první tah štětcem.
+const warmUp = async (session: ort.InferenceSession, model: InpaintModelId) => {
+  const started = performance.now();
+  const mask = new Uint8Array(N);
+  mask.fill(1, (N >> 1) - 4096, (N >> 1) + 4096);
+  await runModel(session, model, new Uint8Array(3 * N), mask);
+  return performance.now() - started;
+};
+
+// Druhý průchod po zahřátí = skutečná rychlost jednoho tahu na daném backendu.
+const measure = async (session: ort.InferenceSession, model: InpaintModelId) => {
+  await warmUp(session, model);
+  return warmUp(session, model);
+};
+
 const createSession = async (model: InpaintModelId, bytes: Uint8Array) => {
-  // WebGPU je u LaMa několikanásobně rychlejší; když ho prohlížeč nemá nebo
-  // model na něm neprojde, jede se na WASM (CPU).
   const hasWebGpu = typeof (self.navigator as Navigator & { gpu?: unknown })?.gpu !== 'undefined';
+  let gpu: ort.InferenceSession | null = null;
   if (hasWebGpu) {
     try {
       // Některé ovladače GPU inicializaci nikdy nedokončí, pak radši CPU.
-      const session = await withTimeout(
-        ort.InferenceSession.create(bytes, { executionProviders: ['webgpu'] }),
+      gpu = await withTimeout(
+        ort.InferenceSession.create(bytes, { executionProviders: ['webgpu'], graphOptimizationLevel: 'all' }),
         WEBGPU_INIT_TIMEOUT_MS,
         'WEBGPU_INIT_TIMEOUT',
       );
-      backends.set(model, 'webgpu');
-      return session;
     } catch {
-      // pokračuje na WASM
+      gpu = null;
     }
   }
-  const session = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] });
+
+  // LaMa (208 MB) je na CPU několikanásobně pomalejší — když GPU projde, bere se GPU.
+  if (gpu && model === 'quality') {
+    try {
+      await withTimeout(warmUp(gpu, model), WEBGPU_INIT_TIMEOUT_MS, 'WEBGPU_WARMUP_TIMEOUT');
+      backends.set(model, 'webgpu');
+      return gpu;
+    } catch {
+      await gpu.release().catch(() => {});
+      gpu = null;
+    }
+  }
+
+  const cpu = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+
+  // Rychlý model (MI-GAN) má v grafu i předzpracování nad uint8, které WebGPU
+  // často nepodporuje a přehazuje mezi GPU a CPU — na výkonném CPU bývá WASM
+  // rychlejší. Proto se oba změří na tomhle počítači a nechá se rychlejší.
+  if (gpu) {
+    try {
+      const gpuMs = await withTimeout(measure(gpu, model), WEBGPU_INIT_TIMEOUT_MS, 'WEBGPU_WARMUP_TIMEOUT');
+      const cpuMs = await measure(cpu, model);
+      if (gpuMs < cpuMs) {
+        await cpu.release().catch(() => {});
+        backends.set(model, 'webgpu');
+        return gpu;
+      }
+    } catch {
+      /* GPU neprošlo, zůstává CPU */
+    }
+    await gpu.release().catch(() => {});
+  } else if (model === 'fast') {
+    await warmUp(cpu, model);
+  }
   backends.set(model, 'wasm');
-  return session;
+  return cpu;
 };
 
 const getSession = (model: InpaintModelId, id: number) => {
@@ -136,8 +184,6 @@ const getSession = (model: InpaintModelId, id: number) => {
   }
   return pending;
 };
-
-const N = MODEL_SIZE * MODEL_SIZE;
 
 const runModel = async (
   session: ort.InferenceSession,
