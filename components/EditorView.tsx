@@ -7,7 +7,7 @@ import { Segmented } from './editor/ui';
 import type { UploadedFile, EditorAction, History, ManualEdits, View } from '../types';
 import * as geminiService from '../services/geminiService';
 import { describeAiError } from '../services/aiErrors';
-import { encodeCanvas, inpaintRegion, outputType, preloadInpaintModel } from '../services/localInpaint';
+import { encodeCanvas, inpaintRegion, outputType, preloadInpaintModel, type InpaintChoice } from '../services/localInpaint';
 import type { InpaintModelId } from '../utils/inpaintModels';
 import { computeAutoAdjust } from '../utils/autoAdjust';
 import { applyEditsAndExport } from '../utils/imageProcessor';
@@ -74,9 +74,10 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const [isComparing, setIsComparing] = useState(false);
 
   const [brushSize, setBrushSize] = useState(48);
-  const [model, setModel] = useState<InpaintModelId>(() => {
+  const [model, setModel] = useState<InpaintChoice>(() => {
     try {
-      return localStorage.getItem(MODEL_KEY) === 'quality' ? 'quality' : 'fast';
+      const saved = localStorage.getItem(MODEL_KEY);
+      return saved === 'quality' || saved === 'fast' ? saved : 'auto';
     } catch {
       return 'fast';
     }
@@ -153,11 +154,11 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   // (208 MB se nemá stahovat bez tahu štětcem).
   useEffect(() => {
     if (mode !== 'retouch') return;
-    if (model === 'fast') loadModel('fast');
+    if (model === 'fast' || model === 'auto') loadModel('fast');
     else setModelStatus({ state: 'idle' });
   }, [mode, model, loadModel]);
 
-  const changeModel = (next: InpaintModelId) => {
+  const changeModel = (next: InpaintChoice) => {
     setModel(next);
     try {
       localStorage.setItem(MODEL_KEY, next);

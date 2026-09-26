@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   MODEL_SIZE,
   computeInpaintCrop,
+  grainSigma,
+  missingGrain,
+  pickAutoModel,
   dilateMask,
   maskBoundingBox,
   planarToRgba,
@@ -112,5 +115,35 @@ describe('rgbaToPlanar / planarToRgba', () => {
     const planar = rgbaToPlanar(rgba, 2);
     expect(Array.from(planar)).toEqual([10, 40, 20, 50, 30, 60]);
     expect(Array.from(planarToRgba(planar, 2))).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
+  });
+});
+
+describe('pickAutoModel', () => {
+  it('drobnost jde na rychlý model, hlava na detailní', () => {
+    expect(pickAutoModel(40 * 40)).toBe('fast');
+    expect(pickAutoModel(120 * 120)).toBe('fast');
+    expect(pickAutoModel(300 * 430)).toBe('quality');
+  });
+});
+
+describe('grainSigma / missingGrain', () => {
+  it('změří zrno jako odchylku od rozmazané verze a doplní jen chybějící část', () => {
+    const pixels = 400;
+    const rgba = new Uint8ClampedArray(pixels * 4);
+    const blurred = new Uint8ClampedArray(pixels * 4);
+    for (let i = 0; i < pixels; i++) {
+      const v = i % 2 ? 104 : 96; // ±4 kolem 100
+      for (let c = 0; c < 3; c++) {
+        rgba[i * 4 + c] = v;
+        blurred[i * 4 + c] = 100;
+      }
+    }
+    const sigma = grainSigma(rgba, blurred, () => true, pixels)!;
+    sigma.forEach((s) => expect(s).toBeCloseTo(4, 5));
+    expect(grainSigma(rgba, blurred, (i) => i < 10, pixels)).toBeNull();
+    const add = missingGrain([4, 4, 4], [3, 5, 0]);
+    expect(add[0]).toBeCloseTo(Math.sqrt(7), 5);
+    expect(add[1]).toBe(0);
+    expect(add[2]).toBeCloseTo(4, 5);
   });
 });

@@ -137,3 +137,47 @@ export const planarToRgba = (planar: ArrayLike<number>, pixels: number): Uint8Cl
 // Rozšíření masky v pixelech modelu (512×512). Ověřeno na ukázce LaMa-ONNX:
 // těsná maska nechala obrys postavy, maska s okrajem ji odstranila čistě.
 export const MASK_DILATION_PX = 4;
+
+// Kolik okolí dostane model. Změřeno na IMG_7138 (hlava hráče 300×430 px před
+// rozmazaným davem): LaMa s okolím 2× strany masky udělala rozmazanou skvrnu,
+// se 4× dav plynule pokračoval. Víc kontextu = věrohodnější doplnění.
+export const CONTEXT_FACTOR = { fast: 2, quality: 4 } as const;
+
+// Automatický výběr modelu podle plochy díry v plném rozlišení. MI-GAN je
+// okamžitý a na drobnosti (skvrna, prach, malý text) stačí, ale na větších
+// dírách si vymýšlí — na IMG_7138 místo hlavy vyrobil svítící fleky. Větší
+// plochy proto jdou na LaMa. Hranice ~ plocha kruhu o průměru 135 px.
+export const AUTO_FAST_MAX_AREA = 120 * 120;
+
+export const pickAutoModel = (holeAreaPx: number): 'fast' | 'quality' =>
+  holeAreaPx <= AUTO_FAST_MAX_AREA ? 'fast' : 'quality';
+
+// Směrodatná odchylka (po kanálech) jemné struktury = zrna: rozdíl obrazu
+// a jeho lehce rozmazané verze, jen na vybraných pixelech. `step` řídne vzorek.
+export const grainSigma = (
+  rgba: ArrayLike<number>,
+  blurred: ArrayLike<number>,
+  pick: (pixel: number) => boolean,
+  pixels: number,
+  step = 1,
+): [number, number, number] | null => {
+  const sum = [0, 0, 0];
+  const sq = [0, 0, 0];
+  let n = 0;
+  for (let i = 0; i < pixels; i += step) {
+    if (!pick(i)) continue;
+    for (let c = 0; c < 3; c++) {
+      const d = rgba[i * 4 + c] - blurred[i * 4 + c];
+      sum[c] += d;
+      sq[c] += d * d;
+    }
+    n++;
+  }
+  if (n < 64) return null;
+  return [0, 1, 2].map((c) => Math.sqrt(Math.max(0, sq[c] / n - (sum[c] / n) ** 2))) as [number, number, number];
+};
+
+// Kolik zrna přidat do doplněné plochy, aby měla stejné jako okolí:
+// rozptyly se sčítají, takže chybějící část je sqrt(okolí² − doplnění²).
+export const missingGrain = (around: number[], filled: number[]): [number, number, number] =>
+  [0, 1, 2].map((c) => Math.sqrt(Math.max(0, around[c] ** 2 - filled[c] ** 2))) as [number, number, number];

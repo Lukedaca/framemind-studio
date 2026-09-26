@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from '../../contexts/LanguageContext';
-import { INPAINT_MODELS, type InpaintModelId } from '../../utils/inpaintModels';
+import { INPAINT_MODELS } from '../../utils/inpaintModels';
+import type { InpaintChoice } from '../../services/localInpaint';
 import RetouchPrompt from './RetouchPrompt';
 import { PanelSection, Range, Segmented } from './ui';
 
@@ -12,8 +13,8 @@ export type ModelStatus =
   | { state: 'error'; message: string };
 
 interface RetouchPanelProps {
-  model: InpaintModelId;
-  onModelChange: (model: InpaintModelId) => void;
+  model: InpaintChoice;
+  onModelChange: (model: InpaintChoice) => void;
   modelStatus: ModelStatus;
   brushSize: number;
   onBrushSizeChange: (size: number) => void;
@@ -99,12 +100,13 @@ const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
           value={props.model}
           onChange={props.onModelChange}
           options={[
+            { value: 'auto', label: t.retouch_model_auto, hint: t.retouch_model_auto_hint },
             { value: 'fast', label: t.retouch_model_fast, hint: `${INPAINT_MODELS.fast.name} · ${mb(INPAINT_MODELS.fast.bytes)}` },
             { value: 'quality', label: t.retouch_model_quality, hint: `${INPAINT_MODELS.quality.name} · ${mb(INPAINT_MODELS.quality.bytes)}` },
           ]}
         />
         <p className="text-[11px] leading-relaxed text-ink-400">
-          {props.model === 'fast' ? t.retouch_model_fast_desc : t.retouch_model_quality_desc}
+          {props.model === 'auto' ? t.retouch_model_auto_desc : props.model === 'fast' ? t.retouch_model_fast_desc : t.retouch_model_quality_desc}
         </p>
         {status}
       </PanelSection>
