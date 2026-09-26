@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Client, Project } from '../types';
-import { mockClients, mockProjects } from '../services/mockData';
 import { projectStorage } from '../services/projectStorage';
 
 interface ProjectContextType {
@@ -12,6 +11,8 @@ interface ProjectContextType {
   updateProject: (id: string, updates: Partial<Project>) => void;
   addClient: (client: Omit<Client, 'id' | 'createdAt'>) => void;
 }
+
+const LEGACY_DEMO_IDS = new Set(['c1', 'c2', 'c3', 'p1', 'p2', 'p3']);
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
@@ -25,8 +26,10 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     let cancelled = false;
     projectStorage.load().then((data) => {
       if (cancelled) return;
-      setClients(data ? data.clients : mockClients);
-      setProjects(data ? data.projects : mockProjects);
+      // Dřívější verze při prvním spuštění vkládala ukázkové zakázky (c1–c3, p1–p3).
+      // Skutečné záznamy mají id s časovou značkou, takže ty ukázkové jde bezpečně odfiltrovat.
+      setClients((data?.clients ?? []).filter((client) => !LEGACY_DEMO_IDS.has(client.id)));
+      setProjects((data?.projects ?? []).filter((project) => !LEGACY_DEMO_IDS.has(project.id)));
       setHydrated(true);
     });
     return () => { cancelled = true; };

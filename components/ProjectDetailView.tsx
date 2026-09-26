@@ -109,7 +109,7 @@ const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
     <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar">
       <Header title={title} onToggleSidebar={onToggleSidebar} />
 
-      <div className="p-6 lg:p-12 max-w-6xl mx-auto w-full space-y-8 animate-fade-in">
+      <div className="fm-page w-full space-y-8 animate-fade-in">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-3xl font-black text-white">{project.name}</h2>
@@ -213,7 +213,7 @@ const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                     >
                       <img src={file.previewUrl} alt="" className="w-full h-full object-cover" />
                       <div className={`absolute inset-0 ${isSelected ? 'bg-accent/10' : 'bg-black/10'}`} />
-                      <div className="absolute top-2 right-2 text-[10px] px-2 py-1 rounded-full bg-black/60 text-white">
+                      <div className="absolute top-2 right-2 text-[11px] px-2 py-1 rounded-full bg-black/60 text-white">
                         {isSelected ? t.crm_selected : t.crm_select}
                       </div>
                     </button>

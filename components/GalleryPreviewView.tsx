@@ -87,7 +87,7 @@ const GalleryPreviewView: React.FC<GalleryPreviewViewProps> = ({ projectId }) =>
       </header>
 
       {/* Masonry Grid */}
-      <main className="pt-24 pb-20 px-4 md:px-8 max-w-[1920px] mx-auto">
+      <main className="fm-page pt-24 pb-20">
           <div className="columns-1 sm:columns-2 md:columns-3 xl:columns-4 gap-4 space-y-4">
               {visibleFiles.map((file) => (
                   <div 

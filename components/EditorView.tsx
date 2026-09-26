@@ -413,7 +413,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
         </main>
 
         {/* Panel */}
-        <aside className="fm-panel w-full flex-shrink-0 overflow-y-auto custom-scrollbar lg:w-[340px]">
+        <aside className="fm-panel w-full flex-shrink-0 overflow-y-auto custom-scrollbar lg:w-[clamp(300px,24vw,420px)]">
           {mode === 'adjust' && (
             <AdjustPanel
               edits={manualEdits}

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=Manrope:wght@500..800&family=Geist+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -33,8 +33,11 @@ body {
 
 body {
   color: #e6e6ee;
-  font-family: 'Geist', system-ui, sans-serif;
-  font-feature-settings: 'ss01', 'cv11';
+  font-family: 'Inter', system-ui, sans-serif;
+  font-optical-sizing: auto;
+  /* cv05 = l s ocáskem (nezamění se s I), cv08 = přeškrtnutá nula, tnum = čísla
+     posuvníků a počtů fotek neposkakují */
+  font-feature-settings: 'cv05', 'cv08', 'tnum';
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
@@ -51,10 +54,13 @@ body::after {
   mix-blend-mode: overlay;
 }
 
+/* Titulková sazba: Manrope má geometrii nápisu FrameMind z loga. Tracking
+   nejvýš -0.022em — s víc se v češtině začnou srážet háčky a čárky. */
 .font-display {
-  font-weight: 400;
-  letter-spacing: -0.01em;
-  word-spacing: 0.08em;
+  font-family: 'Manrope', 'Inter', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  font-feature-settings: 'tnum' 0;
 }
 
 ::selection {
@@ -79,10 +85,55 @@ body::after {
 
 .fm-eyebrow {
   font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
+  font-weight: 600;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #76768c;
+  color: #9a9aae;
+}
+
+/* Nápis značky: Frame bílá, Mind ve spektru loga — sazba, ne obrázek. */
+.fm-wordmark {
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+/* Měkká spektrální záře za značkou — světlo, ne plocha. */
+.fm-halo {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 42% at 30% 38%, rgba(192, 38, 255, 0.30), transparent 70%),
+    radial-gradient(40% 44% at 52% 70%, rgba(47, 111, 224, 0.30), transparent 70%),
+    radial-gradient(34% 40% at 76% 34%, rgba(31, 192, 107, 0.24), transparent 70%);
+  filter: blur(28px);
+}
+
+/* Optika: soustředné prstence objektivu kolem značky na úvodní obrazovce. */
+.fm-lens {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.035) 0 40%, transparent 40.2%),
+    radial-gradient(circle at 50% 50%, transparent 0 55%, rgba(255, 255, 255, 0.05) 55.2% 55.6%, transparent 55.8%),
+    radial-gradient(circle at 50% 50%, transparent 0 70%, rgba(255, 255, 255, 0.07) 70.2% 70.5%, transparent 70.7%),
+    radial-gradient(circle at 50% 42%, #15151e 0%, #0b0b11 72%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -30px 60px -30px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 40px 90px -40px rgba(0, 0, 0, 0.95);
+}
+@keyframes fm-lens-turn {
+  to { transform: rotate(360deg); }
+}
+.fm-lens-scale {
+  position: absolute;
+  inset: 0;
+  animation: fm-lens-turn 90s linear infinite;
 }
 
 /* Hrana plochy: jemné světlo nahoře, tma dole — materiál místo rámečku. */
@@ -93,22 +144,6 @@ body::after {
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 1px 2px rgba(0, 0, 0, 0.4),
     0 18px 40px -20px rgba(0, 0, 0, 0.8);
-}
-
-/* Papírová karta pro logo — značka se nepřebarvuje, patří na světlý podklad.
-   Zrno + dvojitý stín (těsný a daleký) z ní dělají tištěný kus, ne bílý obdélník. */
-.fm-paper {
-  background:
-    var(--grain),
-    linear-gradient(160deg, #ffffff 0%, #f4f3f0 60%, #ebe9e4 100%);
-  background-size: 160px 160px, cover;
-  background-blend-mode: soft-light, normal;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
-    0 1px 2px rgba(0, 0, 0, 0.5),
-    0 30px 70px -30px rgba(0, 0, 0, 0.9),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
 .fm-panel {
@@ -197,7 +232,7 @@ body::after {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  color: #a0a0b4;
+  color: #b4b4c6;
   transition: color 0.15s, background 0.15s;
 }
 .fm-icon-btn:hover:not(:disabled) {
@@ -246,7 +281,7 @@ body::after {
   border-radius: 9px;
   font-size: 13px;
   font-weight: 500;
-  color: #8a8aa0;
+  color: #a3a3b6;
   white-space: nowrap;
   transition: color 0.15s, background 0.15s;
 }
@@ -462,6 +497,62 @@ body::after {
   animation: fm-fade-in 0.25s ease-out both;
 }
 
+/* --- Plynulé rozměry: stránky se roztahují podle obrazovky, ne podle breakpointů --- */
+/* V @layer components, aby jednotlivé stránky mohly okraje přebít utilitami (pt-24 apod.). */
+@layer components {
+  .fm-page {
+    width: 100%;
+    max-width: 1840px;
+    margin-inline: auto;
+    padding-inline: clamp(16px, 3.2vw, 64px);
+    padding-block: clamp(20px, 4vh, 56px);
+  }
+
+  /* Karty projektů a klientů: tolik sloupců, kolik se vejde. */
+  .fm-grid-cards {
+    display: grid;
+    gap: clamp(12px, 1.2vw, 20px);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  }
+
+  /* Fotky ve výběru: velikost karty roste s obrazovkou, počet sloupců dopočítá mřížka. */
+  .fm-grid-photos {
+    display: grid;
+    gap: clamp(8px, 0.8vw, 14px);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, clamp(150px, 13vw, 280px)), 1fr));
+  }
+  .fm-grid-thumbs {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, clamp(110px, 9vw, 200px)), 1fr));
+  }
+
+  /* Kroky postupu: předěly jsou mezera 1 px nad vlásečnicí, takže sedí při jakémkoli počtu sloupců. */
+  .fm-grid-steps {
+    display: grid;
+    gap: 1px;
+    background: var(--hair);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  }
+
+  /* Titulek úvodu hlídá šířku i výšku okna — na nízkém širokém monitoru nepřeroste. */
+  .fm-hero-title {
+    font-size: clamp(34px, min(5.2vw, 8.5vh), 96px);
+  }
+  .fm-hero-lead {
+    font-size: clamp(15px, min(1.1vw, 2.1vh), 19px);
+  }
+  .fm-lens-wrap {
+    width: clamp(220px, min(34vw, 56vh), 600px);
+    max-width: 100%;
+  }
+  @media (max-width: 1023px) {
+    .fm-lens-wrap {
+      width: min(78vw, 44vh, 420px);
+    }
+  }
+}
+
 .custom-scrollbar::-webkit-scrollbar,
 ::-webkit-scrollbar {
   width: 6px;
@@ -480,6 +571,7 @@ body::after {
 
 @media (prefers-reduced-motion: reduce) {
   .fm-aperture-spin,
+  .fm-lens-scale,
   .fm-spinner,
   .animate-fade-in,
   .animate-fade-in-right {

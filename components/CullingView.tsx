@@ -531,7 +531,7 @@ const CullingView: React.FC<CullingViewProps> = ({
         {/* Verdikt + skóre */}
         <div className="absolute top-2 left-2 flex items-center gap-1.5">
           {style && (
-            <span className={`${style.chip} w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg`}>
+            <span className={`${style.chip} w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black shadow-lg`}>
               {style.label}
             </span>
           )}
@@ -543,7 +543,7 @@ const CullingView: React.FC<CullingViewProps> = ({
         </div>
         {result && (
           <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
-            <span className="bg-black/60 backdrop-blur text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded">
+            <span className="bg-black/60 backdrop-blur text-white text-[11px] font-mono font-bold px-1.5 py-0.5 rounded">
               {result.ai?.aiScore ?? result.finalScore}
             </span>
             {(result.faceCount ?? 0) > 0 && (
@@ -575,9 +575,9 @@ const CullingView: React.FC<CullingViewProps> = ({
 
         {/* Patka: název + AI shrnutí + rizika */}
         <div className="absolute bottom-0 inset-x-0 p-2.5">
-          <p className="text-[9px] text-gray-300 truncate font-mono">{file.file.name}</p>
+          <p className="text-[11px] text-gray-300 truncate font-mono">{file.file.name}</p>
           {result?.ai?.summary && !inStrip && (
-            <p className="text-[10px] text-gray-200 leading-snug line-clamp-2 mt-0.5">{result.ai.summary}</p>
+            <p className="text-[11px] text-gray-200 leading-snug line-clamp-2 mt-0.5">{result.ai.summary}</p>
           )}
           {result && result.risks.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
@@ -602,7 +602,7 @@ const CullingView: React.FC<CullingViewProps> = ({
                 return next;
               });
             }}
-            className="absolute bottom-2 right-2 bg-fm-blue/90 text-white text-[9px] font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-lg hover:bg-fm-blue"
+            className="absolute bottom-2 right-2 bg-fm-blue/90 text-white text-[11px] font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-lg hover:bg-fm-blue"
           >
             <StackIcon className="w-3 h-3" />
             {expandedGroups.has(result!.duplicateGroupId!) ? '−' : `+${groupSize - 1}`}
@@ -630,7 +630,7 @@ const CullingView: React.FC<CullingViewProps> = ({
 
           {/* Žánr */}
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_genre')}</label>
+            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_genre')}</label>
             <select
               value={genreInfo?.manual ? genreInfo.genre : 'auto'}
               onChange={(e) => handleGenreChange(e.target.value)}
@@ -642,7 +642,7 @@ const CullingView: React.FC<CullingViewProps> = ({
               ))}
             </select>
             {genreInfo && !genreInfo.manual && (
-              <p className="text-[10px] text-gray-400 pl-1 leading-relaxed">
+              <p className="text-[11px] text-gray-400 pl-1 leading-relaxed">
                 <span className="text-fm-green font-bold">{GENRE_PROFILES[genreInfo.genre].label}</span>
                 {' '}({genreInfo.confidence} %) — {genreInfo.note}
               </p>
@@ -651,7 +651,7 @@ const CullingView: React.FC<CullingViewProps> = ({
 
           {/* Brief */}
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_brief')}</label>
+            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_brief')}</label>
             <textarea
               value={brief}
               onChange={(e) => setBrief(e.target.value)}
@@ -664,14 +664,14 @@ const CullingView: React.FC<CullingViewProps> = ({
 
           {/* Režim AI kontroly */}
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_mode_label')}</label>
+            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_mode_label')}</label>
             <div className="grid grid-cols-2 gap-1.5">
               {(['safe', 'economy'] as CullingMode[]).map(m => (
                 <button
                   key={m}
                   onClick={() => setMode(m)}
                   disabled={isRunning}
-                  className={`py-2 rounded-lg text-[10px] font-bold uppercase transition-colors ${
+                  className={`py-2 rounded-lg text-[11px] font-bold uppercase transition-colors ${
                     mode === m
                       ? 'bg-white/10 text-white border border-white/25'
                       : 'bg-elevated text-gray-500 border border-transparent hover:text-gray-300'
@@ -682,9 +682,9 @@ const CullingView: React.FC<CullingViewProps> = ({
               ))}
             </div>
             {mode === 'safe' ? (
-              <p className="text-[10px] text-gray-400 pl-1 leading-relaxed">{tr('cull_mode_safe_desc')}</p>
+              <p className="text-[11px] text-gray-400 pl-1 leading-relaxed">{tr('cull_mode_safe_desc')}</p>
             ) : (
-              <p className="text-[10px] text-fm-red leading-relaxed border border-fm-red/30 bg-fm-red/10 rounded-lg px-2.5 py-2">
+              <p className="text-[11px] text-fm-red leading-relaxed border border-fm-red/30 bg-fm-red/10 rounded-lg px-2.5 py-2">
                 {tr('cull_mode_economy_warning')}
               </p>
             )}
@@ -693,10 +693,10 @@ const CullingView: React.FC<CullingViewProps> = ({
           {/* Lokální profil vkusu */}
           <div className="rounded-xl border border-border-subtle bg-elevated/70 px-3 py-2.5 space-y-2">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+              <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
                 {tr('cull_taste_title')}
               </span>
-              <span className={`text-[9px] font-mono ${tasteProfile.ready ? 'text-fm-green' : 'text-gray-500'}`}>
+              <span className={`text-[11px] font-mono ${tasteProfile.ready ? 'text-fm-green' : 'text-gray-500'}`}>
                 {tasteProfile.samples}/{tasteProfile.minSamples}
               </span>
             </div>
@@ -706,7 +706,7 @@ const CullingView: React.FC<CullingViewProps> = ({
                 style={{ width: `${Math.min(100, (tasteProfile.samples / tasteProfile.minSamples) * 100)}%` }}
               />
             </div>
-            <p className="text-[10px] text-gray-400 leading-relaxed">
+            <p className="text-[11px] text-gray-400 leading-relaxed">
               {tasteProfile.ready ? tr('cull_taste_ready') : tr('cull_taste_learning')}
             </p>
           </div>
@@ -767,7 +767,7 @@ const CullingView: React.FC<CullingViewProps> = ({
           {(sharpnessStats || subjectStats) && (
             <div className="glass-panel rounded-2xl p-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                   {tr('cull_sharp_title')}
                 </span>
                 <span className="font-mono text-sm text-fm-blue">
@@ -775,7 +775,7 @@ const CullingView: React.FC<CullingViewProps> = ({
                 </span>
               </div>
               {subjectStats && (
-                <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <div className="flex items-center justify-between text-[11px] text-gray-500">
                   <span>{tr('cull_sharp_subject')}</span>
                   <span className="font-mono text-gray-300">
                     {subjectStats.found} / {subjectStats.total}
@@ -783,36 +783,36 @@ const CullingView: React.FC<CullingViewProps> = ({
                 </div>
               )}
               {subjectStats && subjectStats.total > 0 && subjectStats.found < subjectStats.total * 0.3 && (
-                <p className="text-[9px] text-gray-600 leading-snug pt-1">
+                <p className="text-[11px] text-gray-600 leading-snug pt-1">
                   {tr('cull_sharp_no_subject')}
                 </p>
               )}
               {sharpnessStats && (
               <>
-              <div className="flex items-center justify-between text-[10px] text-gray-500">
+              <div className="flex items-center justify-between text-[11px] text-gray-500">
                 <span>{tr('cull_sharp_range')}</span>
                 <span className="font-mono text-gray-300">
                   {Math.round(sharpnessStats.min)} – {Math.round(sharpnessStats.max)}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-[10px] text-gray-500">
+              <div className="flex items-center justify-between text-[11px] text-gray-500">
                 <span>{tr('cull_sharp_p10')}</span>
                 <span className="font-mono text-gray-300">{Math.round(sharpnessStats.p10)}</span>
               </div>
-              <div className="flex items-center justify-between text-[10px] text-gray-500">
+              <div className="flex items-center justify-between text-[11px] text-gray-500">
                 <span>{tr('cull_sharp_thresholds')}</span>
                 <span className="font-mono text-gray-300">
                   {Math.round(sharpnessStats.softThreshold)} / {Math.round(sharpnessStats.badThreshold)}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-[10px] text-gray-500">
+              <div className="flex items-center justify-between text-[11px] text-gray-500">
                 <span>{tr('cull_sharp_below')}</span>
                 <span className="font-mono text-gray-300">
                   {sharpnessStats.softCount} / {sharpnessStats.badCount}
                 </span>
               </div>
               {sharpnessStats.softCount === 0 && (
-                <p className="text-[9px] text-gray-600 leading-snug pt-1">
+                <p className="text-[11px] text-gray-600 leading-snug pt-1">
                   {tr('cull_sharp_even_set')}
                 </p>
               )}
@@ -825,31 +825,31 @@ const CullingView: React.FC<CullingViewProps> = ({
           {usage.calls > 0 && (
             <div className="glass-panel rounded-2xl p-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                   {tr('cull_usage_title')}
                 </span>
                 <span className="font-mono text-sm text-fm-green">
                   {formatUsd(usage.costUsd)}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-[10px] text-gray-500">
+              <div className="flex items-center justify-between text-[11px] text-gray-500">
                 <span>{tr('cull_usage_calls')}</span>
                 <span className="font-mono text-gray-300">{usage.calls}</span>
               </div>
-              <div className="flex items-center justify-between text-[10px] text-gray-500">
+              <div className="flex items-center justify-between text-[11px] text-gray-500">
                 <span>{tr('cull_usage_per_photo')}</span>
                 <span className="font-mono text-gray-300">
                   {formatUsd(usage.costUsd / usage.calls)}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-[10px] text-gray-500">
+              <div className="flex items-center justify-between text-[11px] text-gray-500">
                 <span>{tr('cull_usage_tokens')}</span>
                 <span className="font-mono text-gray-300">
                   {formatTokens(usage.promptTokens)} / {formatTokens(usage.outputTokens)}
                 </span>
               </div>
               {usage.thoughtTokens > 0 && (
-                <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <div className="flex items-center justify-between text-[11px] text-gray-500">
                   <span>{tr('cull_usage_thinking')}</span>
                   <span className="font-mono text-gray-300">{formatTokens(usage.thoughtTokens)}</span>
                 </div>
@@ -864,7 +864,7 @@ const CullingView: React.FC<CullingViewProps> = ({
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
-                  className={`py-1.5 rounded-lg text-[9px] font-bold uppercase transition-colors ${
+                  className={`py-1.5 rounded-lg text-[11px] font-bold uppercase transition-colors ${
                     filter === f ? 'bg-white/10 text-white border border-white/20' : 'bg-elevated text-gray-500 border border-transparent hover:text-gray-300'
                   }`}
                 >
@@ -885,7 +885,7 @@ const CullingView: React.FC<CullingViewProps> = ({
 
           {/* Akce */}
           <div className="mt-auto space-y-2 pt-2">
-            <p className="text-[9px] text-gray-600 text-center font-mono">{tr('cull_keyboard_hint')}</p>
+            <p className="text-[11px] text-gray-600 text-center font-mono">{tr('cull_keyboard_hint')}</p>
             {counts.reject > 0 && (
               <button
                 onClick={removeRejects}
@@ -913,8 +913,8 @@ const CullingView: React.FC<CullingViewProps> = ({
               <p className="text-sm">{tr('cull_empty')}</p>
             </div>
           ) : (
-            <div className="max-w-7xl mx-auto space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-3">
+            <div className="space-y-4">
+              <div className="fm-grid-photos">
                 {visibleFiles.map(file => renderCard(file))}
               </div>
 
@@ -935,13 +935,13 @@ const CullingView: React.FC<CullingViewProps> = ({
                         ✕
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 md:grid-cols-5 xl:grid-cols-6 gap-2">
+                    <div className="fm-grid-thumbs">
                       {members.map(member => (
                         <div key={member.id} className="space-y-1.5">
                           {renderCard(member, true)}
                           <button
                             onClick={() => setSeriesWinner(groupId, member.id)}
-                            className={`w-full py-1 rounded-lg text-[9px] font-bold uppercase transition-colors ${
+                            className={`w-full py-1 rounded-lg text-[11px] font-bold uppercase transition-colors ${
                               cullingMap.get(member.id)?.isBestInGroup
                                 ? 'bg-fm-green/20 text-fm-green border border-fm-green/40'
                                 : 'bg-elevated text-gray-400 border border-border-subtle hover:text-white'

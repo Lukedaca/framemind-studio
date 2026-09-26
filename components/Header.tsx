@@ -20,7 +20,7 @@ const Header: React.FC<HeaderProps> = ({ title, onToggleSidebar, eyebrow, action
       </button>
       <div className="min-w-0 flex-1">
         {eyebrow && <p className="fm-eyebrow leading-none">{eyebrow}</p>}
-        <h1 className="truncate font-display text-[26px] leading-tight text-ink-50">{title}</h1>
+        <h1 className="mt-0.5 truncate font-display text-[21px] leading-tight text-ink-50">{title}</h1>
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </header>

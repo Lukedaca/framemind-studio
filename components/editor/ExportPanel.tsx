@@ -37,7 +37,7 @@ const ExportPanel: React.FC<ExportPanelProps> = (props) => {
   return (
     <div>
       <div className="px-5 pb-5 pt-6">
-        <h2 className="font-display text-[22px] leading-tight text-ink-50">{t.export_title}</h2>
+        <h2 className="font-display text-[20px] leading-tight text-ink-50">{t.export_title}</h2>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-300">{t.export_lead}</p>
       </div>
 
