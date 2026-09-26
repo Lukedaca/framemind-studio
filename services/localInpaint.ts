@@ -3,15 +3,22 @@
 // nedotčená (jediná ztráta je finální JPEG komprese souboru).
 
 import {
+  CONTEXT_FACTOR,
   MASK_DILATION_PX,
   MODEL_SIZE,
   computeInpaintCrop,
   dilateMask,
+  grainSigma,
   maskBoundingBox,
+  missingGrain,
+  pickAutoModel,
   planarToRgba,
   rgbaToPlanar,
 } from '../utils/inpaintMath';
 import type { InpaintModelId } from '../utils/inpaintModels';
+
+/** Volba v panelu: auto vybere model podle velikosti retušované plochy. */
+export type InpaintChoice = 'auto' | InpaintModelId;
 
 export type InpaintBackend = 'webgpu' | 'wasm';
 
@@ -131,7 +138,57 @@ export interface InpaintPatch {
   y: number;
   ms: number;
   backend: InpaintBackend;
+  model: InpaintModelId;
 }
+
+// Doplněná plocha z modelu je hladší než fotka kolem (model počítá na 512 px
+// a výsledek se zvětšuje). Přidá se jí zrno změřené v prstenci kolem díry —
+// bez toho retuš prozradí „plastová" skvrna, i když tvary sedí.
+const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole: Uint8Array) => {
+  const w = layer.width;
+  const h = layer.height;
+  const pixels = w * h;
+  const blurOf = (c: HTMLCanvasElement) => {
+    const b = canvas(w, h);
+    const ctx = b.getContext('2d', { willReadFrequently: true })!;
+    ctx.filter = 'blur(1.2px)';
+    ctx.drawImage(c, 0, 0);
+    return ctx.getImageData(0, 0, w, h).data;
+  };
+  const layerCtx = layer.getContext('2d', { willReadFrequently: true })!;
+  const layerData = layerCtx.getImageData(0, 0, w, h);
+  const orig = original.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, w, h).data;
+
+  // Díra a prstenec kolem ní v souřadnicích modelu (512×512) → pixely výřezu.
+  const ring = dilateMask(hole, MODEL_SIZE, MODEL_SIZE, 20);
+  const toModel = (i: number) => {
+    const mx = Math.min(MODEL_SIZE - 1, Math.floor(((i % w) * MODEL_SIZE) / w));
+    const my = Math.min(MODEL_SIZE - 1, Math.floor((Math.floor(i / w) * MODEL_SIZE) / h));
+    return my * MODEL_SIZE + mx;
+  };
+  const step = Math.max(1, Math.floor(pixels / 400_000));
+  const around = grainSigma(orig, blurOf(original), (i) => {
+    const m = toModel(i);
+    return ring[m] === 1 && hole[m] === 0;
+  }, pixels, step);
+  const filled = grainSigma(layerData.data, blurOf(layer), (i) => layerData.data[i * 4 + 3] > 250, pixels, step);
+  if (!around || !filled) return;
+  const add = missingGrain(around, filled);
+  if (add[0] + add[1] + add[2] < 0.3) return;
+
+  // Zrno fotoaparátu je hlavně jasové s trochou barevného. Součet tří
+  // rovnoměrných čísel (0–1) minus 1,5 má odchylku 0,5 — levná náhrada
+  // Gaussova šumu; ×2 = jednotková odchylka.
+  const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 2;
+  const norm = 1 / Math.sqrt(0.8 ** 2 + 0.45 ** 2);
+  const d = layerData.data;
+  for (let i = 0; i < pixels; i++) {
+    if (d[i * 4 + 3] === 0) continue;
+    const luma = 0.8 * gauss();
+    for (let c = 0; c < 3; c++) d[i * 4 + c] += (luma + 0.45 * gauss()) * norm * add[c];
+  }
+  layerCtx.putImageData(layerData, 0, 0);
+};
 
 /**
  * Spočítá jen doplněný výřez. Fotku nedekóduje ani nekóduje — zdrojem je
@@ -145,7 +202,7 @@ export interface InpaintPatch {
 export const inpaintRegion = async (
   source: HTMLCanvasElement,
   maskCanvas: HTMLCanvasElement,
-  model: InpaintModelId,
+  choice: InpaintChoice,
   onProgress?: PendingJob['onProgress'],
 ): Promise<InpaintPatch> => {
   const mw = maskCanvas.width;
@@ -168,7 +225,10 @@ export const inpaintRegion = async (
     width: Math.ceil(maskBox.width * sx),
     height: Math.ceil(maskBox.height * sy),
   };
-  const crop = computeInpaintCrop(fullBox, W, H);
+  let holeArea = 0;
+  for (let i = 0; i < alpha.length; i++) if (alpha[i] > 0) holeArea++;
+  const model: InpaintModelId = choice === 'auto' ? pickAutoModel(holeArea * sx * sy) : choice;
+  const crop = computeInpaintCrop(fullBox, W, H, CONTEXT_FACTOR[model]);
 
   // Výřez fotky → 512×512.
   const imgSmall = canvas(MODEL_SIZE, MODEL_SIZE);
@@ -213,8 +273,19 @@ export const inpaintRegion = async (
   // Měkký přechod ~1,5 px modelu, ať není vidět šev mezi doplněním a originálem.
   layerCtx.filter = `blur(${Math.max(1, (crop.width / MODEL_SIZE) * 1.5)}px)`;
   layerCtx.drawImage(holeCanvas, 0, 0, crop.width, crop.height);
+  layerCtx.globalCompositeOperation = 'source-over';
+  layerCtx.filter = 'none';
 
-  return { layer, x: crop.x, y: crop.y, ms, backend };
+  const originalCrop = canvas(crop.width, crop.height);
+  originalCrop.getContext('2d')!.drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+  try {
+    matchGrain(layer, originalCrop, hole);
+  } catch (error) {
+    // Zrno je doladění — když selže (např. paměť), výsledek platí i bez něj.
+    console.warn('Grain matching skipped:', error);
+  }
+
+  return { layer, x: crop.x, y: crop.y, ms, backend, model };
 };
 
 /** Uloží plátno do souboru. Běží až po zobrazení výsledku, uživatel na něj nečeká. */
