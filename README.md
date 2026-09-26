@@ -1,11 +1,11 @@
 <div align="center">
-  <img src="public/logo-full.png" alt="FrameMind Studio" width="420" />
+  <img src="public/brand/readme-logo-cs.png" alt="FrameMind — Tvorba poháněná inteligencí" width="440" />
 
   <h1>FrameMind Studio</h1>
 
-  <p><strong>Propojujeme snímky s inteligencí.</strong></p>
+  <p><strong>Vyberte. Upravte. Vyretušujte.</strong></p>
 
-  <p>AI fotostudio pro fotografy přímo v prohlížeči — žánrový AI culling, editor, retuš,<br />rychlé JPEG náhledy z RAW, klientské galerie a lokální CRM v jedné aplikaci.</p>
+  <p>Fotostudio v prohlížeči pro celou cestu od karty k hotovým fotkám —<br />import, výběr, úpravy, retuš štětcem a export v jednom okně.<br />Retuš i úpravy počítá váš počítač, ne cloud.</p>
 
   <p>
     <a href="README.md"><img src="https://img.shields.io/badge/README-%C4%8Cesky-2f6fe0?style=for-the-badge" alt="Čeština" /></a>
@@ -16,135 +16,107 @@
     <img src="https://img.shields.io/badge/React-19-2f6fe0" alt="React 19" />
     <img src="https://img.shields.io/badge/TypeScript-5.8-2f6fe0" alt="TypeScript" />
     <img src="https://img.shields.io/badge/Vite-6-b01ecb" alt="Vite 6" />
-    <img src="https://img.shields.io/badge/Gemini-AI-1fc06b" alt="Gemini AI" />
+    <img src="https://img.shields.io/badge/ONNX_Runtime_Web-lok%C3%A1ln%C3%AD_AI-1fc06b" alt="ONNX Runtime Web" />
     <img src="https://img.shields.io/badge/PWA-ready-1fc06b" alt="PWA" />
   </p>
 </div>
 
 ---
 
-## Proč FrameMind Studio
+## Postup
 
-Velké culling nástroje (Aftershoot, Narrative, FilterPixel, Imagen) jsou jednoúčelové desktopové aplikace s předplatným. FrameMind Studio pokrývá celý workflow fotografa v prohlížeči — od importu přes výběr a úpravy až po předání klientovi — a v cullingu umí věci, které konkurence nemá:
+| | Krok | Co dělá | Kde běží |
+|---|---|---|---|
+| 01 | **Import** | JPEG, PNG, WebP; z RAW (CR2, CR3, NEF, ARW, DNG…) se bere vložený JPEG náhled | lokálně |
+| 02 | **Výběr** | ostrost, expozice, šum, kompozice, série a duplicity; klávesy K / R / X | lokálně · AI verdikty volitelně přes Gemini |
+| 03 | **Úpravy** | *Automaticky* z histogramu + posuvníky světla, barvy, detailu a ořez | lokálně |
+| 04 | **Retuš** | štětcem přejedete přes rušivý prvek a po puštění se místo dopočítá z okolí | lokálně (ONNX model v prohlížeči) |
+| 05 | **Export** | JPEG / PNG, kvalita, velikost, vodoznak, celá sada do složky | lokálně |
 
-- **Culling brief** — napíšeš záměr focení vlastními slovy a AI ho váží ve verdiktech
-- **Vysvětlitelné verdikty** — u každé fotky důvod a rizika česky, ne jen skóre
-- **Zdarma heuristická fáze** — ostrost, expozice, šum a série se počítají lokálně, bez API a offline
+Po importu víc fotek appka otevře rovnou výběr, u jedné fotky úpravy. K tomu lokální projekty a klienti s náhledem klientské galerie.
 
----
+## Retuš štětcem bez API
 
-## AI Culling
+Retuš funguje jako [cleanup.photo](https://cleanup.photo/): jeden štětec, žádné nastavování. Rozdíl je v tom, kde se počítá — model běží přímo v prohlížeči přes [ONNX Runtime Web](https://onnxruntime.ai/) ve web workeru (WebGPU, když ho prohlížeč má, jinak WASM na CPU). Fotka nikam neodchází a retuš nestojí kredity ani API klíč.
 
-Trojfázový výběr postavený na enginu FrameMind:
+Dvě kvality:
 
-1. **Lokální heuristiky** (zdarma, ve web workeru) — Laplacianova ostrost, expozice, šum, kompozice, perceptual-hash detekce sérií a duplicit
-2. **Rozpoznání žánru** — AI určí žánr celé sady ze tří náhledů; 9 žánrových profilů (sport, portrét, svatba, produkt, krajina, street, wildlife, reportáž, obecné) mění váhy i prahy — zavřené oči zabijí portrét, u sportu nevadí
-3. **AI verdikty** — Gemini rozhodne keep / review / reject podle standardů daného žánru, se shrnutím, důvody a riziky
+| | Model | Velikost | Na co |
+|---|---|---|---|
+| **Rychlá** (výchozí) | [MI-GAN](https://huggingface.co/andraniksargsyan/migan) · MIT | 28 MB | drobnosti, kabely, texty, skvrny |
+| **Detailní** | [LaMa](https://huggingface.co/Carve/LaMa-ONNX) · Apache-2.0 | 208 MB | velké plochy, lidé, auta |
 
-Dva režimy AI kontroly:
+Model se stáhne při prvním použití z Hugging Face (URL připnutá na konkrétní commit) a uloží se do Cache Storage prohlížeče — další spuštění ho čte z disku a retuš jde i offline.
 
-- **Safe (výchozí)** — AI vizuálně posoudí každou fotku včetně heuristických rejectů. Žádná fotka není vyřazena jen na základě heuristiky.
-- **Economy** — jisté heuristické rejecty AI přeskočí a ověří jen auditní vzorek (5–20 fotek, ~10 %). Levnější, ale s vyšším rizikem falešného rejectu — UI na to před spuštěním upozorní a při špatném výsledku auditu doporučí Safe.
+**Jak to drží plné rozlišení:** modely pracují na čtverci 512 × 512. Z fotky se proto vyřízne jen okolí masky (maska zabírá zhruba polovinu výřezu, kvůli kontextu), model doplní ten výřez a zpátky do fotky se vloží **jen pixely pod maskou** s měkkým přechodem. Zbytek snímku zůstane v původním rozlišení; jediná ztráta je finální uložení JPEG (kvalita 0,96). Maska se před výpočtem rozšíří o pár pixelů — bez toho model „protáhne" obrys objektu dovnitř díry.
 
-Každá karta zobrazuje zdroj verdiktu (heuristika / AI ověřeno / ručně). Mazání rejectů ukazuje rozpad podle zdroje a rejecty označené jen heuristikou vyžadují samostatné potvrzení; akce jde vrátit přes Undo.
+Ovládání: `[` / `]` velikost štětce · kolečko myši zoom · mezerník + tah posun · `0` celá fotka · `Ctrl+Z` zpět · držet **Porovnat** (nebo `\`) = originál.
 
-K tomu profi ovládání: klávesy **K / R / X** a šipky, sbalení sérií na reprezentanta s volbou „Tohle je vítěz", filtry podle verdiktu.
+## Gemini jako volitelný doplněk
 
-## Další funkce
+Bez API klíče funguje všechno kromě dvou věcí, které appka nabízí navíc:
 
-| Funkce | Popis |
-|--------|-------|
-| **Editor** | Manuální úpravy, filtry, ořez, vodoznak, historie undo/redo |
-| **AI Autopilot** | Automatické vylepšení fotky + naučené tendence uživatele |
-| **Retuš** | AI retuš promptem i maskou, odstranění objektů, výměna pozadí |
-| **Batch Studio** | Hromadné úpravy a portrétní retuš celé série |
-| **RAW Quick Preview** | Rychlý export JPEG náhledu vloženého ve RAW souboru (CR2, NEF, ARW…). Nejde o plnohodnotné vyvolání RAW dat — exportuje se nejvyšší dostupné rozlišení náhledu |
-| **YouTube miniatury** | Generátor thumbnailů se 4 šablonami a textovým overlayem |
-| **AI Gallery** | Generování obrázků a správa AI assetů |
-| **Projekty & klienti** | Lokální CRM — zakázky, klienti, timeline aktivit, klientské galerie. Data jen v prohlížeči, bez synchronizace mezi zařízeními |
-| **PWA** | Instalovatelná z prohlížeče, offline-capable |
-| **CZ / EN** | Kompletní dvojjazyčné rozhraní |
+- **AI verdikty ve výběru** — Gemini posoudí fotky podle žánru (9 profilů: sport, portrét, svatba…), s krátkým zdůvodněním a volitelným briefem fotografa. Bez klíče výběr skončí lokálními verdikty.
+- **Úprava textem** — v panelu Retuš popíšete změnu slovy a fotka se pošle do Gemini.
 
----
+Klíč se zadává tlačítkem s klíčem vlevo dole ([Google AI Studio](https://aistudio.google.com/app/apikey)). Výchozí je uložení jen na relaci (`sessionStorage`), trvalé uložení chce potvrzení. API klíč nikdy nepatří do repozitáře ani do buildu.
 
 ## Jak začít
 
 ```bash
-npm install        # instalace závislostí
-npm run dev        # development server (port 3000)
-npm run build      # production build
-npm run preview    # preview production buildu
-npm run typecheck  # TypeScript kontrola (tsc --noEmit)
-npm run test:run   # jednotkové testy (Vitest)
+npm install
+npm run dev        # http://localhost:3000
+npm run build      # produkční build (dist/)
+npm run preview    # náhled buildu
+npm run typecheck
+npm run test:run   # Vitest
 ```
 
-CI (GitHub Actions) spouští typecheck, testy a build při každém pushi a pull requestu na `main`.
+**Hlavičky pro vícevláknovou retuš.** WASM běží na víc vláknech jen v cross-origin izolované stránce (`SharedArrayBuffer`). Dev server i `preview` posílají `Cross-Origin-Opener-Policy: same-origin` a `Cross-Origin-Embedder-Policy: credentialless`; na Vercelu totéž nastavuje `vercel.json`. Bez nich retuš funguje taky, jen pomaleji na jednom vlákně.
 
-### API klíč (BYOK)
+## Co je a co není
 
-1. Spusť aplikaci a vlož svůj Google Gemini API klíč v UI (tlačítko **API** v horní liště).
-2. Klíč získáš zdarma v [Google AI Studiu](https://aistudio.google.com/app/apikey).
-3. Výchozí režim je **session-only** — klíč žije jen v `sessionStorage` a zavřením prohlížeče zmizí. Trvalé uložení do `localStorage` vyžaduje explicitní potvrzení.
+**Hotové:** všechno z tabulky výše, lokální CRM (projekty, klienti, náhled galerie) v úložišti prohlížeče, PWA, čeština i angličtina.
 
-> **Bezpečnost:** API klíče nikdy nepatří do repozitáře ani do buildů. Úložiště prohlížeče není ekvivalent serverového zabezpečení — pro veřejný SaaS provoz bude nutný serverový proxy endpoint.
+**Není:**
 
----
-
-## Co je skutečně implementováno vs. co (zatím) není
-
-**Implementováno (běží lokálně v prohlížeči):**
-
-- lokální heuristiky cullingu (ostrost, expozice, šum, kompozice) ve web workeru
-- perceptual hash + detekce sérií a duplicit (pro velké sady LSH banding místo O(n²))
-- 9 žánrových profilů s vlastními váhami a prahy
-- Gemini AI verdikty s vysvětlením (keep / review / reject) + culling brief fotografa
-- Safe/Economy režim AI kontroly s auditem heuristických rejectů
-- ruční K/R/X workflow
-- lokální editor, retuš promptem/maskou (standardní API volání, odmítnutí modelu se respektuje)
-- extrakce embedded JPEG náhledu z RAW souborů
-- lokální CRM (localStorage, za storage abstrakcí)
-- BYOK Gemini režim (session-only default)
-
-**Není produkční SaaS — tyto věci zatím neexistují:**
-
-- serverová autentizace a účty
-- cloudová synchronizace dat (CRM je jen lokální)
-- skutečný billing — kredity jsou **demo** (localStorage), žádná platba neprobíhá
-- bezpečný serverový AI proxy (klíč je v prohlížeči uživatele)
-- týmové účty a auditní logy
-- skutečný RAW development engine (demosaicing) — jen embedded preview
-
----
+- plné vyvolání RAW (demosaicing) — z RAW se bere jen vložený náhled
+- účty, synchronizace mezi zařízeními, cloud — data projektů jsou jen v tomhle prohlížeči
+- serverový proxy pro Gemini — klíč je v prohlížeči uživatele
+- ověření retuše na všech prohlížečích: WebGPU cesta závisí na prohlížeči a ovladači, WASM je záloha
 
 ## Technologie
 
-| Kategorie | Technologie |
-|-----------|-------------|
-| Framework | React 19 + TypeScript 5.8 |
-| Build | Vite 6 |
-| Stylování | Tailwind CSS 3 (FrameMind paleta z loga) |
-| Animace | Framer Motion 11 |
-| AI | Google Gemini API (`@google/genai`) |
-| Culling | Vlastní engine — web worker heuristiky + žánrové profily |
-| PWA | vite-plugin-pwa (Workbox) |
-
-## Struktura projektu
+| | |
+|---|---|
+| Aplikace | React 19, TypeScript 5.8, Vite 6, Tailwind CSS 3 |
+| Lokální AI | ONNX Runtime Web (MI-GAN, LaMa), MediaPipe Tasks (obličeje, osoby pro výběr) |
+| Volitelná AI | Google Gemini (`@google/genai`) |
+| Offline | vite-plugin-pwa (Workbox), Cache Storage pro modely |
+| Písmo | Geist, Geist Mono, Instrument Serif |
 
 ```
-App.tsx                  # Hlavní aplikační logika, routing, state
-components/              # UI komponenty (lazy-loaded views + shared)
-  CullingView.tsx        # AI culling board (žánry, série, K/R/X)
-  ai/                    # AI Command Center
-  editor/                # Editor sub-komponenty
-contexts/                # React kontexty (Language, Project)
-services/                # Gemini služby, uživatelský profil, API klíče
-utils/                   # cullingEngine, cullingMetrics, imageProcessor…
-workers/                 # Web workery (culling heuristiky, histogram)
-public/                  # Loga, PWA ikony
+App.tsx                    # kostra, navigace, historie (undo/redo)
+components/
+  EditorView.tsx           # editor: Úpravy / Retuš / Export
+  editor/                  # plátno se štětcem, panely, sdílené prvky
+  CullingView.tsx          # výběr
+  DashboardView.tsx        # přehled
+services/
+  localInpaint.ts          # retuš: výřez → model → vložení do plného rozlišení
+  geminiService.ts         # volitelné AI verdikty a úprava textem
+utils/
+  inpaintMath.ts           # čistá matika retuše (testovaná)
+  autoAdjust.ts            # automatická úprava z histogramu (testovaná)
+  cullingEngine.ts …       # heuristiky výběru
+workers/
+  inpaint.worker.ts        # ONNX Runtime + cache modelů
+  culling.worker.ts
+public/brand/              # logo FrameMind
 ```
 
 ---
 
 <div align="center">
-  <sub>FrameMind Studio je součást rodiny FrameMind — AI nástrojů pro fotografy.</sub>
+  <sub>FrameMind Studio je součást <a href="https://framemind.cz">FrameMind</a>.</sub>
 </div>
