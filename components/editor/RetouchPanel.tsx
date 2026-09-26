@@ -77,7 +77,8 @@ const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
       default:
         return (
           <p className="text-[11px] text-ink-500">
-            {t.retouch_first_download.replace('{size}', mb(INPAINT_MODELS[props.model].bytes))}
+            {/* V režimu Automaticky se na první větší ploše stahuje detailní model. */}
+            {t.retouch_first_download.replace('{size}', mb(INPAINT_MODELS[props.model === 'auto' ? 'quality' : props.model].bytes))}
           </p>
         );
     }
