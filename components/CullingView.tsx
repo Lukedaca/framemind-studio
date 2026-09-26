@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { UploadedFile, CullingResult, CullingGenre, CullingDecision, CullingMode, CullingVerdictSource, BatchGenreInfo } from '../types';
 import { detectBatchGenre, getCullingVerdict } from '../services/geminiService';
+import { getApiKey } from '../utils/apiKey';
 import {
   GENRE_PROFILES,
   CULLING_GENRES,
@@ -186,6 +187,14 @@ const CullingView: React.FC<CullingViewProps> = ({
     applySimilarity(workMap);
     setCullingMap(new Map(workMap));
     commitToFiles(workMap, 'AI Culling – heuristika');
+
+    // Gemini je volitelný doplněk: bez klíče končí výběr lokálními verdikty,
+    // místo aby každá fotka skončila chybou AI.
+    if (!getApiKey()) {
+      finishRun(workMap);
+      addNotification(tr('cull_local_only'), 'info');
+      return;
+    }
 
     // Fáze 2: žánr sady — 3 náhledy, jeden Gemini dotaz. Manuální volba má přednost.
     if (!genreRef.current?.manual) {
@@ -605,7 +614,7 @@ const CullingView: React.FC<CullingViewProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col text-white overflow-hidden">
-      <Header title={title} onToggleSidebar={onToggleSidebar} onOpenApiKeyModal={onOpenApiKeyModal} />
+      <Header title={title} onToggleSidebar={onToggleSidebar} />
 
       <div className="flex-1 flex overflow-hidden">
         {/* LEVÝ PANEL */}

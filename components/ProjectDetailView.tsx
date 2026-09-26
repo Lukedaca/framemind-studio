@@ -40,7 +40,7 @@ const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   if (!project) {
     return (
       <div className="w-full h-full flex flex-col">
-        <Header title={title} onToggleSidebar={onToggleSidebar} onOpenApiKeyModal={onOpenApiKeyModal} />
+        <Header title={title} onToggleSidebar={onToggleSidebar} />
         <div className="flex-1 flex items-center justify-center text-text-secondary">
           {t.crm_project_missing}
         </div>
@@ -107,7 +107,7 @@ const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar">
-      <Header title={title} onToggleSidebar={onToggleSidebar} onOpenApiKeyModal={onOpenApiKeyModal} />
+      <Header title={title} onToggleSidebar={onToggleSidebar} />
 
       <div className="p-6 lg:p-12 max-w-6xl mx-auto w-full space-y-8 animate-fade-in">
         <div className="flex flex-wrap items-center justify-between gap-4">

@@ -37,7 +37,7 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({ title, onToggleSidebar, onO
 
   return (
     <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar">
-      <Header title={title} onToggleSidebar={onToggleSidebar} onOpenApiKeyModal={onOpenApiKeyModal} />
+      <Header title={title} onToggleSidebar={onToggleSidebar} />
 
       <div className="p-6 lg:p-12 max-w-7xl mx-auto w-full space-y-8 animate-fade-in">
         <div className="flex flex-wrap items-center justify-between gap-4">

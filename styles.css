@@ -1,67 +1,409 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+  FrameMind Studio — vizuální systém
+  - Tma je inkoustová (nádech fialovomodré z loga), ne barevná mlhovina:
+    fotograf posuzuje barvy fotky a barevné pozadí by mu je posouvalo.
+  - Značka žije v detailu: duhová vlásečnice, kovové primární tlačítko,
+    aktivní stavy. Plochy dostávají zrno a hranu, ne glow.
+*/
+
 :root {
-  --bg-void: #030303;
-  --bg-panel: #0a0a0a;
-  --line-color: rgba(255, 255, 255, 0.08);
-  /* FrameMind brand (paleta z loga) */
   --fm-magenta: #b01ecb;
   --fm-blue: #2f6fe0;
   --fm-green: #1fc06b;
-  --accent-glow: rgba(47, 111, 224, 0.4);
+  --ink-950: #09090d;
+  --ink-900: #0f0f15;
+  --ink-800: #1a1a23;
+  --ink-700: #262632;
+  --hair: rgba(255, 255, 255, 0.07);
+  --spectrum: linear-gradient(90deg, #c026ff 0%, #6a3cff 32%, #2f6fe0 58%, #13b7c9 78%, #1fc06b 100%);
+  --grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--ink-950);
 }
 
 body {
-  background-color: #06060c;
-  color: #ededed;
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  color: #e6e6ee;
+  font-family: 'Geist', system-ui, sans-serif;
+  font-feature-settings: 'ss01', 'cv11';
+  -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
-  /* Noise + statický FrameMind mesh (magenta → modrá → zelená, žádná animace).
-     Views mají průhledné kořeny, aby mesh prosvítal celým workflow; neutrální
-     černou si drží jen plochy s fotkou (CanvasViewport, culling karty).
-     Středová modrofialová záře drží barvu i uprostřed obrazovky. */
-  background-image:
-    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E"),
-    radial-gradient(1200px 800px at 8% -8%, rgba(176, 30, 203, 0.26), transparent 60%),
-    radial-gradient(1300px 900px at 108% 28%, rgba(47, 111, 224, 0.22), transparent 60%),
-    radial-gradient(1200px 850px at 18% 108%, rgba(31, 192, 107, 0.18), transparent 60%),
-    radial-gradient(1600px 1100px at 55% 50%, rgba(64, 56, 180, 0.13), transparent 65%);
-  background-attachment: fixed;
 }
 
-/* Brand gradient pro nadpisy a akcenty */
+/* Zrno přes celou aplikaci — sotva viditelné, bere plochám digitální plochost. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 400;
+  background-image: var(--grain);
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+}
+
+.font-display {
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  word-spacing: 0.08em;
+}
+
+::selection {
+  background: rgba(111, 141, 255, 0.35);
+}
+
+/* --- Značkové prvky --- */
+
 .fm-gradient-text {
-  background: linear-gradient(100deg, var(--fm-magenta) 0%, var(--fm-blue) 50%, var(--fm-green) 100%);
+  background: var(--spectrum);
   -webkit-background-clip: text;
   background-clip: text;
-  color: transparent;
+  -webkit-text-fill-color: transparent;
+  color: #8ea6ff;
 }
 
-/* --- UTILITIES --- */
+.fm-hairline {
+  height: 1px;
+  background: var(--spectrum);
+  opacity: 0.55;
+}
 
-/* Glass Panel with 1px Highlight */
-.glass-panel {
-  background: rgba(16, 17, 27, 0.55);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+.fm-eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #76768c;
+}
+
+/* Hrana plochy: jemné světlo nahoře, tma dole — materiál místo rámečku. */
+.fm-surface {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01)), var(--ink-900);
+  border: 1px solid var(--hair);
   box-shadow:
-    0 0 0 1px rgba(0,0,0, 0.5),
-    0 4px 20px rgba(0,0,0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 18px 40px -20px rgba(0, 0, 0, 0.8);
 }
 
-@supports not (backdrop-filter: blur(1px)) {
-  .glass-panel {
-    background: rgba(18, 18, 18, 0.95);
+/* Papírová karta pro logo — značka se nepřebarvuje, patří na světlý podklad.
+   Zrno + dvojitý stín (těsný a daleký) z ní dělají tištěný kus, ne bílý obdélník. */
+.fm-paper {
+  background:
+    var(--grain),
+    linear-gradient(160deg, #ffffff 0%, #f4f3f0 60%, #ebe9e4 100%);
+  background-size: 160px 160px, cover;
+  background-blend-mode: soft-light, normal;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    0 30px 70px -30px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.fm-panel {
+  background: var(--ink-900);
+  border-left: 1px solid var(--hair);
+}
+@media (max-width: 1023px) {
+  .fm-panel {
+    border-left: 0;
+    border-top: 1px solid var(--hair);
+    max-height: 48vh;
   }
 }
 
-/* Gradient border v brand barvách — pro vybrané/hero karty (mask-composite trik) */
+/* Jeviště fotky: neutrální tma s lehkou vinětou, ať fotka vystoupí. */
+.fm-stage {
+  background:
+    radial-gradient(120% 90% at 50% 45%, #121218 0%, #0b0b10 60%, #060609 100%);
+}
+
+/* Primární tlačítko: kovová slitina z barev značky (4 zarážky = lesk → sytost
+   → stín → odlesk), světlá hrana nahoře a tmavá dole jako vypouklý plech. */
+.fm-btn-primary {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 42px;
+  padding: 0 1.1rem;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 48%, rgba(0, 0, 0, 0.18) 100%),
+    linear-gradient(115deg, #9b2bd8 0%, #5a44f0 38%, #2f6fe0 64%, #169b8e 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    0 10px 24px -10px rgba(90, 68, 240, 0.65);
+  transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.fm-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08) saturate(1.05);
+}
+.fm-btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.fm-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.fm-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 40px;
+  padding: 0 1rem;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #e6e6ee;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.fm-btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.fm-btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.fm-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: #a0a0b4;
+  transition: color 0.15s, background 0.15s;
+}
+.fm-icon-btn:hover:not(:disabled) {
+  color: #f5f5f8;
+  background: rgba(255, 255, 255, 0.06);
+}
+.fm-icon-btn:disabled {
+  opacity: 0.3;
+}
+
+.fm-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 0.8rem;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #c8c8d6;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(9, 9, 13, 0.7);
+  backdrop-filter: blur(10px);
+  user-select: none;
+}
+.fm-chip.is-active {
+  color: #fff;
+  border-color: rgba(142, 166, 255, 0.5);
+  background: rgba(79, 111, 240, 0.22);
+}
+
+/* Segmentový přepínač — zapuštěná kolejnice, aktivní dílek vystupuje. */
+.fm-seg {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: #07070a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.fm-seg > button {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 0.85rem;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #8a8aa0;
+  white-space: nowrap;
+  transition: color 0.15s, background 0.15s;
+}
+.fm-seg > button:hover {
+  color: #e6e6ee;
+}
+.fm-seg > button.is-active {
+  color: #fff;
+  background: linear-gradient(180deg, #2a2a37, #1f1f29);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.fm-seg--sm > button {
+  height: 26px;
+  padding: 0 0.5rem;
+  font-size: 12px;
+}
+
+/* Posuvník: tenká kolejnice, vybarvený úsek duhou značky, kovová hlavička. */
+.fm-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.fm-range::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 2px;
+  background:
+    linear-gradient(90deg, transparent var(--from, 0%), #8ea6ff var(--from, 0%), #8ea6ff var(--to, 0%), transparent var(--to, 0%)),
+    #2a2a36;
+}
+.fm-range::-moz-range-track {
+  height: 2px;
+  border-radius: 2px;
+  background:
+    linear-gradient(90deg, transparent var(--from, 0%), #8ea6ff var(--from, 0%), #8ea6ff var(--to, 0%), transparent var(--to, 0%)),
+    #2a2a36;
+}
+.fm-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #c9c9d6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.6);
+  transition: transform 0.12s;
+}
+.fm-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #c9c9d6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+.fm-range:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.fm-range:focus-visible {
+  outline: none;
+}
+.fm-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(142, 166, 255, 0.45);
+}
+
+.fm-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 0.8rem;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #f5f5f8;
+  background: #07070a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+.fm-input:focus {
+  border-color: rgba(142, 166, 255, 0.5);
+}
+
+.fm-switch {
+  appearance: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: #2a2a36;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.fm-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #e6e6ee;
+  transition: transform 0.15s;
+}
+.fm-switch:checked {
+  background: #4f6ff0;
+}
+.fm-switch:checked::after {
+  transform: translateX(14px);
+}
+
+.fm-thumb {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  opacity: 0.5;
+  outline: 1px solid rgba(255, 255, 255, 0.06);
+  outline-offset: -1px;
+  transition: opacity 0.15s, box-shadow 0.15s;
+}
+.fm-thumb:hover {
+  opacity: 0.85;
+}
+.fm-thumb.is-active {
+  opacity: 1;
+  box-shadow: 0 0 0 2px #09090d, 0 0 0 3px #8ea6ff;
+}
+
+.fm-progress {
+  background: var(--spectrum);
+  transition: width 0.2s ease;
+}
+
+.fm-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #fff;
+  animation: fm-spin 0.8s linear infinite;
+}
+@keyframes fm-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Kompatibilita pro obrazovky mimo editor (culling, projekty, klienti) --- */
+
+.glass-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)), var(--ink-900);
+  border: 1px solid var(--hair);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 18px 40px -24px rgba(0, 0, 0, 0.8);
+}
+
 .fm-gradient-border {
   position: relative;
 }
@@ -71,7 +413,8 @@ body {
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: linear-gradient(135deg, rgba(176, 30, 203, 0.6), rgba(47, 111, 224, 0.6), rgba(31, 192, 107, 0.6));
+  background: var(--spectrum);
+  opacity: 0.45;
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
@@ -79,14 +422,6 @@ body {
   pointer-events: none;
 }
 
-/* Tenká brand linka (hairline) — spodní hrana headeru apod. */
-.fm-hairline {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(176, 30, 203, 0.75), rgba(47, 111, 224, 0.75), rgba(31, 192, 107, 0.75), transparent);
-  box-shadow: 0 0 8px rgba(47, 111, 224, 0.35);
-}
-
-/* Rotace clony při AI analýze */
 @keyframes fm-aperture-rotate {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -96,7 +431,6 @@ body {
   transform-origin: center;
 }
 
-/* Scan-line „AI se dívá" — přejíždí přes fotku během analýzy */
 .fm-scanline {
   position: absolute;
   inset: 0;
@@ -111,7 +445,7 @@ body {
   right: 0;
   top: -20%;
   height: 18%;
-  background: linear-gradient(180deg, transparent, rgba(47, 111, 224, 0.22), rgba(31, 192, 107, 0.28), transparent);
+  background: linear-gradient(180deg, transparent, rgba(111, 141, 255, 0.2), rgba(31, 192, 107, 0.22), transparent);
   animation: fm-scan 2.6s ease-in-out infinite;
 }
 @keyframes fm-scan {
@@ -119,68 +453,40 @@ body {
   100% { top: 110%; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .fm-aperture-spin { animation: none; }
-  .fm-scanline::after { animation: none; opacity: 0; }
+@keyframes fm-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-fade-in,
+.animate-fade-in-right {
+  animation: fm-fade-in 0.25s ease-out both;
 }
 
-/* Active Nav Item — sklo + svislá brand gradient lišta vlevo (žádný gradient pill) */
-.nav-item-active {
-  position: relative;
-  background: linear-gradient(90deg, rgba(47, 111, 224, 0.14) 0%, transparent 100%);
-  color: #fff;
-  text-shadow: 0 0 15px rgba(47, 111, 224, 0.5);
-}
-.nav-item-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 15%;
-  bottom: 15%;
-  width: 2px;
-  border-radius: 2px;
-  background: linear-gradient(180deg, var(--fm-magenta), var(--fm-blue), var(--fm-green));
-}
-
-/* TECH CARD (Simulated Concave/Cut Corners via visual hacks or clip-path) */
-.tech-card {
-  position: relative;
-  background: #0a0a0a;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  /* Cut corners */
-  clip-path: polygon(
-    10px 0, 100% 0, 
-    100% calc(100% - 10px), calc(100% - 10px) 100%, 
-    0 100%, 0 10px
-  );
-}
-
-.tech-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(176, 30, 203, 0.5), rgba(47, 111, 224, 0.5), rgba(31, 192, 107, 0.5), transparent);
-  opacity: 0.5;
-}
-
-/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar,
 ::-webkit-scrollbar {
-  width: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: #2a2a36;
   border-radius: 10px;
 }
-
-/* Animations */
-@keyframes pulse-glow {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a4a;
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 3s infinite ease-in-out;
+@media (prefers-reduced-motion: reduce) {
+  .fm-aperture-spin,
+  .fm-spinner,
+  .animate-fade-in,
+  .animate-fade-in-right {
+    animation: none;
+  }
+  .fm-scanline::after {
+    animation: none;
+    opacity: 0;
+  }
 }

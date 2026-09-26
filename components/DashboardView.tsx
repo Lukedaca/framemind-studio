@@ -1,161 +1,123 @@
 import React from 'react';
-import Header from './Header';
 import { useTranslation } from '../contexts/LanguageContext';
-import { UploadIcon, ChevronDoubleLeftIcon } from './icons';
-import { FmCullingIcon, FmAutopilotIcon, FmGenerateIcon, FmHistoryIcon } from './FmIcons';
-import Aperture from './common/Aperture';
-import type { View, HistoryEntry } from '../types';
+import { useProject } from '../contexts/ProjectContext';
+import type { View } from '../types';
 
 interface DashboardViewProps {
-  onNavigate: (payload: { view: View; action?: string }) => void;
+  onNavigate: (payload: { view: View; action?: string; id?: string }) => void;
   onToggleSidebar: () => void;
-  credits: number;
-  recentHistory: HistoryEntry[];
-  onBuyCredits: () => void;
-  onOpenApiKeyModal?: () => void;
+  fileCount: number;
 }
 
-const DashboardView: React.FC<DashboardViewProps> = ({
-  onNavigate,
-  onToggleSidebar,
-  credits,
-  recentHistory,
-  onBuyCredits,
-  onOpenApiKeyModal,
-}) => {
-  const { t } = useTranslation();
+const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onToggleSidebar, fileCount }) => {
+  const { t, language } = useTranslation();
+  const { projects } = useProject();
+  const recent = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 4);
+
+  const steps: { n: string; title: string; desc: string; view: View; action?: string; needsFiles?: boolean }[] = [
+    { n: '01', title: t.pipeline_step_import, desc: t.dash_step_import, view: 'upload' },
+    { n: '02', title: t.pipeline_step_culling, desc: t.dash_step_culling, view: 'culling', needsFiles: true },
+    { n: '03', title: t.pipeline_step_edit, desc: t.dash_step_edit, view: 'editor', action: 'base-edit', needsFiles: true },
+    { n: '04', title: t.pipeline_step_retouch, desc: t.dash_step_retouch, view: 'editor', action: 'retouch', needsFiles: true },
+    { n: '05', title: t.pipeline_step_export, desc: t.dash_step_export, view: 'editor', action: 'export', needsFiles: true },
+  ];
 
   return (
-    <div className="w-full h-full flex flex-col text-white overflow-y-auto custom-scrollbar">
-      <Header
-        title={t.nav_studio}
-        onToggleSidebar={onToggleSidebar}
-        credits={credits}
-        onBuyCredits={onBuyCredits}
-        onOpenApiKeyModal={onOpenApiKeyModal}
-      />
+    <div className="custom-scrollbar h-full w-full overflow-y-auto">
+      <div className="flex h-14 items-center px-4 lg:hidden">
+        <button onClick={onToggleSidebar} className="fm-icon-btn" aria-label={t.header_open_menu}>
+          <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M3 6h14M3 10h14M3 14h14" strokeLinecap="round" /></svg>
+        </button>
+      </div>
 
-      <div className="p-6 lg:p-8 max-w-[1600px] mx-auto w-full space-y-8 animate-fade-in pb-20">
-        
-        {/* Hero Section */}
-        <div className="fm-gradient-border relative overflow-hidden rounded-3xl bg-gradient-to-r from-fm-magenta/15 via-fm-blue/15 to-fm-green/10 border border-[#ffffff10] p-8 lg:p-12 shadow-2xl">
-            <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-fm-magenta rounded-full blur-[110px] opacity-20 pointer-events-none"></div>
-            <div className="absolute bottom-0 right-1/4 -mb-16 w-56 h-56 bg-fm-green rounded-full blur-[110px] opacity-15 pointer-events-none"></div>
-            <div className="absolute right-8 top-1/2 -translate-y-1/2 opacity-[0.13] pointer-events-none hidden lg:block">
-                <Aperture className="w-56 h-56" />
-            </div>
-            <div className="relative z-10 max-w-2xl">
-                <h1 className="text-4xl lg:text-5xl font-extrabold tracking-tight mb-4 text-white">
-                    {t.dash_welcome_title} <span className="fm-gradient-text">{t.dash_welcome_studio}</span>
-                </h1>
-                <p className="text-lg text-gray-400 mb-8 leading-relaxed">
-                    {t.dash_welcome_desc}
-                </p>
-                <div className="flex flex-wrap gap-4">
-                    <button
-                        onClick={() => onNavigate({ view: 'upload' })}
-                        className="px-8 py-4 bg-white text-black rounded-xl font-bold text-sm hover:bg-gray-200 transition-all shadow-[0_0_20px_rgba(255,255,255,0.3)] flex items-center gap-2"
-                    >
-                        <UploadIcon className="w-5 h-5" />
-                        {t.dash_new_project}
-                    </button>
-                    <button
-                        onClick={() => onNavigate({ view: 'editor' })}
-                        className="px-8 py-4 glass-panel text-white rounded-xl font-bold text-sm hover:bg-white/10 transition-all flex items-center gap-2"
-                    >
-                        {t.dash_open_editor}
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        {/* Bento Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-auto">
-            
-            {/* Quick Actions (Tall) */}
-            <div className="md:col-span-1 glass-panel rounded-3xl p-6 flex flex-col gap-4">
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">{t.dash_quick_tools}</h3>
-                
-                <button onClick={() => onNavigate({ view: 'batch', action: 'culling' })} className="group relative overflow-hidden bg-fm-blue/[0.08] hover:bg-fm-blue/[0.14] border border-fm-blue/25 hover:border-fm-blue/50 rounded-2xl p-5 transition-all text-left hover:-translate-y-0.5">
-                    <div className="w-10 h-10 rounded-xl bg-fm-blue/15 border border-fm-blue/30 flex items-center justify-center mb-3 text-white">
-                        <FmCullingIcon className="w-5 h-5" />
-                    </div>
-                    <h4 className="font-bold text-white mb-1">AI Culling</h4>
-                    <p className="text-xs text-gray-400">{t.dash_culling_desc}</p>
+      <div className="mx-auto w-full max-w-[1180px] px-5 pb-16 sm:px-10 lg:pt-14">
+        {/* Úvod: vlevo co appka dělá, vpravo logo na papírové kartě */}
+        <section className="grid items-center gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:gap-16">
+          <div className="animate-fade-in">
+            <p className="fm-eyebrow">FrameMind Studio</p>
+            <h1 className="mt-4 font-display text-[44px] leading-[1.02] text-ink-50 sm:text-[60px]">
+              {t.dash_title_1}
+              <br />
+              <em className="fm-gradient-text not-italic">{t.dash_title_2}</em>
+            </h1>
+            <p className="mt-6 max-w-[520px] text-[15px] leading-relaxed text-ink-300">{t.dash_lead}</p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <button onClick={() => onNavigate({ view: 'upload' })} className="fm-btn-primary h-12 px-6 text-[14px]">
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M10 13V3m0 0L6 7m4-4 4 4M3.5 13v2.5a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V13" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                {t.dash_import}
+              </button>
+              {fileCount > 0 && (
+                <button onClick={() => onNavigate({ view: 'editor', action: 'base-edit' })} className="fm-btn-ghost h-12 px-6 text-[14px]">
+                  {t.dash_continue} · {fileCount}
                 </button>
+              )}
+            </div>
+          </div>
 
-                <button onClick={() => onNavigate({ view: 'editor', action: 'autopilot' })} className="group relative overflow-hidden bg-fm-green/[0.07] hover:bg-fm-green/[0.13] border border-fm-green/25 hover:border-fm-green/50 rounded-2xl p-5 transition-all text-left hover:-translate-y-0.5">
-                    <div className="w-10 h-10 rounded-xl bg-fm-green/15 border border-fm-green/30 flex items-center justify-center mb-3 text-white">
-                        <FmAutopilotIcon className="w-5 h-5" />
-                    </div>
-                    <h4 className="font-bold text-white mb-1">Autopilot</h4>
-                    <p className="text-xs text-gray-400">{t.dash_autopilot_desc}</p>
+          <div className="fm-paper relative mx-auto w-full max-w-[420px] rounded-[20px] p-8 sm:p-10">
+            <img
+              src={language === 'en' ? '/brand/logo-en.webp' : '/brand/logo-cs.webp'}
+              alt="FrameMind — Tvorba poháněná inteligencí"
+              className="relative w-full"
+            />
+          </div>
+        </section>
+
+        {/* Postup práce */}
+        <section className="mt-16 lg:mt-24">
+          <div className="mb-5 flex items-end justify-between">
+            <h2 className="fm-eyebrow">{t.dash_workflow}</h2>
+            <span className="text-[12px] text-ink-500">{t.dash_local_badge}</span>
+          </div>
+          <div className="fm-surface grid overflow-hidden rounded-2xl sm:grid-cols-2 lg:grid-cols-5">
+            {steps.map((s) => {
+              const disabled = s.needsFiles && fileCount === 0;
+              return (
+                <button
+                  key={s.n}
+                  disabled={disabled}
+                  onClick={() => onNavigate({ view: s.view, action: s.action })}
+                  className="group relative border-b border-hairline p-6 text-left transition-colors last:border-b-0 hover:bg-white/[0.025] disabled:cursor-default disabled:hover:bg-transparent sm:border-r lg:border-b-0 lg:last:border-r-0"
+                >
+                  <span className="font-mono text-[11px] text-ink-500">{s.n}</span>
+                  <h3 className="mt-6 font-display text-[24px] leading-none text-ink-50">{s.title}</h3>
+                  <p className="mt-3 text-[12.5px] leading-relaxed text-ink-400">{s.desc}</p>
+                  {!disabled && (
+                    <span className="absolute right-5 top-6 text-ink-600 transition-colors group-hover:text-ink-200">→</span>
+                  )}
                 </button>
+              );
+            })}
+          </div>
+        </section>
 
-                <button onClick={() => onNavigate({ view: 'generate' })} className="group relative overflow-hidden bg-fm-magenta/[0.08] hover:bg-fm-magenta/[0.14] border border-fm-magenta/25 hover:border-fm-magenta/50 rounded-2xl p-5 transition-all text-left mt-auto hover:-translate-y-0.5">
-                    <div className="w-10 h-10 rounded-xl bg-fm-magenta/15 border border-fm-magenta/30 flex items-center justify-center mb-3 text-white">
-                        <FmGenerateIcon className="w-5 h-5" />
-                    </div>
-                    <h4 className="font-bold text-white mb-1">{t.dash_ai_generator}</h4>
-                    <p className="text-xs text-gray-400">{t.dash_gen_desc}</p>
+        {/* Poslední projekty */}
+        <section className="mt-14">
+          <div className="mb-5 flex items-end justify-between">
+            <h2 className="fm-eyebrow">{t.dash_recent_projects}</h2>
+            <button onClick={() => onNavigate({ view: 'projects' })} className="text-[12px] text-ink-400 hover:text-ink-100">
+              {t.dash_show_all} →
+            </button>
+          </div>
+          {recent.length === 0 ? (
+            <p className="rounded-2xl border border-dashed border-hairline p-8 text-center text-[13px] text-ink-500">{t.dash_no_projects}</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {recent.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onNavigate({ view: 'project-detail', id: p.id })}
+                  className="fm-surface rounded-2xl p-5 text-left transition-transform hover:-translate-y-0.5"
+                >
+                  <p className="truncate text-[14px] font-medium text-ink-50">{p.name}</p>
+                  <p className="mt-1 text-[12px] text-ink-500">
+                    {new Date(p.date || p.updatedAt).toLocaleDateString(language === 'cs' ? 'cs-CZ' : 'en-GB')} · {p.files.length} {t.dash_photos}
+                  </p>
                 </button>
+              ))}
             </div>
-
-            {/* Recent Activity (Wide) */}
-            <div className="md:col-span-2 glass-panel rounded-3xl p-6">
-                <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">{t.dash_recent_activity}</h3>
-                    <button className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold">{t.dash_show_all}</button>
-                </div>
-                
-                <div className="space-y-3">
-                    {recentHistory.length > 0 ? (
-                        recentHistory.slice(-4).reverse().map((entry, idx) => (
-                            <div key={idx} className="flex items-center justify-between p-4 bg-[#ffffff03] border border-[#ffffff05] rounded-xl hover:bg-[#ffffff08] transition-colors group">
-                                <div className="flex items-center gap-4">
-                                    <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center text-gray-400 group-hover:text-white transition-colors">
-                                        <FmHistoryIcon className="w-5 h-5" />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-bold text-white">{entry.actionName}</p>
-                                        <p className="text-xs text-gray-500">{entry.state.length} {t.dash_items_ago}</p>
-                                    </div>
-                                </div>
-                                <ChevronDoubleLeftIcon className="w-4 h-4 text-gray-600 rotate-180 group-hover:text-white transition-colors" />
-                            </div>
-                        ))
-                    ) : (
-                        <div className="flex flex-col items-center justify-center py-12 text-center">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-fm-magenta/10 via-fm-blue/10 to-fm-green/10 border border-white/[0.08] flex items-center justify-center mb-3">
-                                <Aperture className="w-7 h-7" />
-                            </div>
-                            <p className="text-sm text-gray-500">{t.dash_no_history}</p>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Stats / Credits (Wide Bottom) */}
-            <div className="fm-gradient-border md:col-span-3 glass-panel rounded-3xl p-8 flex items-center justify-between relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-r from-fm-magenta/15 via-fm-blue/15 to-fm-green/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-                
-                <div className="relative z-10">
-                    <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-1">{t.dash_available_credits}</p>
-                    <h3 className="text-4xl font-black text-white font-mono">{credits}</h3>
-                </div>
-
-                <div className="relative z-10 flex gap-4">
-                    <div className="text-right hidden sm:block">
-                        <p className="text-xs text-gray-400">{t.dash_plan_renewed}</p>
-                        <p className="text-sm font-bold text-white">{t.dash_renewal_date}</p>
-                    </div>
-                    <button onClick={onBuyCredits} className="px-6 py-3 bg-white text-black font-bold rounded-xl text-xs hover:scale-105 transition-transform shadow-lg">
-                        {t.dash_topup}
-                    </button>
-                </div>
-            </div>
-
-        </div>
+          )}
+        </section>
       </div>
     </div>
   );
