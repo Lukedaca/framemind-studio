@@ -7,6 +7,7 @@
 import * as ort from 'onnxruntime-web';
 import { INPAINT_MODELS, type InpaintModelId } from '../utils/inpaintModels';
 import { MODEL_SIZE } from '../utils/inpaintMath';
+import { fetchCachedModel } from './modelFetch';
 
 type Request =
   | { type: 'config'; id: number; numThreads: number }
@@ -51,53 +52,11 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, code: string) =>
 const post = (message: unknown, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer);
 
-const fetchModel = async (model: InpaintModelId, id: number): Promise<Uint8Array> => {
-  const { url, bytes: expected } = INPAINT_MODELS[model];
-  let cache: Cache | null = null;
-  try {
-    cache = await caches.open(CACHE_NAME);
-    const hit = await cache.match(url);
-    if (hit) {
-      post({ type: 'progress', id, loaded: expected, total: expected, cached: true });
-      return new Uint8Array(await hit.arrayBuffer());
-    }
-  } catch {
-    // Cache Storage nemusí být dostupná (soukromé okno) — stáhne se pokaždé.
-    cache = null;
-  }
-
-  const response = await fetch(url);
-  if (!response.ok || !response.body) {
-    throw new Error(`MODEL_DOWNLOAD_FAILED: HTTP ${response.status}`);
-  }
-  const total = Number(response.headers.get('content-length')) || expected;
-  const buffer = new Uint8Array(total);
-  const reader = response.body.getReader();
-  let loaded = 0;
-  let lastReport = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (loaded + value.length > buffer.length) {
-      throw new Error('MODEL_DOWNLOAD_FAILED: unexpected size');
-    }
-    buffer.set(value, loaded);
-    loaded += value.length;
-    if (loaded - lastReport > total / 100) {
-      lastReport = loaded;
-      post({ type: 'progress', id, loaded, total, cached: false });
-    }
-  }
-  if (loaded !== total) throw new Error('MODEL_DOWNLOAD_FAILED: incomplete');
-
-  if (cache) {
-    try {
-      await cache.put(url, new Response(buffer, { headers: { 'content-type': 'application/octet-stream' } }));
-    } catch {
-      // Plná kvóta — model poběží, jen se příště stáhne znovu.
-    }
-  }
-  return buffer;
+const fetchModel = (model: InpaintModelId, id: number): Promise<Uint8Array> => {
+  const { url, bytes } = INPAINT_MODELS[model];
+  return fetchCachedModel(CACHE_NAME, url, bytes, (loaded, total, cached) =>
+    post({ type: 'progress', id, loaded, total, cached }),
+  );
 };
 
 const N = MODEL_SIZE * MODEL_SIZE;
