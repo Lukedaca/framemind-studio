@@ -6,8 +6,9 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 
 ## Instalace a aktualizace
 
-Distribuční soubor je `FrameMind-Studio_0.1.0_x64-setup.exe` v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases).
+Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
+`FrameMind-Studio_0.1.0_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
@@ -17,7 +18,8 @@ který použije, pokud runtime není nainstalovaný. Připojení není potřeba 
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.0 není podepsaný certifikátem vydavatele a vydání je předběžné.
+Instalátor 0.1.0 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
 samostatná; pokud je potřebujete, ponechte ji vypnutou.
@@ -49,8 +51,40 @@ protože Windows nedovolí přepsat její běžící EXE.
 
 `package-lock.json` a `src-tauri/Cargo.lock` patří do Gitu. `target/`, `gen/`
 a buildové výstupy jsou ignorované. Windows GitHub Actions sestavuje instalátor
-jako artefakt; publikování vydání je samostatný krok. Aplikace se nikam nenasazuje.
+jako artefakt `UNSIGNED-DEVELOPMENT-ONLY`, přidává označení do archivu a ověřuje,
+že kontrola klientského vydání tento instalátor odmítne. Publikování vydání je
+samostatný krok. Aplikace se nikam nenasazuje.
 Balíčky pro jiné platformy nejsou součástí ověřeného vydání.
+
+## Podpis a příprava klientského vydání
+
+`npm run desktop:build` vytváří vývojový balíček. Pro přípravu podepsaného vydání
+slouží `npm run desktop:release`. Vyžaduje existující certifikát pro podepisování
+kódu a jeho soukromý klíč v `Cert:\CurrentUser\My`; thumbprint se předá proměnnou
+`FRAMEMIND_SIGNING_CERTIFICATE_THUMBPRINT`. Soukromý klíč zůstává v úložišti nebo
+tokenu poskytovatele. Skript nevytváří účet, certifikát ani změnu systémové důvěry.
+
+Postup nejprve zkontroluje platnost, účel, důvěryhodný řetězec a revokaci
+certifikátu. Tauri pak podepisuje své Windows výstupy pomocí SHA-256 a časového
+razítka RFC 3161. Aplikace i výsledný instalátor musí projít
+`scripts/verify-windows-release.ps1`: platný vložený Authenticode podpis,
+očekávaný certifikát vydavatele, časové razítko a `signtool verify /pa /all /tw`.
+Teprve po úspěchu vznikne nová složka pod `src-tauri/target/client-release/`
+s kopiemi instalátoru a SHA-256 součtem vypočítaným po podpisu. Skript nic nepublikuje.
+
+Podepsání zde dosud nebylo provedeno: žádný použitelný certifikát není nakonfigurovaný.
+Bylo ověřeno odmítnutí existujícího nepodepsaného balíčku i odmítnutí sestavení
+klientského vydání bez certifikátu. Kontrola podpisu není důkaz absence škodlivého
+kódu ani bezchybnosti aplikace. Před vydáním klientům je ještě nutný test staženého
+instalátoru, nainstalovaných EXE a odinstalace na čistých Windows se zapnutou ochranou.
+
+SmartScreen používá reputaci souboru i vydavatele. Nová podepsaná aplikace může
+stále zobrazit varování; vlastnoručně vytvořený certifikát jej neřeší. Přechod
+z EXE na MSI/MSIX sám neposkytuje důvěryhodný podpis. Microsoft Store vyžaduje
+registraci a ověření vydavatele, proto jej tento projekt automaticky nenastavuje.
+Viz [Microsoft SmartScreen](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation),
+[Tauri signing](https://v2.tauri.app/distribute/sign/windows/) a
+[Microsoft SignTool](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool).
 
 ## Soubory a místní data
 

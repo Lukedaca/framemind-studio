@@ -19,15 +19,17 @@ The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
 interface runs in a dedicated application window. The installed application
 does not require Vite, a terminal or an external browser.
 
-1. Download the Windows x64 `FrameMind-Studio_0.1.0_x64-setup.exe` from
-   [GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases).
-2. Run the installer and select Czech or English. Installation is per user.
-3. Keep the desktop shortcut option on the final page.
-4. Start Studio from the desktop or Start menu. Uninstall it through Windows application settings.
+**A client release is not available yet.** The 0.1.0 package on
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases) is an unsigned
+development preview. Do not distribute it to clients. Windows may show SmartScreen
+or block installation; disabling protection is not part of the installation instructions.
 
 Users do not need Git, Node.js or Rust. The installer includes an offline WebView2
 installer for computers without the runtime, making it about 213 MiB.
-Version 0.1.0 is a prerelease; its installer has no publisher certificate signature.
+Installation is per user, with shortcuts and standard uninstallation.
+Preparing a client release requires a trusted publisher signature. Signing verifies
+file origin and integrity; it does not guarantee immediate SmartScreen reputation.
+[Microsoft's explanation](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
 macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
@@ -55,7 +57,8 @@ npm run preview
 
 The build is written to `dist/`; preview serves it locally, usually on port 4173.
 GitHub Actions checks types, tests and both frontend builds. A separate Windows
-workflow builds an installer as a downloadable artifact. Neither deploys the application.
+workflow builds an artifact labeled `UNSIGNED-DEVELOPMENT-ONLY` and checks that
+client release verification rejects it. Neither deploys the application.
 Automatic Vercel deployments on Git changes are disabled in `vercel.json`.
 
 Culling requires Web Workers, `createImageBitmap` inside a worker and

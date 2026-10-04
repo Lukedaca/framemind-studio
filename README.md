@@ -19,15 +19,17 @@ Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v
 je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
 Vite, terminál ani externí prohlížeč.
 
-1. V [GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases) stáhněte
-   Windows x64 soubor `FrameMind-Studio_0.1.0_x64-setup.exe`.
-2. Spusťte instalátor a vyberte češtinu nebo angličtinu. Instalace je pro současného uživatele.
-3. Na závěrečné stránce ponechte volbu vytvoření zástupce na ploše.
-4. Studio spusťte z plochy nebo nabídky Start. Odinstalace je dostupná v nastavení aplikací Windows.
+**Klientské vydání zatím není dostupné.** Balíček 0.1.0 v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases) je nepodepsaný
+vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může zobrazit
+SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
 Uživatel nepotřebuje Git, Node.js ani Rust. Instalátor obsahuje offline instalační
 program WebView2 pro počítače, kde runtime chybí; proto má přibližně 213 MiB.
-Verze 0.1.0 je předběžná a instalátor zatím není podepsaný certifikátem vydavatele.
+Instalace je pro současného uživatele; aplikace má zástupce a standardní odinstalaci.
+Pro přípravu klientského vydání je nutný důvěryhodný podpis vydavatele.
+Podpis ověřuje původ a integritu souboru; sám negarantuje okamžité odstranění
+varování SmartScreen. [Oficiální vysvětlení Microsoftu](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
 Vydání pro macOS a Linux nebyla sestavena ani ověřena.
 
 Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md).
@@ -55,7 +57,8 @@ npm run preview
 
 Build vzniká v `dist/`; `preview` jej otevře na lokálním serveru, obvykle na portu 4173.
 GitHub Actions provádí kontrolu typů, testy a oba frontendové buildy.
-Samostatný Windows workflow sestavuje instalátor jako stažitelný artefakt. Nic nenasazuje.
+Samostatný Windows workflow sestavuje artefakt označený `UNSIGNED-DEVELOPMENT-ONLY`.
+Ověřuje také odmítnutí nepodepsaného instalátoru kontrolou klientského vydání. Nic nenasazuje.
 Automatické Vercel deploye při změnách v Gitu jsou vypnuté v `vercel.json`.
 
 Pro culling musí prohlížeč podporovat Web Workers, `createImageBitmap` ve workeru

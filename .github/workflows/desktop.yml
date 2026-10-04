@@ -1,4 +1,4 @@
-name: Windows desktop build
+name: Windows desktop development build
 
 on:
   workflow_dispatch:
@@ -13,6 +13,7 @@ on:
       - 'public/**'
       - 'package*.json'
       - 'vite.config.ts'
+      - 'scripts/*windows*.ps1'
       - '.github/workflows/desktop.yml'
   pull_request:
     branches: [main]
@@ -25,6 +26,7 @@ on:
       - 'public/**'
       - 'package*.json'
       - 'vite.config.ts'
+      - 'scripts/*windows*.ps1'
       - '.github/workflows/desktop.yml'
 
 permissions:
@@ -43,10 +45,24 @@ jobs:
         run: rustup default stable
       - name: Install frontend dependencies
         run: npm ci
-      - name: Build Windows installer (no deployment)
+      - name: Build unsigned development installer (no deployment)
         run: npm run desktop:build
+      - name: Verify unsigned installer cannot pass client release verification
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe).FullName
+          $result = & powershell.exe -NoProfile -File scripts/verify-windows-release.ps1 -Paths $installer -CertificateThumbprint ('0' * 40) 2>&1
+          if ($LASTEXITCODE -ne 1 -or "$result" -notmatch 'signature is NotSigned') {
+            throw "Unsigned release gate did not reject the installer correctly: $result"
+          }
+      - name: Label development download
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path development-artifact | Out-Null
+          Copy-Item src-tauri/target/release/bundle/nsis/*-setup.exe development-artifact/
+          'DEVELOPMENT ONLY. Unsigned installer; not approved for client distribution. Do not disable Windows security or install custom trust certificates.' | Set-Content development-artifact/DEVELOPMENT-ONLY.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: FrameMind-Studio-Windows-x64
-          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          name: FrameMind-Studio-UNSIGNED-DEVELOPMENT-ONLY-x64
+          path: development-artifact/
           if-no-files-found: error
