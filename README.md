@@ -19,8 +19,8 @@ Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v
 je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
 Vite, terminál ani externí prohlížeč.
 
-**Klientské vydání zatím není dostupné.** Balíček 0.1.0 v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases) je nepodepsaný
+**Klientské vydání zatím není dostupné.** Balíček 0.1.1 v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.1) je nepodepsaný
 vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může zobrazit
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 

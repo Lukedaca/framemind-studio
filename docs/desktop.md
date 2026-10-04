@@ -1,4 +1,4 @@
-# FrameMind Studio desktop — Windows 0.1.0
+# FrameMind Studio desktop — Windows 0.1.1
 
 Desktopová aplikace používá Tauri 2. Rust vytvoří okno a propojí systémové dialogy
 a ukládání souborů. Současné rozhraní React/Vite běží v Microsoft WebView2.
@@ -7,8 +7,8 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 ## Instalace a aktualizace
 
 Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
-`FrameMind-Studio_0.1.0_x64-setup.exe` je v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases); není určen klientům.
+`FrameMind-Studio_0.1.1_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.1); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
@@ -18,7 +18,7 @@ který použije, pokud runtime není nainstalovaný. Připojení není potřeba 
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.0 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+Instalátor 0.1.1 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
 SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
@@ -42,7 +42,7 @@ Výstupy:
 
 - `dist-desktop/`: zabalený frontend bez PWA a service workeru.
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
-- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.0_x64-setup.exe`: instalátor.
+- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.1_x64-setup.exe`: instalátor.
 
 Pro vývoj okna aplikace použijte `npm run desktop:dev`. Tauri spustí Vite na
 `127.0.0.1:3000`; tento port musí být volný. Instalovaný release žádný Vite server

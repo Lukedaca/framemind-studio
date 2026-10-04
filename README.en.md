@@ -19,8 +19,8 @@ The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
 interface runs in a dedicated application window. The installed application
 does not require Vite, a terminal or an external browser.
 
-**A client release is not available yet.** The 0.1.0 package on
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases) is an unsigned
+**A client release is not available yet.** The 0.1.1 package on
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.1) is an unsigned
 development preview. Do not distribute it to clients. Windows may show SmartScreen
 or block installation; disabling protection is not part of the installation instructions.
 
