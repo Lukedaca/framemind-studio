@@ -52,9 +52,13 @@ jobs:
         run: |
           $installer = (Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe).FullName
           $result = & powershell.exe -NoProfile -File scripts/verify-windows-release.ps1 -Paths $installer -CertificateThumbprint ('0' * 40) 2>&1
-          if ($LASTEXITCODE -ne 1 -or "$result" -notmatch 'signature is NotSigned') {
+          $verificationExitCode = $LASTEXITCODE
+          if ($verificationExitCode -ne 1 -or "$result" -notmatch 'signature is NotSigned') {
             throw "Unsigned release gate did not reject the installer correctly: $result"
           }
+          Write-Output 'Unsigned installer was correctly rejected by client release verification.'
+          # GitHub's PowerShell wrapper propagates LASTEXITCODE; rejection above is expected.
+          exit 0
       - name: Label development download
         shell: pwsh
         run: |
