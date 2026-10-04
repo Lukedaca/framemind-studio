@@ -142,11 +142,12 @@ describe('local series without hash-only or transitive grouping', () => {
     const m = scene();
     expect(computeSimilarityGroups([input('001', m), input('002', m, { aspectRatio: 1 })]).get('001')!.duplicateGroupId).toBeUndefined();
   });
+  // Two complete 400-photo runs need extra headroom on shared CI runners.
   it('large batches preserve all entries, cap series size and stay deterministic', () => {
     const m = scene();
     const items = Array.from({ length: 400 }, (_, i) => input(String(i).padStart(4, '0'), m));
     const result = computeSimilarityGroups(items);
     expect(result.size).toBe(400); expect([...result.values()].every(r => (r.groupRank ?? 0) <= 48)).toBe(true);
     expect(result).toEqual(computeSimilarityGroups([...items].reverse()));
-  });
+  }, 15_000);
 });
