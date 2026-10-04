@@ -127,12 +127,12 @@ const Sidebar = ({ isOpen, onClose, onNavigate, onOpenApiKeyModal, currentView, 
               <button className={language === 'cs' ? 'is-active' : ''} onClick={() => setLanguage('cs')}>CZ</button>
               <button className={language === 'en' ? 'is-active' : ''} onClick={() => setLanguage('en')}>EN</button>
             </div>
-            <button onClick={onOpenApiKeyModal} className="fm-icon-btn border border-hairline" title={t.nav_gemini_key}>
+            {currentView !== 'culling' && <button onClick={onOpenApiKeyModal} className="fm-icon-btn border border-hairline" title={t.nav_gemini_key}>
               <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
                 <circle cx="7" cy="12.5" r="3.5" />
                 <path d="m9.5 10 7-7M14 5.5l2 2M12 7.5l1.5 1.5" strokeLinecap="round" />
               </svg>
-            </button>
+            </button>}
           </div>
           <p className="flex items-center gap-2 px-1 text-[11px] leading-snug text-ink-500">
             <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-fm-green" />

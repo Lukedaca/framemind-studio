@@ -1,5 +1,5 @@
 {
   "name": "FrameMind Studio",
-  "description": "AI fotostudio pro fotografy — žánrový culling, úpravy, retuš, rychlé JPEG náhledy z RAW a klientské galerie. Propojujeme snímky s inteligencí.",
+  "description": "Lokální fotostudio v prohlížeči — culling bez AI, úpravy, lokální retuš, vložené JPEG náhledy z RAW a export. Open-source pod licencí MIT.",
   "requestFramePermissions": []
 }

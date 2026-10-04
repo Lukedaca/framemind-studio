@@ -1,272 +1,120 @@
-// Čisté pixelové heuristiky pro AI culling — žádný DOM, žádné globály.
-// Importuje je culling worker (běžná cesta mimo main thread) i synchronní
-// fallback v cullingEngine. Jediný zdroj pravdy, aby se skóre nikdy nerozešla.
-// Prahy jsou kalibrované na dekód s delší stranou ~420 px — neměnit jedno bez druhého.
+// Pure measurements on a bounded preview. No content/face/subject inference.
+import type { CullingMetrics, CullingTechnicalMetrics } from '../types';
+import { createSignature } from './cullingSimilarity';
 
-import type { CullingMetrics } from '../types';
+export const PREVIEW_MAX_SIDE = 768;
+export const clamp01 = (value: number): number => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+
+function percentile(histogram: Uint32Array, count: number, fraction: number): number {
+  let sum = 0;
+  for (let i = 0; i < histogram.length; i += 1) {
+    sum += histogram[i];
+    if (sum >= Math.max(1, Math.ceil(count * fraction))) return i;
+  }
+  return 255;
+}
+
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  values.sort((a, b) => a - b);
+  const middle = Math.floor(values.length / 2);
+  return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+}
 
 export function readMetrics(data: Uint8ClampedArray, width: number, height: number): CullingMetrics {
-  const total = width * height;
-  const gray = new Float32Array(total);
-  const saturation = new Float32Array(total);
-  let sum = 0;
-  let sumSq = 0;
-  let highlights = 0;
-  let shadows = 0;
-
-  for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
-    const red = data[i];
-    const green = data[i + 1];
-    const blue = data[i + 2];
-    const luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-    const high = Math.max(red, green, blue);
-    const low = Math.min(red, green, blue);
-    const sat = high === 0 ? 0 : (high - low) / high;
-
-    gray[p] = luma;
-    saturation[p] = sat;
-    sum += luma;
-    sumSq += luma * luma;
-    if (luma > 246) highlights += 1;
-    if (luma < 10) shadows += 1;
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
+      width > PREVIEW_MAX_SIDE || height > PREVIEW_MAX_SIDE || data.length !== width * height * 4) {
+    throw new Error('Invalid or unbounded culling preview');
   }
-
-  const meanLuma = sum / total;
-  const variance = Math.max(0, sumSq / total - meanLuma * meanLuma);
-  const standardDeviation = Math.sqrt(variance);
-  const highlightClipping = highlights / total;
-  const shadowClipping = shadows / total;
-  const laplacianVariance = computeLaplacianVariance(gray, width, height);
-  const noiseEstimate = computeNoiseEstimate(gray, width, height);
-  const composition = computeComposition(gray, saturation, width, height);
-  const hash = averageHash(gray, width, height);
-
-  const clippingPenalty = highlightClipping * 1.4 + shadowClipping * 1.2;
-  const sharpnessScore = clamp01((Math.log10(laplacianVariance + 1) - 1.25) / 1.6);
-  const exposureScore = clamp01(1 - Math.abs(meanLuma - 128) / 165 - clippingPenalty);
-  const contrastScore = clamp01((standardDeviation - 16) / 64);
-  const noiseScore = clamp01(1 - noiseEstimate / 46);
-
-  return {
-    hash,
-    meanLuma,
-    sharpnessScore,
-    exposureScore,
-    highlightClipping,
-    shadowClipping,
-    contrastScore,
-    noiseScore,
-    compositionScore: composition.score,
-    nativeSharpness: 0, // doplní analyzePhotoPixels z plného rozlišení
-  };
-}
-
-/**
- * Laplacian variance jednoho výřezu měřeného na nativním rozlišení.
- *
- * Proč zvlášť od readMetrics: náhled 420 px zmenšuje fotku ze 6000 px zhruba
- * 14×, takže pohybová neostrost 20 px z něj vyjde jako 1,4 px a bikubický
- * downscale ji ještě vyhladí. Na zmenšenině proto rozmazaná fotka vypadá
- * skoro stejně jako ostrá. Tohle měří pixely tak, jak je zaznamenal snímač.
- */
-export function laplacianVarianceOfPatch(
-  data: Uint8ClampedArray,
-  width: number,
-  height: number
-): number {
-  const total = width * height;
-  if (total === 0) return 0;
-
-  const gray = new Float32Array(total);
-  for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
-    gray[p] = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
-  }
-
-  return computeLaplacianVariance(gray, width, height);
-}
-
-function computeLaplacianVariance(gray: Float32Array, width: number, height: number): number {
-  const values: number[] = [];
-  let sum = 0;
-  let sumSq = 0;
-
-  for (let y = 1; y < height - 1; y += 1) {
-    for (let x = 1; x < width - 1; x += 1) {
-      const index = y * width + x;
-      const value =
-        -4 * gray[index] +
-        gray[index - 1] +
-        gray[index + 1] +
-        gray[index - width] +
-        gray[index + width];
-      values.push(value);
-      sum += value;
+  const count = width * height;
+  const gray = new Float32Array(count);
+  const histogram = new Uint32Array(256);
+  const channelHighlights = [0, 0, 0], channelShadows = [0, 0, 0];
+  let sum = 0, sumSquared = 0, highlights = 0, shadows = 0;
+  for (let p = 0; p < count; p += 1) {
+    const alpha = data[p * 4 + 3] / 255;
+    const rgb = [0, 1, 2].map(c => data[p * 4 + c] * alpha + 128 * (1 - alpha));
+    const luma = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    gray[p] = luma; histogram[Math.round(luma)] += 1;
+    sum += luma; sumSquared += luma * luma;
+    if (luma >= 250) highlights += 1;
+    if (luma <= 5) shadows += 1;
+    for (let c = 0; c < 3; c += 1) {
+      if (rgb[c] >= 250) channelHighlights[c] += 1;
+      if (rgb[c] <= 5) channelShadows[c] += 1;
     }
   }
-
-  const mean = sum / Math.max(values.length, 1);
-  for (const value of values) {
-    const diff = value - mean;
-    sumSq += diff * diff;
+  const meanLuma = sum / count;
+  const standardDeviation = Math.sqrt(Math.max(0, sumSquared / count - meanLuma * meanLuma));
+  let entropy = 0;
+  for (const frequency of histogram) {
+    if (frequency) { const probability = frequency / count; entropy -= probability * Math.log2(probability); }
   }
 
-  return sumSq / Math.max(values.length, 1);
-}
-
-function computeNoiseEstimate(gray: Float32Array, width: number, height: number): number {
-  let total = 0;
-  let count = 0;
-
+  // Noise is estimated only in locally smooth samples, away from clipping.
+  const residuals: number[] = [];
+  let samples = 0;
   for (let y = 1; y < height - 1; y += 2) {
     for (let x = 1; x < width - 1; x += 2) {
-      const index = y * width + x;
-      const localMean =
-        (gray[index - 1] + gray[index + 1] + gray[index - width] + gray[index + width]) / 4;
-      total += Math.abs(gray[index] - localMean);
-      count += 1;
+      samples += 1;
+      const p = y * width + x;
+      const neighbours = [gray[p - 1], gray[p + 1], gray[p - width], gray[p + width]];
+      if (Math.max(...neighbours) - Math.min(...neighbours) > 32 || gray[p] < 10 || gray[p] > 245) continue;
+      residuals.push(Math.abs(gray[p] - neighbours.reduce((s, v) => s + v, 0) / 4));
     }
   }
-
-  return total / Math.max(count, 1);
-}
-
-function computeComposition(
-  gray: Float32Array,
-  saturation: Float32Array,
-  width: number,
-  height: number
-): { score: number } {
-  let weightSum = 0;
-  let xSum = 0;
-  let ySum = 0;
-  let borderWeight = 0;
-  let leftWeight = 0;
-  let rightWeight = 0;
-  let topWeight = 0;
-  let bottomWeight = 0;
-
+  const noiseConfidence = clamp01(residuals.length / Math.max(1, samples) / 0.4);
+  const noiseEstimate = median(residuals) / (0.6745 * Math.sqrt(1.25));
+  const filtered = gray.slice();
   for (let y = 1; y < height - 1; y += 1) {
     for (let x = 1; x < width - 1; x += 1) {
-      const index = y * width + x;
-      const gx =
-        -gray[index - width - 1] -
-        2 * gray[index - 1] -
-        gray[index + width - 1] +
-        gray[index - width + 1] +
-        2 * gray[index + 1] +
-        gray[index + width + 1];
-      const gy =
-        -gray[index - width - 1] -
-        2 * gray[index - width] -
-        gray[index - width + 1] +
-        gray[index + width - 1] +
-        2 * gray[index + width] +
-        gray[index + width + 1];
-      const edge = Math.sqrt(gx * gx + gy * gy);
-      const subject = edge * (0.76 + saturation[index] * 0.4);
-      if (subject < 12) continue;
-
-      weightSum += subject;
-      xSum += x * subject;
-      ySum += y * subject;
-      if (x < width * 0.1 || x > width * 0.9 || y < height * 0.1 || y > height * 0.9) {
-        borderWeight += subject;
-      }
-      if (x < width / 2) leftWeight += subject;
-      else rightWeight += subject;
-      if (y < height / 2) topWeight += subject;
-      else bottomWeight += subject;
+      const p = y * width + x;
+      filtered[p] = (gray[p] * 4 + (gray[p - 1] + gray[p + 1] + gray[p - width] + gray[p + width]) * 2 +
+        gray[p - width - 1] + gray[p - width + 1] + gray[p + width - 1] + gray[p + width + 1]) / 16;
     }
   }
-
-  if (weightSum <= 0) return { score: 0.34 };
-
-  const cx = xSum / weightSum;
-  const cy = ySum / weightSum;
-  const thirds: [number, number][] = [
-    [width / 3, height / 3],
-    [(width * 2) / 3, height / 3],
-    [width / 3, (height * 2) / 3],
-    [(width * 2) / 3, (height * 2) / 3],
-  ];
-  const nearestThird = Math.min(...thirds.map(([tx, ty]) => Math.hypot(cx - tx, cy - ty)));
-  const diagonal = Math.hypot(width, height);
-  const thirdScore = clamp01(1 - nearestThird / (diagonal * 0.24));
-  const centerOffset = Math.hypot(cx - width / 2, cy - height / 2) / diagonal;
-  const centerScore = clamp01(1 - centerOffset / 0.42);
-  const subjectStrength = clamp01(weightSum / (width * height * 34));
-  const balance =
-    1 -
-    clamp01(
-      (Math.abs(leftWeight - rightWeight) + Math.abs(topWeight - bottomWeight)) /
-        Math.max(weightSum * 1.8, 1)
-    );
-  const borderPenalty = clamp01(borderWeight / weightSum) * 0.26;
-
-  return {
-    score: clamp01(
-      thirdScore * 0.4 +
-        centerScore * 0.18 +
-        subjectStrength * 0.24 +
-        balance * 0.18 -
-        borderPenalty
-    ),
+  let lapSum = 0, lapSquared = 0, xx = 0, yy = 0, xy = 0, edgeCount = 0, measured = 0;
+  for (let y = 2; y < height - 2; y += 1) {
+    for (let x = 2; x < width - 2; x += 1) {
+      const p = y * width + x;
+      const lap = -4 * filtered[p] + filtered[p - 1] + filtered[p + 1] + filtered[p - width] + filtered[p + width];
+      const gx = -filtered[p - width - 1] - 2 * filtered[p - 1] - filtered[p + width - 1] +
+        filtered[p - width + 1] + 2 * filtered[p + 1] + filtered[p + width + 1];
+      const gy = -filtered[p - width - 1] - 2 * filtered[p - width] - filtered[p - width + 1] +
+        filtered[p + width - 1] + 2 * filtered[p + width] + filtered[p + width + 1];
+      lapSum += lap; lapSquared += lap * lap;
+      xx += gx * gx; yy += gy * gy; xy += gx * gy;
+      if (gx * gx + gy * gy > Math.max(24 * 24, noiseEstimate * noiseEstimate * 16)) edgeCount += 1;
+      measured += 1;
+    }
+  }
+  const divisor = Math.max(1, measured);
+  // Filtered Laplacian kernel noise gain for independent pixel noise.
+  const laplacianVariance = Math.max(0, lapSquared / divisor - (lapSum / divisor) ** 2 - noiseEstimate ** 2 * 0.40625 * noiseConfidence);
+  const tenengrad = Math.max(0, (xx + yy) / divisor - noiseEstimate ** 2 * 5.46875 * noiseConfidence);
+  const edgeDensity = edgeCount / divisor;
+  const gradientAnisotropy = clamp01(Math.hypot(xx - yy, 2 * xy) / Math.max(1e-9, xx + yy));
+  const motionConfidence = clamp01(edgeDensity / 0.15) * clamp01(standardDeviation / 30);
+  // A directional scene can give the same cue: this never proves motion blur.
+  const motionBlurEstimate = gradientAnisotropy * (1 - clamp01(laplacianVariance / 120));
+  const detailConfidence = clamp01(edgeDensity / 0.08) * clamp01(standardDeviation / 24);
+  const p5 = percentile(histogram, count, 0.05), p95 = percentile(histogram, count, 0.95);
+  const technical: CullingTechnicalMetrics = {
+    width, height, medianLuma: percentile(histogram, count, 0.5), p1: percentile(histogram, count, 0.01),
+    p5, p95, p99: percentile(histogram, count, 0.99), standardDeviation, entropy, dynamicRange: p95 - p5,
+    redClip: channelHighlights[0] / count, greenClip: channelHighlights[1] / count, blueClip: channelHighlights[2] / count,
+    redShadowClip: channelShadows[0] / count, greenShadowClip: channelShadows[1] / count, blueShadowClip: channelShadows[2] / count,
+    laplacianVariance, tenengrad, edgeDensity, detailConfidence, noiseEstimate, noiseConfidence,
+    gradientAnisotropy, motionBlurEstimate, motionConfidence,
   };
-}
-
-// 16×16 average hash pro detekci duplicit/sérií — porovnává se přes XOR+popcount.
-function averageHash(gray: Float32Array, width: number, height: number): string {
-  const size = 16;
-  const cells: number[] = [];
-  let sum = 0;
-
-  for (let gy = 0; gy < size; gy += 1) {
-    for (let gx = 0; gx < size; gx += 1) {
-      const startX = Math.floor((gx / size) * width);
-      const endX = Math.max(startX + 1, Math.floor(((gx + 1) / size) * width));
-      const startY = Math.floor((gy / size) * height);
-      const endY = Math.max(startY + 1, Math.floor(((gy + 1) / size) * height));
-      let local = 0;
-      let count = 0;
-
-      for (let y = startY; y < endY; y += 1) {
-        for (let x = startX; x < endX; x += 1) {
-          local += gray[y * width + x];
-          count += 1;
-        }
-      }
-
-      const value = local / Math.max(count, 1);
-      cells.push(value);
-      sum += value;
-    }
-  }
-
-  const mean = sum / cells.length;
-  return cells.map((value) => (value >= mean ? '1' : '0')).join('');
-}
-
-export function hashToWords(hash: string): Uint32Array {
-  const words = new Uint32Array(8);
-  const len = Math.min(hash.length, 256);
-  for (let i = 0; i < len; i += 1) {
-    if (hash[i] === '1') words[i >> 5] |= 1 << (i & 31);
-  }
-  return words;
-}
-
-export function hammingWords(a: Uint32Array, b: Uint32Array): number {
-  let distance = 0;
-  for (let i = 0; i < 8; i += 1) {
-    let x = a[i] ^ b[i];
-    x = x - ((x >> 1) & 0x55555555);
-    x = (x & 0x33333333) + ((x >> 2) & 0x33333333);
-    x = (x + (x >> 4)) & 0x0f0f0f0f;
-    distance += (x * 0x01010101) >> 24;
-  }
-  return distance;
-}
-
-export function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+  const signature = createSignature(gray, data, width, height, histogram, standardDeviation);
+  return {
+    hash: signature.averageHash, meanLuma,
+    sharpnessScore: clamp01((Math.log10(laplacianVariance + 1) / 3 + Math.log10(tenengrad + 1) / 4) / 2),
+    // No preference for middle grey exposure: only measurable clipping.
+    exposureScore: clamp01(1 - (highlights + shadows) / count * 0.7),
+    highlightClipping: highlights / count, shadowClipping: shadows / count,
+    contrastScore: clamp01((p95 - p5) / 100), noiseScore: clamp01(1 - noiseEstimate / 32),
+    compositionScore: 0, nativeSharpness: 0, technical, signature,
+  };
 }

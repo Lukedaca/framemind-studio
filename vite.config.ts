@@ -25,13 +25,14 @@ export default defineConfig(({ mode }) => {
       // Cross-origin izolace odemyká SharedArrayBuffer → vícevláknový WASM pro
       // lokální retuš (LaMa na jednom vlákně běží několikrát déle). "credentialless"
       // pouští cizí zdroje bez CORP hlaviček (Google Fonts, MediaPipe, Hugging Face).
-      // Na produkci totéž nastavuje vercel.json.
+      // Studio provozujeme lokálně; hlavičky posílají dev i preview server.
       server: {
         port: 3000,
-        host: '0.0.0.0',
+        host: '127.0.0.1',
         headers: ISOLATION_HEADERS,
       },
       preview: {
+        host: '127.0.0.1',
         headers: ISOLATION_HEADERS,
       },
       plugins: [

@@ -1,150 +1,150 @@
 <div align="center">
-  <img src="public/brand/readme-logo-cs.png" alt="FrameMind — Tvorba poháněná inteligencí" width="440" />
-
+  <img src="public/brand/readme-logo-cs.png" alt="FrameMind" width="440" />
   <h1>FrameMind Studio</h1>
-
-  <p><strong>Vyberte. Upravte. Vyretušujte.</strong></p>
-
-  <p>Fotostudio v prohlížeči pro celou cestu od karty k hotovým fotkám —<br />import, výběr, úpravy, retuš štětcem a export v jednom okně.<br />Retuš i úpravy počítá váš počítač, ne cloud.</p>
-
-  <p>
-    <a href="README.md"><img src="https://img.shields.io/badge/README-%C4%8Cesky-2f6fe0?style=for-the-badge" alt="Čeština" /></a>
-    <a href="README.en.md"><img src="https://img.shields.io/badge/README-English-555?style=for-the-badge" alt="English" /></a>
-  </p>
-
-  <p>
-    <img src="https://img.shields.io/badge/React-19-2f6fe0" alt="React 19" />
-    <img src="https://img.shields.io/badge/TypeScript-5.8-2f6fe0" alt="TypeScript" />
-    <img src="https://img.shields.io/badge/Vite-6-b01ecb" alt="Vite 6" />
-    <img src="https://img.shields.io/badge/ONNX_Runtime_Web-lok%C3%A1ln%C3%AD_AI-1fc06b" alt="ONNX Runtime Web" />
-    <img src="https://img.shields.io/badge/PWA-ready-1fc06b" alt="PWA" />
-  </p>
+  <p>Import, výběr, úpravy, retuš a export fotografií v prohlížeči.</p>
+  <p><a href="README.md">Česky</a> · <a href="README.en.md">English</a> · <a href="LICENSE">MIT</a></p>
 </div>
 
----
+FrameMind Studio je open-source aplikace pro lokální provoz na vlastním počítači.
+GitHub slouží pro zdrojový kód, zálohu a příspěvky; aplikaci nikam nenasazujeme.
+Autorem a správcem je [Lukáš Drštička (Lukedaca)](https://github.com/Lukedaca).
 
-## Postup
+**Culling je kompletně bez AI:** nemá Gemini, API klíč, detekční modely ani síťová volání.
+Celé Studio zatím není plně offline: editor stále obsahuje dvě cloudové funkce
+a modely retuše i písma se stahují. Přesný stav je v části [Připojení a data](#připojení-a-data).
 
-| | Krok | Co dělá | Kde běží |
-|---|---|---|---|
-| 01 | **Import** | JPEG, PNG, WebP; z RAW (CR2, CR3, NEF, ARW, DNG…) se bere vložený JPEG náhled | lokálně |
-| 02 | **Výběr** (AI culling) | ostrost, expozice, šum, kompozice, série a duplicity; klávesy K / R / X | lokálně · AI verdikty volitelně přes Gemini |
-| 03 | **Úpravy** | *Automaticky* z histogramu + posuvníky světla, barvy, detailu a ořez | lokálně |
-| 04 | **Retuš** | štětec nebo chytré laso: označíte, co na fotce nemá být, a místo se dopočítá z okolí | lokálně (ONNX modely v prohlížeči) |
-| 05 | **Export** | JPEG / PNG, kvalita, velikost, vodoznak, celá sada do složky | lokálně |
+## Spuštění lokálně
 
-Po importu víc fotek appka otevře rovnou výběr, u jedné fotky úpravy. K tomu lokální projekty a klienti s náhledem klientské galerie.
-
-## Retuš bez API
-
-Retuš počítají modely přímo v prohlížeči přes [ONNX Runtime Web](https://onnxruntime.ai/) ve web workerech. Fotka kvůli ní nikam neodchází a nestojí kredity ani API klíč. Každý model se stáhne při prvním použití z Hugging Face (URL připnutá na konkrétní commit) a uloží se do Cache Storage prohlížeče, takže další spuštění ho čte z disku a retuš jde i offline.
-
-### Kvalita
-
-| Volba | Co dělá |
-|---|---|
-| **Automaticky** (výchozí) | drobnosti (plocha do ~120 × 120 px) jdou přes rychlý model, větší plochy a lidé přes detailní |
-| **Rychlá** | vždy [MI-GAN](https://huggingface.co/andraniksargsyan/migan) · MIT · 28 MB — skvrny, prach, kabely, malý text |
-| **Detailní** | vždy [LaMa](https://huggingface.co/Carve/LaMa-ONNX) · Apache-2.0 · 208 MB — velké plochy, lidé, auta |
-
-Proč dva modely: MI-GAN je okamžitý, ale na větších dírách si vymýšlí. Na testovací fotce z utkání vyrobil místo odstraněné hlavy svítící fleky. LaMa na stejném místě plynule navázala rozmazaný dav v pozadí.
-
-### Štětec
-
-- **Velikost**, **tvrdost okraje** (0–100 %) a **síla** (10–100 %). Měkký štětec retuš k okraji plynule prolne s fotkou, nižší síla objekt jen zjemní (vráska, stín). Nastavení se pamatuje.
-- Po puštění tahu je výsledek vidět hned; soubor v plném rozlišení se ukládá na pozadí.
-
-### Chytré laso
-
-- Kliknete na objekt a [SAM 2.1](https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX) (Meta · Apache-2.0 · varianta tiny int8, 61 MB) vrátí jeho přesný obrys. Další klik přidá další objekt, **Alt+klik** ubere.
-- Z jednoho kliku jsou tři rozsahy — **Část / Objekt / Celek**. Klik na ruku tak umí vybrat ruku i celou postavu.
-- Výběr se jen ukáže; retuš proběhne až po **Odstranit výběr**.
-- Fotku model „přečte“ jednou (enkodér), každý další klik je pak otázka desítek milisekund. Změřeno v Node na i5-11400H na jednom vlákně: čtení fotky 3,8 s, klik 60–90 ms; v prohlížeči běží na víc vláknech.
-
-### Jak to drží plné rozlišení a kvalitu
-
-- Modely pracují na čtverci 512 × 512. Z fotky se proto vyřízne jen okolí masky — pro rychlý model 2×, pro detailní 4× delší strana masky, protože s víc kontextem LaMa doplňuje věrohodněji.
-- Zpátky do fotky se vloží **jen pixely pod maskou** s měkkým přechodem. Zbytek snímku zůstane v původním rozlišení; jediná ztráta je finální uložení JPEG (kvalita 0,96).
-- Maska se před výpočtem rozšíří o pár pixelů, jinak model „protáhne“ obrys objektu dovnitř díry.
-- Doplněné místo dostane **zrno** změřené v okolí retuše. Bez toho je hladší než zbytek fotky a retuš prozradí.
-- Rychlý model si při přípravě změří grafickou kartu (WebGPU) i procesor (WASM) a nechá rychlejší; detailní jde přes grafickou kartu, když ji prohlížeč nabízí.
-
-Ovládání: `[` / `]` velikost štětce · kolečko myši zoom · mezerník + tah posun · `0` celá fotka · `Ctrl+Z` zpět · držet **Porovnat** (nebo `\`) = originál.
-
-## Gemini jako volitelný doplněk
-
-Bez API klíče funguje všechno kromě tří věcí, které appka nabízí navíc:
-
-- **AI verdikty ve výběru** — Gemini posoudí fotky podle žánru (9 profilů: sport, portrét, svatba…), s krátkým zdůvodněním a volitelným briefem fotografa. Bez klíče výběr skončí lokálními verdikty.
-- **Laso podle popisu** — napíšete třeba „všechna tetování“, Gemini najde, kde na fotce jsou, a přesné obrysy z toho udělá lokální SAM. Do Gemini jde zmenšená fotka (delší strana 1 536 px).
-- **Úprava textem** — v panelu Retuš popíšete změnu slovy a fotka se pošle do Gemini.
-
-Ve všech třech případech fotka (u výběru zmenšený náhled) odchází do Google Gemini (servery v USA). U lasa podle popisu a úpravy textem to appka říká přímo u pole; ve výběru popis kroku uvádí, že AI verdikty jdou přes Gemini.
-
-Klíč se zadává tlačítkem s klíčem vlevo dole ([Google AI Studio](https://aistudio.google.com/app/apikey)). Výchozí je uložení jen na relaci (`sessionStorage`), trvalé uložení chce potvrzení. API klíč nikdy nepatří do repozitáře ani do buildu.
-
-## Jak začít
+Potřebujete Git, Node.js 22 a npm. Node 22 používá také CI.
 
 ```bash
-npm install
-npm run dev        # http://localhost:3000
-npm run build      # produkční build (dist/)
-npm run preview    # náhled buildu
+git clone https://github.com/Lukedaca/framemind-studio.git
+cd framemind-studio
+npm ci
+npm run dev
+```
+
+Otevřete adresu vypsanou Vite, obvykle **http://127.0.0.1:3000**.
+Dev i preview server naslouchají pouze na `127.0.0.1`.
+
+```bash
 npm run typecheck
-npm run test:run   # Vitest
+npm run test:run
+npm run build
+npm run preview
 ```
 
-**Hlavičky pro vícevláknovou retuš.** WASM běží na víc vláknech jen v cross-origin izolované stránce (`SharedArrayBuffer`). Dev server i `preview` posílají `Cross-Origin-Opener-Policy: same-origin` a `Cross-Origin-Embedder-Policy: credentialless`; na Vercelu totéž nastavuje `vercel.json`. Bez nich retuš funguje taky, jen pomaleji na jednom vlákně.
+Build vzniká v `dist/`; `preview` jej otevře na lokálním serveru, obvykle na portu 4173.
+GitHub Actions provádí kontrolu typů, testy a build. Nic nenasazuje.
+Automatické Vercel deploye při změnách v Gitu jsou vypnuté v `vercel.json`.
 
-## Co je a co není
+Pro culling musí prohlížeč podporovat Web Workers, `createImageBitmap` ve workeru
+a `OffscreenCanvas`. Bez nich analýza ohlásí chybu; těžký výpočet se nepřesouvá
+na hlavní vlákno. WebGPU retuše závisí na prohlížeči a ovladači; existuje také
+WASM cesta. Dev i preview posílají hlavičky pro cross-origin izolaci.
 
-**Hotové:** všechno z tabulky výše, lokální CRM (projekty, klienti, náhled galerie) v úložišti prohlížeče, PWA, čeština i angličtina.
+## Co aplikace obsahuje
 
-**Není:**
-
-- plné vyvolání RAW (demosaicing) — z RAW se bere jen vložený náhled
-- účty, synchronizace mezi zařízeními, cloud — data projektů jsou jen v tomhle prohlížeči
-- serverový proxy pro Gemini — klíč je v prohlížeči uživatele
-- velké plochy (třeba celá postava) nemají plné rozlišení doplnění: LaMa má vstup napevno 512 × 512 a výřez se na něj zmenšuje, takže čím větší plocha, tím měkčí doplnění. U rozmazaného pozadí to nevadí, u ostrého je to vidět
-- ověření retuše na všech prohlížečích: WebGPU cesta závisí na prohlížeči a ovladači, WASM je záloha
-
-## Technologie
-
-| | |
+| Oblast | Současné chování |
 |---|---|
-| Aplikace | React 19, TypeScript 5.8, Vite 6, Tailwind CSS 3 |
-| Lokální AI | ONNX Runtime Web (MI-GAN, LaMa, SAM 2.1), MediaPipe Tasks (obličeje, osoby pro výběr) |
-| Volitelná AI | Google Gemini (`@google/genai`) |
-| Offline | vite-plugin-pwa (Workbox), Cache Storage pro modely |
-| Písmo | Manrope (titulky), Inter (rozhraní), Geist Mono (čísla) |
+| Import | JPEG, PNG, WebP; podporované RAW přípony se zpracují přes vložený JPEG náhled |
+| Culling | Technické metriky, podobné záběry, ruční profily, filtry a volby K / R / X |
+| Úpravy | Automatická úprava z histogramu, posuvníky a ořez |
+| Lokální retuš | Štětec, klikací chytré laso, ONNX modely v prohlížeči |
+| Export | JPEG / PNG, kvalita, velikost a vodoznak; jednotlivá fotka nebo sada |
+| Projekty a klienti | Lokální CRM a náhled galerie v tomto prohlížeči |
+| Rozhraní | Čeština a angličtina, PWA konfigurace |
 
-```
-App.tsx                    # kostra, navigace, historie (undo/redo)
-components/
-  EditorView.tsx           # editor: Úpravy / Retuš / Export
-  editor/                  # plátno (štětec, laso), panely, sdílené prvky
-  common/FmMark.tsx        # značka FrameMind jako vektor
-  CullingView.tsx          # výběr
-  DashboardView.tsx        # přehled
-services/
-  localInpaint.ts          # retuš: výřez → model → zrno → vložení do plného rozlišení
-  localSegment.ts          # chytré laso: vstup pro SAM, kliky, masky
-  geminiService.ts         # volitelné: AI verdikty, laso podle popisu, úprava textem
-utils/
-  inpaintMath.ts           # čistá matika retuše — výřez, výběr modelu, zrno (testovaná)
-  segmentModel.ts          # SAM 2.1: soubory, normalizace (testovaná)
-  autoAdjust.ts            # automatická úprava z histogramu (testovaná)
-  cullingEngine.ts …       # heuristiky výběru
-workers/
-  inpaint.worker.ts        # retuš: MI-GAN / LaMa
-  segment.worker.ts        # chytré laso: SAM 2.1
-  modelFetch.ts            # stažení modelu s průběhem + Cache Storage
-  culling.worker.ts
-public/brand/              # logo FrameMind
-```
+Ukládání sady do složky používá File System Access API, pokud jej prohlížeč nabízí.
+Jinak se jednotlivé soubory stahují přes prohlížeč.
 
----
+## Culling bez AI
 
-<div align="center">
-  <sub>FrameMind Studio je součást <a href="https://framemind.cz">FrameMind</a>.</sub>
-</div>
+Analýza běží po jednom snímku v samostatném workeru. Měří náhled s delší stranou
+nejvýše 768 px: rozložení jasu, přepaly, stíny, kontrast, indikátory detailu,
+šumu a směrového rozmazání. EXIF se podle dostupnosti čte z původního souboru.
+Profil vyberete ručně; mění váhy technického skóre, nikoli obsahovou analýzu.
+
+- Skóre 0–100 má rozpis jednotlivých příspěvků. Není to pravděpodobnost kvality snímku.
+- Podobnost využívá obrazovou strukturu, barvy a hashe. Série navíc používají čas pořízení
+  nebo návaznost názvů souborů. Seskupení nemusí najít všechny podobné snímky,
+  zejména u velkých sad s omezeným hledáním kandidátů.
+- Automatika navrhuje pouze **ponechat** nebo **zkontrolovat**. Vyřazení je ruční.
+- **K** = ponechat, **R** = zkontrolovat, **X** = vyřadit.
+- Ruční volby zůstávají při opakované analýze i změně profilu.
+- Výběr reprezentanta série nevyřadí ostatní snímky.
+- Odebrání vyřazených vyžaduje potvrzení a odstraní je ze sady v aplikaci.
+  Originály na disku se nemažou.
+- Běh lze zastavit; hotová měření zůstávají k dispozici.
+
+Náhledové metriky neposuzují oči, výraz, rozhodující moment, kompozici ani zaostření
+na konkrétní subjekt. Směrový indikátor není důkaz pohybového rozmazání.
+Prahy dosud nejsou kalibrované na reprezentativní sadě skutečných fotografií.
+
+Z RAW se měří vložený JPEG, nikoli RAW senzorová data. Jeho zpracování ve fotoaparátu
+ovlivňuje měření. Starší automatické výsledky vyžadují novou analýzu;
+ruční rozhodnutí mají přednost.
+
+## Lokální retuš
+
+Štětcová retuš a klikací laso běží přes ONNX Runtime Web ve workerech.
+Tyto cesty fotku neposílají do cloudového modelu a nevyžadují API klíč.
+
+| Model | Úloha | Velikost podle souborů v konfiguraci |
+|---|---|---|
+| MI-GAN | Rychlá retuš | přibližně 28 MB |
+| LaMa | Detailní retuš | přibližně 208 MB |
+| SAM 2.1 tiny int8 | Masky pro klikací laso | přibližně 62 MB |
+
+Volba **Automaticky** používá MI-GAN pro plochu masky do 14 400 pixelů
+v rozměrech původní fotky a LaMa pro větší plochu. Neprovádí rozpoznávání lidí.
+Rychlý model se připravuje při otevření retuše; další modely se načítají podle potřeby.
+
+Retuš zpracuje okolí masky na vstupu 512 × 512 a výsledek prolne zpět do fotky.
+Rozměry plátna zůstávají zachované, detail doplněné velké oblasti je ale omezený
+rozlišením modelu. Uložení upravené fotky do JPEG ji znovu komprimuje.
+Laso poskytuje kandidátní masky; přesný obrys ani kvalita doplnění nejsou zaručené.
+Výkon závisí na zařízení, prohlížeči a zvolené výpočetní cestě.
+
+## Připojení a data
+
+| Funkce nebo zdroj | Připojení / uložení |
+|---|---|
+| Culling | Žádná síťová volání, modely ani klíče |
+| Instalace balíčků | `npm ci` stahuje závislosti z npm |
+| Retuš a klikací laso | Modely se načítají z Hugging Face, URL jsou připnuté na commit; cache je v prohlížeči |
+| Písmo rozhraní | Google Fonts; PWA má pravidla pro jejich cache |
+| Laso podle popisu | Stále používá Gemini a posílá zmenšenou fotografii, delší strana nejvýše 1 536 px |
+| Úprava textem | Stále posílá fotografii do Gemini |
+| Projekty a klienti | JSON v `localStorage`, bez synchronizace mezi zařízeními |
+
+Dvě Gemini funkce patří pouze do editoru a vyžadují vlastní klíč. Výchozí uložení
+klíče je na relaci; trvalé uložení vyžaduje potvrzení. Nejsou součástí cullingu.
+Klíč nepatří do repozitáře ani do buildu.
+
+Cache může umožnit další použití modelů bez internetu, ale její dostupnost a kvóta
+nejsou zaručené. PWA konfigurace sama nedokazuje úplný offline provoz všech funkcí.
+
+`localStorage` **není záloha fotografií**: JSON neobnoví objekty `File` ani původní
+`blob:` URL po nové relaci. Originály uchovejte na disku a výsledky exportujte.
+Smazání dat prohlížeče odstraní místní CRM; změna hostu nebo portu používá jiné úložiště.
+Náhled galerie není služba pro veřejné hostování fotografií.
+
+## Omezení a ověření
+
+- RAW import extrahuje náhled; nejde o demosaicing ani plné vyvolání RAW.
+  Soubor bez použitelného vloženého JPEG nemusí jít importovat.
+- Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
+- Testy cullingu a prohlížečový smoke ověřují technické chování na syntetických datech.
+  Neprokazují fotografickou kvalitu ani rychlost na velké skutečné RAW sadě.
+- Kompletní ověření retuše ve všech prohlížečích a na všech GPU nebylo provedeno.
+
+Historický audit a záznam implementace: [docs/culling-local-audit.md](docs/culling-local-audit.md).
+Starší soubory v `docs/plans/` jsou návrhy, nikoli potvrzení současných funkcí.
+
+## Příspěvky a licence
+
+Postup pro bug reporty, změny a ověření: [CONTRIBUTING.md](CONTRIBUTING.md).
+Správce: [CONTRIBUTORS.md](CONTRIBUTORS.md).
+Zdrojový kód je pod [licencí MIT](LICENSE). Závislosti a modely mají vlastní licence;
+odkazy na použité modely jsou v `utils/inpaintModels.ts` a `utils/segmentModel.ts`.

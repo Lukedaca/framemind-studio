@@ -12,6 +12,8 @@ export interface UploadedFile {
   generatedVideo?: GeneratedVideo;
   assessment?: QualityAssessment;
   culling?: CullingResult;
+  originalFile?: File; // metadata and read-only original during this session
+  cullingSource?: 'image' | 'embedded-jpeg-preview';
   category?: string;
 }
 
@@ -21,17 +23,59 @@ export interface QualityAssessment {
     flags: string[]; // ['Blurry', 'Closed Eyes', 'Bad Exposure', 'Great Composition']
 }
 
-// --- AI Culling (FrameMind engine) ---
+// --- Local technical culling (FrameMind Solutions for Photo 1.0) ---
 
 export type CullingDecision = 'keep' | 'review' | 'reject';
 
-// Safe = výchozí: AI vizuálně posoudí i heuristické rejecty (žádná fotka
-// nevypadne jen kvůli heuristice). Economy = jisté heuristické rejecty
-// přeskočí AI, ověří se jen auditní vzorek — levnější, riskantnější.
-export type CullingMode = 'safe' | 'economy';
+export type CullingVerdictSource = 'technical' | 'manual' | 'legacy';
 
-// Odkud pochází aktuální verdikt fotky — UI to musí vždy zobrazit.
-export type CullingVerdictSource = 'heuristic' | 'ai' | 'manual';
+export interface CullingExif {
+  captureTimeMs?: number;
+  exposureTime?: number; // seconds
+  iso?: number;
+  aperture?: number;
+  focalLength?: number; // mm
+}
+
+export interface CullingSignature {
+  averageHash: string; // 256 bits
+  differenceHash: string; // 256 bits
+  luma: number[]; // 32 x 32 area averages, 0-1
+  color: number[]; // 16 x 16 RGB area averages, 0-1
+  histogram: number[]; // 16 luminance bins, unit sum
+  detail: number; // luminance standard deviation / 255
+}
+
+export interface CullingTechnicalMetrics {
+  width: number;
+  height: number;
+  medianLuma: number;
+  p1: number;
+  p5: number;
+  p95: number;
+  p99: number;
+  standardDeviation: number;
+  entropy: number; // bits
+  dynamicRange: number; // p95 - p5, luminance units
+  redClip: number;
+  greenClip: number;
+  blueClip: number;
+  redShadowClip: number;
+  greenShadowClip: number;
+  blueShadowClip: number;
+  laplacianVariance: number; // denoised, noise-floor corrected
+  tenengrad: number; // denoised Sobel mean squared magnitude
+  edgeDensity: number;
+  detailConfidence: number; // evidence of measurable structure, not probability
+  noiseEstimate: number; // approximate luminance sigma, 0-255 scale
+  noiseConfidence: number; // coverage of usable low-texture samples
+  gradientAnisotropy: number;
+  motionBlurEstimate: number; // weak directional cue, never a sole reject rule
+  motionConfidence: number;
+}
+
+export type CullingScorePart = 'sharpness' | 'exposure' | 'clipping' | 'noise' | 'contrast' | 'motion';
+export type CullingScoreBreakdown = Record<CullingScorePart, { score: number; weight: number; contribution: number }>;
 
 export type CullingGenre =
   | 'sport'
@@ -53,53 +97,37 @@ export interface CullingMetrics {
   shadowClipping: number; // 0-1
   contrastScore: number; // 0-1
   noiseScore: number; // 0-1, 1 = čistý
-  compositionScore: number; // 0-1
-  // Syrová Laplacian variance uvnitř rámečku detekované osoby, měřená na
-  // NATIVNÍM rozlišení. Není normalizovaná — absolutní hodnota závisí na
-  // objektivu, světle i scéně, takže dává smysl jen v porovnání se zbytkem sady.
-  // 0 = neměřeno (osoba nenalezena, starší výsledky, fallback bez plného dekódu).
+  compositionScore: number; // legacy/taste storage only, local culling sets 0
+  // Legacy measurement, retained for existing stored projects; local 1.0 sets 0.
   nativeSharpness: number;
-  // Našel se na snímku někdo, na kom šlo ostrost změřit? Bez toho nejde poznat,
-  // jestli je nativeSharpness 0 kvůli chybě, nebo protože na fotce nikdo není.
-  subjectFound?: boolean;
+  subjectFound?: boolean; // legacy storage only
+  // New diagnostics are optional only so pre-1.0 stored projects remain readable.
+  // The 1.0 engine requires these before producing automatic technical verdicts.
+  technical?: CullingTechnicalMetrics;
+  signature?: CullingSignature;
 }
-
-export interface CullingAiVerdict {
-  decision: CullingDecision;
-  genre: CullingGenre;
-  aiScore: number; // 0-100
-  summary: string;
-  reasons: string[];
-  risks: string[];
-}
-
-export type CullingAiStatus = 'idle' | 'pending' | 'done' | 'error';
 
 export interface CullingResult {
   metrics: CullingMetrics;
   finalScore: number; // 0-100 (žánrově vážený)
   decision: CullingDecision;
   manualDecision?: CullingDecision;
-  reasons: string[]; // překladové klíče cull_reason_* nebo AI texty
+  reasons: string[]; // translation keys derived from measured evidence
   risks: string[];
   aspectRatio: number;
   duplicateGroupId?: string;
   isBestInGroup?: boolean;
   groupRank?: number;
   genre?: CullingGenre;
-  faceCount?: number;
-  eyeBlink?: number; // 0=open, 1=closed; primary/largest face
-  aiDisagreement?: boolean; // strong local fail + AI keep => routed to review
-  ai?: CullingAiVerdict;
-  aiStatus: CullingAiStatus;
-  aiError?: string;
-}
-
-export interface BatchGenreInfo {
-  genre: CullingGenre;
-  confidence: number; // 0-100
-  note: string;
-  manual: boolean;
+  engineVersion?: string;
+  analysisStatus?: 'done' | 'error';
+  source?: 'image' | 'embedded-jpeg-preview';
+  exif?: CullingExif;
+  scoreBreakdown?: CullingScoreBreakdown;
+  groupKind?: 'near-duplicate' | 'burst';
+  similarityToBest?: number;
+  relativeSharpness?: number;
+  scoreGap?: number; // fractional difference from the best technical score
 }
 
 export interface SocialMediaContent {

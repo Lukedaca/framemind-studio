@@ -1,5 +1,6 @@
 
 import exifr from 'exifr';
+import { rememberRawOriginal } from './rawProvenance';
 
 export const RAW_EXTENSIONS = [".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".dng", ".pef", ".rw2"];
 export const RAW_EXTENSIONS_STRING = RAW_EXTENSIONS.join(',');
@@ -216,7 +217,9 @@ export const processRawFile = async (file: File, options: RawConvertOptions = DE
     const outputName = file.name.replace(/\.[^/.]+$/, '.jpg');
     console.log(`[RAW] Output: ${outputName} (${(outputBlob.size / 1024 / 1024).toFixed(2)} MB)`);
 
-    return new File([outputBlob], outputName, { type: 'image/jpeg' });
+    const preview = new File([outputBlob], outputName, { type: 'image/jpeg' });
+    rememberRawOriginal(preview, file);
+    return preview;
 };
 
 export const isRawFile = (file: File): boolean => {

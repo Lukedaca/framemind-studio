@@ -1,9 +1,8 @@
-// Volitelná vrstva Gemini: AI verdikty v cullingu a úprava fotky textem.
-// Všechno ostatní (retuš štětcem, úpravy, heuristický culling) běží lokálně
+// Volitelná vrstva Gemini: úprava fotky textem a hledání objektů pro chytré laso.
+// Všechno ostatní (retuš štětcem, úpravy, technický culling) běží lokálně
 // bez API — viz services/localInpaint.ts a utils/autoAdjust.ts.
 
 import { GoogleGenAI, MediaResolution, ThinkingLevel } from '@google/genai';
-import type { CullingAiVerdict, CullingGenre, CullingMetrics } from '../types';
 import { fileToBase64, base64ToFile } from '../utils/imageProcessor';
 import { sanitizeText } from '../utils/text';
 import { getApiKey } from '../utils/apiKey';
@@ -129,86 +128,9 @@ const getGenAI = () => {
     return new GoogleGenAI({ apiKey });
 };
 
-// --- FrameMind AI Culling (žánrově adaptivní verdikty) ---
-
-// 3.6 Flash je z rodiny Flash nejlevnější na výstupu ($7.50/1M vs $9.00 u 3.5),
-// a výstup je u cullingu většina účtu — thinking tokeny se účtují jako output.
-// Fallback drží 3.5 Flash pro případ výpadku/nedostupnosti novějšího modelu.
-const CULLING_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'] as const;
-
-// Culling je klasifikace s předpočítanými metrikami, ne řetězec úvah — hluboké
-// myšlení tu nic nepřidá, jen prodraží výstup. Gemini 3 navíc doporučuje nechat
-// temperature na výchozí 1.0; nižší hodnoty u thinking modelů vedou ke smyčkám,
-// což paradoxně spotřebu zvyšuje.
-const CULLING_THINKING = { thinkingLevel: ThinkingLevel.LOW };
-
-// Gemini účtuje obrázek po dlaždicích a počet dlaždic se odvíjí od POMĚRU stran,
-// ne od velikosti — náhled 3:2 stojí 1 548 tokenů, ať má 768 px nebo 400 px.
-// mediaResolution ten strop nastaví přímo: MEDIUM = 256 tokenů, LOW = 64.
-//
-// MEDIUM u verdiktu: model vidí celou fotku v jednom pohledu místo šesti výřezů.
-// Detailní ostrost stejně rozhoduje lokální Laplacian na plném rozlišení, AI má
-// na starost moment, kompozici a výraz — na to jeden pohled stačí.
-// LOW u detekce žánru: rozpoznat "sport vs. portrét" jde i z hrubého náhledu.
-const CULLING_MEDIA_RESOLUTION = MediaResolution.MEDIA_RESOLUTION_MEDIUM;
-const GENRE_MEDIA_RESOLUTION = MediaResolution.MEDIA_RESOLUTION_LOW;
-
-const CULLING_SYSTEM_PROMPT = `Jsi expert na fotografický culling pro profesionální fotografy.
-Tvůj úkol: podívej se na jednu fotku, urči její žánr a rozhodni "keep", "review" nebo "reject" PODLE STANDARDŮ TOHO ŽÁNRU. Univerzální metr neexistuje — co je vada v produktovce, je styl ve streetu.
-
-Žánrová kritéria:
-- sport: rozhoduje vrchol akce a ostrý hlavní subjekt. Pohybová neostrost pozadí (panning) je plus, ne vada. Vyšší šum toleruj (haly, večerní zápasy). Zavřené oči neřeš, pokud moment funguje.
-- portrait: ostré a OTEVŘENÉ oči jsou kritické. Výraz, práce se světlem, tóny pleti. Zavřené oči = reject, pokud nejsou zjevný záměr.
-- wedding: emoce a moment mají přednost před technickou dokonalostí. Klíčové osoby musí fungovat. Zavřené oči vadí u pózovaných, méně u reportážních momentů.
-- product: tvrdá technická kritéria — celková ostrost, přesná expozice, čisté pozadí, žádný rušivý šum.
-- landscape: ostrost celé scény, rovný horizont, expozice oblohy (přepálené nebe je vážná vada), kompozice.
-- street: moment, příběh a kompozice před technikou. Zrno a lehká neostrost mohou být součást stylu.
-- wildlife: rozhoduje ostré oko zvířete. Zachycené chování nebo akce je plus.
-- event: reportáž — momenty, výrazy, atmosféra; technická kritéria mírněji.
-- other: obecná profesionální kritéria.
-
-Kategorie verdiktu:
-- keep: podle žánrových kritérií silná fotka bez zásadních problémů
-- review: hraniční — opravitelné vady, téměř duplicita lepšího záběru, nebo potřeba lidského úsudku
-- reject: selhává v tom, na čem v daném žánru záleží
-
-Dostáváš: samotný obrázek plus předpočítané heuristické metriky (ostrost, expozice, kontrast, šum, kompozice, přepaly světel/stínů, příznak skupiny duplicit). Ber metriky jako podpůrný důkaz — tvůj vizuální úsudek je primární. Pokud dostaneš záměr fotografa, má při rozhodování vysokou váhu.
-
-Pravidla:
-- Hodnoty "decision" a "genre" zůstávají VŽDY anglicky, přesně z povolených hodnot.
-- aiScore musí odrážet celkovou kvalitu v kontextu žánru, ne jen technické metriky.
-- "summary" max 120 znaků, česky, žádné marketingové fráze.
-- "reasons" a "risks" každé max 4 položky, každá max 60 znaků, česky.
-- Lokálně detekované tváře, stav očí a ostrost hlavního obličeje jsou důležité technické signály. Pokud se obraz a metriky rozcházejí, zvol "review", ne automatické "keep".
-- Pokud obrázek chybí nebo je nečitelný, nastav decision na "review" a vysvětli v risks.`;
-
-const CULLING_GENRE_VALUES: CullingGenre[] = ['sport', 'portrait', 'wedding', 'product', 'landscape', 'street', 'wildlife', 'event', 'other'];
-
-const CULLING_RESPONSE_SCHEMA = {
-    type: 'object',
-    properties: {
-        decision: { type: 'string', enum: ['keep', 'review', 'reject'] },
-        genre: { type: 'string', enum: CULLING_GENRE_VALUES },
-        aiScore: { type: 'integer' },
-        summary: { type: 'string' },
-        reasons: { type: 'array', items: { type: 'string' } },
-        risks: { type: 'array', items: { type: 'string' } },
-    },
-    required: ['decision', 'genre', 'aiScore', 'summary', 'reasons', 'risks'],
-} as any;
-
-const GENRE_DETECT_PROMPT = `Jsi expert na fotografii. Dostaneš 1-3 náhledy ze STEJNÉHO focení. Urči převažující žánr celé sady.
-Hodnota "genre" zůstává anglicky. "note" je jedna krátká česká věta (max 100 znaků), co na fotkách vidíš.`;
-
-const GENRE_DETECT_SCHEMA = {
-    type: 'object',
-    properties: {
-        genre: { type: 'string', enum: CULLING_GENRE_VALUES },
-        confidence: { type: 'integer' },
-        note: { type: 'string' },
-    },
-    required: ['genre', 'confidence', 'note'],
-} as any;
+// Structured object location for the editor's smart lasso.
+const OBJECT_LOCATION_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'] as const;
+const OBJECT_LOCATION_THINKING = { thinkingLevel: ThinkingLevel.LOW };
 
 const dataUrlToInlinePart = (dataUrl: string) => {
     const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(dataUrl);
@@ -229,14 +151,14 @@ function isStructuredOutputFailure(error: unknown): boolean {
     return /empty response from ai|invalid json from ai/i.test(message);
 }
 
-async function generateCullingJson<T>(
+async function generateObjectLocationJson<T>(
     generate: (model: string) => Promise<{ text?: string; usageMetadata?: RawUsageMetadata }>,
     fallbackError: string
 ): Promise<T> {
     let lastError: Error | null = null;
 
-    for (let index = 0; index < CULLING_MODELS.length; index += 1) {
-        const model = CULLING_MODELS[index];
+    for (let index = 0; index < OBJECT_LOCATION_MODELS.length; index += 1) {
+        const model = OBJECT_LOCATION_MODELS[index];
         try {
             const response = await generate(model);
             // Spotřebu zapisujeme i u odpovědi, která se pak neparsuje — zaplacená
@@ -245,7 +167,7 @@ async function generateCullingJson<T>(
             return safeJsonParse<T>(response.text, fallbackError);
         } catch (error) {
             lastError = error instanceof Error ? error : new Error(String(error));
-            const hasFallback = index < CULLING_MODELS.length - 1;
+            const hasFallback = index < OBJECT_LOCATION_MODELS.length - 1;
             if (!hasFallback || (!isModelUnavailable(error) && !isStructuredOutputFailure(error))) {
                 throw lastError;
             }
@@ -254,135 +176,6 @@ async function generateCullingJson<T>(
 
     throw lastError || new Error(fallbackError);
 }
-
-export const detectBatchGenre = async (
-    thumbnailDataUrls: string[]
-): Promise<{ genre: CullingGenre; confidence: number; note: string }> => {
-    return withRetry(async () => {
-        const ai = getGenAI();
-        const thumbs = thumbnailDataUrls.slice(0, 3).map(dataUrlToInlinePart);
-        const parsed = await generateCullingJson<{ genre: CullingGenre; confidence: number; note: string }>(
-            (model) => ai.models.generateContent({
-                model,
-                contents: {
-                    parts: [
-                        { text: `Náhledy z jednoho focení (${thumbs.length}). Urči žánr sady.` },
-                        ...thumbs,
-                    ],
-                },
-                config: {
-                    systemInstruction: GENRE_DETECT_PROMPT,
-                    thinkingConfig: CULLING_THINKING,
-                    mediaResolution: GENRE_MEDIA_RESOLUTION,
-                    maxOutputTokens: 1024,
-                    responseMimeType: 'application/json',
-                    responseSchema: GENRE_DETECT_SCHEMA,
-                },
-            }),
-            'Genre detection failed'
-        );
-        return {
-            genre: CULLING_GENRE_VALUES.includes(parsed.genre) ? parsed.genre : 'other',
-            confidence: Math.max(0, Math.min(100, Math.round(Number(parsed.confidence)) || 0)),
-            note: typeof parsed.note === 'string' ? parsed.note.slice(0, 140) : '',
-        };
-    });
-};
-
-export interface CullingVerdictContext {
-    filename: string;
-    metrics: CullingMetrics;
-    heuristicScore: number;
-    duplicateGroupId?: string;
-    isBestInGroup?: boolean;
-    genre?: CullingGenre | null;
-    brief?: string;
-    faceCount?: number;
-    eyeBlink?: number;
-    taste?: string | null;
-    // 'soft' / 'bad' = měření na nativním rozlišení říká, že je snímek měkčí
-    // než zbytek sady. Model to z náhledu nepozná, musí se mu to říct.
-    sharpnessStanding?: 'unknown' | 'normal' | 'soft' | 'bad';
-}
-
-export const getCullingVerdict = async (
-    thumbnailDataUrl: string,
-    context: CullingVerdictContext
-): Promise<CullingAiVerdict> => {
-    return withRetry(async () => {
-        const ai = getGenAI();
-        const m = context.metrics;
-        const lines = [
-            `Filename: ${context.filename.slice(0, 200)}`,
-            'Heuristic metrics (0-1 unless noted):',
-            `- sharpness: ${m.sharpnessScore.toFixed(2)}`,
-            `- exposure: ${m.exposureScore.toFixed(2)}`,
-            `- contrast: ${m.contrastScore.toFixed(2)}`,
-            `- noise (1=clean): ${m.noiseScore.toFixed(2)}`,
-            `- composition: ${m.compositionScore.toFixed(2)}`,
-            `- highlight clipping (0=none): ${m.highlightClipping.toFixed(2)}`,
-            `- shadow clipping (0=none): ${m.shadowClipping.toFixed(2)}`,
-            `- heuristic finalScore: ${Math.round(context.heuristicScore)}/100`,
-            context.duplicateGroupId
-                ? `- duplicate group: ${context.duplicateGroupId}${context.isBestInGroup ? ' (best in group)' : ' (not best)'}`
-                : null,
-            context.faceCount
-                ? `- faces detected: ${context.faceCount}${(context.eyeBlink ?? 0) >= 0.5 ? `, main face eyes likely CLOSED (blink ${Number(context.eyeBlink).toFixed(2)})` : (context.eyeBlink ?? 0) > 0 ? `, main face eyes open (blink ${Number(context.eyeBlink).toFixed(2)})` : ''}`
-                : null,
-            context.sharpnessStanding === 'bad'
-                ? '- MĚŘENÍ NA PLNÉM ROZLIŠENÍ: tenhle snímek je výrazně měkčí než zbytek sady (pod pětinou mediánu ostrosti). Na zmenšeném náhledu to nepoznáš — ber to jako tvrdý důkaz neostrosti, ne jako domněnku.'
-                : context.sharpnessStanding === 'soft'
-                    ? '- MĚŘENÍ NA PLNÉM ROZLIŠENÍ: tenhle snímek je měkčí než zbytek sady (pod polovinou mediánu ostrosti). Náhled to neukáže; zvaž to při rozhodování.'
-                    : null,
-            context.genre
-                ? `Žánr celé sady byl klasifikován jako: ${context.genre}. Ber jako výchozí; pokud tahle konkrétní fotka zjevně patří jinam, urči vlastní žánr.`
-                : null,
-            // Brief fotografa je length-capped — injection guard proti přetlačení promptu.
-            context.brief?.trim()
-                ? `Záměr fotografa pro toto focení (zohledni s vysokou vahou): ${context.brief.trim().slice(0, 500)}`
-                : null,
-            context.taste?.trim()
-                ? `Osobní profil vkusu fotografa (z jeho dřívějších ručních rozhodnutí): ${context.taste.trim().slice(0, 280)}`
-                : null,
-            '',
-            'Podívej se na obrázek a vrať JSON verdikt.',
-        ].filter(Boolean).join('\n');
-
-        const raw = await generateCullingJson<CullingAiVerdict>(
-            (model) => ai.models.generateContent({
-                model,
-                contents: {
-                    parts: [
-                        { text: lines },
-                        dataUrlToInlinePart(thumbnailDataUrl),
-                    ],
-                },
-                config: {
-                    systemInstruction: CULLING_SYSTEM_PROMPT,
-                    thinkingConfig: CULLING_THINKING,
-                    mediaResolution: CULLING_MEDIA_RESOLUTION,
-                    maxOutputTokens: 2048,
-                    responseMimeType: 'application/json',
-                    responseSchema: CULLING_RESPONSE_SCHEMA,
-                },
-            }),
-            'Culling verdict failed'
-        );
-        const decision = ['keep', 'review', 'reject'].includes(raw.decision) ? raw.decision : 'review';
-        return {
-            decision,
-            genre: CULLING_GENRE_VALUES.includes(raw.genre) ? raw.genre : 'other',
-            aiScore: Math.max(0, Math.min(100, Math.round(Number(raw.aiScore)) || 0)),
-            summary: typeof raw.summary === 'string' ? raw.summary.slice(0, 180) : '',
-            reasons: Array.isArray(raw.reasons)
-                ? raw.reasons.filter((item): item is string => typeof item === 'string').slice(0, 4).map((item) => item.slice(0, 80))
-                : [],
-            risks: Array.isArray(raw.risks)
-                ? raw.risks.filter((item): item is string => typeof item === 'string').slice(0, 4).map((item) => item.slice(0, 80))
-                : [],
-        };
-    });
-};
 
 // Retuš celé fotky standardním API voláním. Když model úpravu odmítne
 // (SAFETY_BLOCKED), odmítnutí respektujeme — žádný další pokus, žádný
@@ -453,14 +246,14 @@ export const locateObjects = async (imageDataUrl: string, width: number, height:
     if (!request) return [];
     return withRetry(async () => {
         const ai = getGenAI();
-        const parsed = await generateCullingJson<{ objects: { label: string; box_2d: number[] }[] }>(
+        const parsed = await generateObjectLocationJson<{ objects: { label: string; box_2d: number[] }[] }>(
             (model) => ai.models.generateContent({
                 model,
                 contents: { parts: [{ text: `Najdi: ${request}` }, dataUrlToInlinePart(imageDataUrl)] },
                 config: {
                     systemInstruction: LOCATE_PROMPT,
-                    thinkingConfig: CULLING_THINKING,
-                    // Detekce drobností (tetování, šperk) potřebuje víc detailu než culling.
+                    thinkingConfig: OBJECT_LOCATION_THINKING,
+                    // Drobné objekty (tetování, šperk) potřebují vysoké rozlišení.
                     mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
                     maxOutputTokens: 2048,
                     responseMimeType: 'application/json',

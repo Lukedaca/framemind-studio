@@ -26,5 +26,5 @@ jobs:
       - name: Tests
         run: npm run test:run
 
-      - name: Production build
+      - name: Build verification (no deployment)
         run: npm run build

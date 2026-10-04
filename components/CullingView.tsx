@@ -1,27 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import type { UploadedFile, CullingResult, CullingGenre, CullingDecision, CullingMode, CullingVerdictSource, BatchGenreInfo } from '../types';
-import { detectBatchGenre, getCullingVerdict } from '../services/geminiService';
-import { getApiKey } from '../utils/apiKey';
-import {
-  GENRE_PROFILES,
-  CULLING_GENRES,
-  analyzePhotoPixels,
-  buildCullingResult,
-  rescoreCullingResult,
-  computeSimilarityGroups,
-  computeSetSharpnessContext,
-  classifySharpness,
-  SHARPNESS_STANDING_AFFECTS_VERDICT,
-  getEffectiveDecision,
-  getVerdictSource,
-  reconcileAiDecision,
-  selectAiCandidates,
-  mapWithConcurrency,
-  type PhotoAnalysis,
-  type SetSharpnessContext,
-} from '../utils/cullingEngine';
-import { getTasteProfile, recordTasteSample, tasteHintForAi } from '../services/tasteEngine';
-import { getUsageTotals, resetUsage, subscribeUsage, type UsageTotals } from '../services/aiUsage';
+import type { UploadedFile, CullingResult, CullingGenre, CullingDecision, CullingVerdictSource } from '../types';
+import { CULLING_GENRES, CULLING_ENGINE_VERSION, rescoreCullingResult, getEffectiveDecision, getVerdictSource } from '../utils/cullingEngine';
+import { CullingSession } from '../services/cullingSession';
 import { SparklesIcon, StackIcon, XCircleIcon } from './icons';
 import Aperture from './common/Aperture';
 import Header from './Header';
@@ -32,410 +12,163 @@ interface CullingViewProps {
   onSetFiles: (updater: (files: UploadedFile[]) => UploadedFile[], actionName: string) => void;
   addNotification: (message: string, type?: 'info' | 'error') => void;
   title: string;
-  onOpenApiKeyModal: () => void;
   onToggleSidebar: () => void;
   onDone?: () => void;
 }
-
-type Phase = 'idle' | 'heuristics' | 'genre' | 'ai' | 'done';
+type Phase = 'idle' | 'analyzing' | 'grouping' | 'done';
 type Filter = 'all' | CullingDecision;
-
-const AI_CONCURRENCY = 3;
-const DECODE_CONCURRENCY = 3;
-
-// Culling se pohybuje v setinách centu na fotku — dvě desetinná místa by celý
-// běh ukázala jako $0.00. Pod cent proto přepínáme na čtyři.
-function formatUsd(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '$0.00';
-  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
-}
-
-function formatTokens(value: number): string {
-  return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
-}
-
 const DECISION_STYLE: Record<CullingDecision, { chip: string; label: string; ring: string }> = {
   keep: { chip: 'bg-fm-green/90 text-black', label: 'K', ring: 'ring-fm-green' },
   review: { chip: 'bg-fm-blue/90 text-white', label: 'R', ring: 'ring-fm-blue' },
   reject: { chip: 'bg-fm-red/90 text-white', label: 'X', ring: 'ring-fm-red' },
 };
-
-// Zdroj verdiktu musí být na kartě vždy viditelný (heuristika ≠ AI ≠ ruční).
 const SOURCE_STYLE: Record<CullingVerdictSource, string> = {
   manual: 'bg-white/15 backdrop-blur text-white',
-  ai: 'bg-fm-blue/25 text-fm-blue border border-fm-blue/40',
-  heuristic: 'bg-black/50 text-gray-300 border border-white/10',
+  technical: 'bg-fm-blue/25 text-fm-blue border border-fm-blue/40',
+  legacy: 'bg-black/50 text-gray-300 border border-white/10',
 };
+const storedMap = (files: UploadedFile[]) => new Map(files.filter(f => f.culling).map((f): [string, CullingResult] => {
+  const result = f.culling!;
+  if (result.engineVersion === CULLING_ENGINE_VERSION) return [f.id, result];
+  // Old automatic analysis cannot hide files or retain obsolete AI risk labels.
+  return [f.id, { ...result, decision: 'review' as const, finalScore: 0,
+    duplicateGroupId: undefined, isBestInGroup: undefined, groupRank: undefined, groupKind: undefined,
+    scoreBreakdown: undefined, reasons: ['cull_reason_reanalyze'], risks: [] }];
+}));
 
-const CullingView: React.FC<CullingViewProps> = ({
-  files, onSetFiles, addNotification, title, onOpenApiKeyModal, onToggleSidebar, onDone,
-}) => {
+const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotification, title, onToggleSidebar, onDone }) => {
   const { t } = useTranslation();
   const tr = (key: string) => (t as unknown as Record<string, string>)[key] ?? key;
-
-  // Živý stav běhu drží lokální mapa; do App history se commitne jen v milnících.
-  const [cullingMap, setCullingMap] = useState<Map<string, CullingResult>>(() => {
-    const map = new Map<string, CullingResult>();
-    for (const file of files) {
-      if (file.culling) map.set(file.id, file.culling);
-    }
-    return map;
-  });
-
+  const [cullingMap, setCullingMap] = useState(() => storedMap(files));
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState({ current: 0, total: 0 });
-  // Safe = výchozí. Economy jen po vědomé volbě uživatele (varování v UI).
-  const [mode, setMode] = useState<CullingMode>('safe');
-  const [genreInfo, setGenreInfo] = useState<BatchGenreInfo | null>(null);
-  const [brief, setBrief] = useState('');
+  const [genre, setGenre] = useState<CullingGenre>(() => files.find(f => f.culling?.genre)?.culling?.genre ?? 'other');
   const [filter, setFilter] = useState<Filter>('all');
   const [collapseSeries, setCollapseSeries] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [usage, setUsage] = useState<UsageTotals>(() => getUsageTotals());
-  const [sharpnessStats, setSharpnessStats] = useState<SetSharpnessContext | null>(null);
-  // Kolika fotkám se našla osoba, na které jde ostrost změřit. Bez tohohle čísla
-  // nejde odlišit vyrovnanou sadu od sady, které detekce subjektu nesedla.
-  const [subjectStats, setSubjectStats] = useState<{ found: number; total: number } | null>(null);
-
-  useEffect(() => subscribeUsage(setUsage), []);
-
-  const cancelRef = useRef(false);
+  const sessionRef = useRef<CullingSession | null>(null);
+  const cancelledRef = useRef(false);
+  const mountedRef = useRef(true);
+  const sourceFilesRef = useRef(files);
   const mapRef = useRef(cullingMap);
   mapRef.current = cullingMap;
-  const genreRef = useRef<BatchGenreInfo | null>(null);
-  genreRef.current = genreInfo;
-  // Platí pro celý běh; přepočty po změně žánru ho musí použít taky, jinak by
-  // se relativní posouzení ostrosti při rescoru ztratilo.
-  const sharpnessContextRef = useRef<SetSharpnessContext | null>(null);
+  const isRunning = phase === 'analyzing' || phase === 'grouping';
 
-  const isRunning = phase === 'heuristics' || phase === 'genre' || phase === 'ai';
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; sessionRef.current?.close(); sessionRef.current = null; };
+  }, []);
+  // A changed project/Undo cancels a stale run before it can commit.
+  useEffect(() => {
+    if (sourceFilesRef.current !== files && sessionRef.current) {
+      sessionRef.current.close(); sessionRef.current = null; setPhase('idle');
+    }
+    sourceFilesRef.current = files;
+    if (!sessionRef.current) setCullingMap(storedMap(files));
+  }, [files]);
 
   const commitToFiles = useCallback((map: Map<string, CullingResult>, actionName: string) => {
     onSetFiles(prev => prev.map(file => {
       const result = map.get(file.id);
       if (!result) return file;
-      const decision = result.manualDecision || result.decision;
-      return {
-        ...file,
-        culling: result,
-        assessment: {
-          score: result.ai?.aiScore ?? result.finalScore,
-          isBestPick: decision === 'keep' && (result.isBestInGroup ?? true),
-          flags: result.risks,
-        },
-      };
+      return { ...file, culling: result, assessment: {
+        score: result.engineVersion === CULLING_ENGINE_VERSION ? result.finalScore : 0,
+        isBestPick: getEffectiveDecision(result) === 'keep' && (result.isBestInGroup ?? true), flags: result.risks,
+      } };
     }), actionName);
   }, [onSetFiles]);
 
-  const updateResult = useCallback((id: string, patch: Partial<CullingResult>) => {
-    setCullingMap(prev => {
-      const next = new Map(prev);
-      const current = next.get(id);
-      if (current) next.set(id, { ...current, ...patch });
-      return next;
-    });
-  }, []);
-
-  // --- Hlavní běh cullingu ---
-
-  const runCulling = async () => {
-    if (files.length === 0 || isRunning) return;
-    cancelRef.current = false;
-    // Účet se počítá za běh, ne za session — jinak by se sady sčítaly dohromady
-    // a číslo by ztratilo vypovídací hodnotu.
-    resetUsage();
-
-    // Fáze 1: lokální heuristiky (zdarma, bez API) — ostrost, expozice, šum,
-    // kompozice, perceptual hash pro série. Worker drží UI plynulé.
-    setPhase('heuristics');
-    setProgress({ current: 0, total: files.length });
-    const analyses = new Map<string, PhotoAnalysis>();
-    const workMap = new Map<string, CullingResult>();
-    let failed = 0;
-
-    await mapWithConcurrency(files, DECODE_CONCURRENCY, async (file) => {
-      if (cancelRef.current) return;
-      try {
-        const analysis = await analyzePhotoPixels(file.file);
-        analyses.set(file.id, analysis);
-        workMap.set(file.id, buildCullingResult(analysis, genreRef.current?.genre ?? null));
-      } catch (error) {
-        console.error(`Culling analysis failed for ${file.file.name}:`, error);
-        failed += 1;
-      }
-      setProgress(prev => ({ ...prev, current: prev.current + 1 }));
-      setCullingMap(new Map(workMap));
-    });
-
-    if (cancelRef.current) { finishRun(workMap); return; }
-
-    // Ostrost se posuzuje proti mediánu sady, takže kontext jde spočítat až
-    // teď, když jsou naměřené všechny fotky. Není to kvóta — u vyrovnané sady
-    // nikdo pod práh nespadne a nevyřadí se nic.
-    const measured = Array.from(workMap.values());
-    sharpnessContextRef.current = computeSetSharpnessContext(
-      measured.map(r => r.metrics.nativeSharpness)
-    );
-    setSharpnessStats(sharpnessContextRef.current);
-    setSubjectStats({
-      found: measured.filter(r => r.metrics.subjectFound).length,
-      total: measured.length,
-    });
-
-    // Série: union-find nad hashi, reprezentant = nejvyšší skóre.
-    applySimilarity(workMap);
-    setCullingMap(new Map(workMap));
-    commitToFiles(workMap, 'AI Culling – heuristika');
-
-    // Gemini je volitelný doplněk: bez klíče končí výběr lokálními verdikty,
-    // místo aby každá fotka skončila chybou AI.
-    if (!getApiKey()) {
-      finishRun(workMap);
-      addNotification(tr('cull_local_only'), 'info');
-      return;
-    }
-
-    // Fáze 2: žánr sady — 3 náhledy, jeden Gemini dotaz. Manuální volba má přednost.
-    if (!genreRef.current?.manual) {
-      setPhase('genre');
-      try {
-        const thumbs = files.map(f => analyses.get(f.id)?.aiThumbnailDataUrl).filter((x): x is string => !!x).slice(0, 3);
-        if (thumbs.length > 0) {
-          const detected = await detectBatchGenre(thumbs);
-          const info: BatchGenreInfo = { ...detected, manual: false };
-          setGenreInfo(info);
-          rescoreAll(workMap, info.genre);
-          setCullingMap(new Map(workMap));
-        }
-      } catch (error) {
-        console.warn('Genre detection failed:', error);
-        addNotification(tr('cull_genre_failed'), 'error');
-      }
-    }
-
-    if (cancelRef.current) { finishRun(workMap); return; }
-
-    // Fáze 3: AI verdikty. Safe mode (výchozí) posílá do AI všechno včetně
-    // heuristických rejectů — heuristika je jen předběžný návrh. Economy mode
-    // jisté rejecty přeskočí a AI ověří jen auditní vzorek (5–20, ~10 %).
-    setPhase('ai');
-    const selection = selectAiCandidates(
-      files
-        .filter(f => workMap.has(f.id) && analyses.has(f.id))
-        .map(f => {
-          const result = workMap.get(f.id)!;
-          return { id: f.id, decision: result.decision, finalScore: result.finalScore };
-        }),
-      mode
-    );
-    const candidateSet = new Set(selection.candidateIds);
-    const candidates = files.filter(f => candidateSet.has(f.id));
-    // Kandidáti dostanou pending — na kartě se zapne scan-line „AI se dívá".
-    for (const file of candidates) {
-      const result = workMap.get(file.id)!;
-      workMap.set(file.id, { ...result, aiStatus: 'pending' });
-    }
-    setCullingMap(new Map(workMap));
-    setProgress({ current: 0, total: candidates.length });
-    let aiFailed = 0;
-
-    await mapWithConcurrency(candidates, AI_CONCURRENCY, async (file) => {
-      if (cancelRef.current) return;
-      const result = workMap.get(file.id)!;
-      const analysis = analyses.get(file.id)!;
-      try {
-        const verdict = await getCullingVerdict(analysis.aiThumbnailDataUrl, {
-          filename: file.file.name,
-          metrics: result.metrics,
-          heuristicScore: result.finalScore,
-          duplicateGroupId: result.duplicateGroupId,
-          isBestInGroup: result.isBestInGroup,
-          genre: genreRef.current?.genre ?? null,
-          brief,
-          faceCount: result.faceCount,
-          eyeBlink: result.eyeBlink,
-          taste: tasteHintForAi(),
-          // Model dostane odstup od sady jen tehdy, když ho měření umí doložit.
-          sharpnessStanding: SHARPNESS_STANDING_AFFECTS_VERDICT
-            ? classifySharpness(result.metrics.nativeSharpness, sharpnessContextRef.current)
-            : 'unknown',
-        });
-        const reconciled = reconcileAiDecision(result, verdict, sharpnessContextRef.current);
-        workMap.set(file.id, {
-          ...result,
-          ai: verdict,
-          aiStatus: 'done',
-          decision: reconciled.decision,
-          aiDisagreement: reconciled.disagreement,
-          genre: verdict.genre,
-          reasons: verdict.reasons.length ? verdict.reasons : result.reasons,
-          risks: reconciled.disagreement
-            ? Array.from(new Set([...(verdict.risks.length ? verdict.risks : result.risks), 'cull_risk_ai_disagreement']))
-            : verdict.risks.length ? verdict.risks : result.risks,
-        });
-      } catch (error) {
-        aiFailed += 1;
-        workMap.set(file.id, {
-          ...result,
-          aiStatus: 'error',
-          aiError: error instanceof Error ? error.message : String(error),
-        });
-      }
-      setProgress(prev => ({ ...prev, current: prev.current + 1 }));
-      setCullingMap(new Map(workMap));
-    });
-
-    // AI mohla přehodit verdikty → přepočet reprezentantů sérií podle finálních skóre.
-    applySimilarity(workMap);
-    finishRun(workMap);
-
-    // Economy audit: kolik heuristických rejectů by AI zachránila? Významný
-    // podíl (≥20 % vzorku) = heuristika na téhle sadě střílí vedle → doporučit Safe.
-    if (mode === 'economy' && selection.auditIds.length > 0 && !cancelRef.current) {
-      const audited = selection.auditIds.filter(id => workMap.get(id)?.aiStatus === 'done');
-      const overturned = audited.filter(id => workMap.get(id)!.decision !== 'reject');
-      if (audited.length > 0) {
-        const summary = `${tr('cull_audit_result')} ${overturned.length}/${audited.length}`;
-        if (overturned.length / audited.length >= 0.2) {
-          addNotification(`${summary}. ${tr('cull_audit_recommend_safe')}`, 'error');
-        } else {
-          addNotification(summary, 'info');
-        }
-      }
-    }
-
-    if (failed > 0) addNotification(`${failed} ${tr('cull_failed_count')}`, 'error');
-    if (aiFailed > 0) addNotification(`${aiFailed} ${tr('cull_ai_failed_count')}`, 'error');
-    else if (!cancelRef.current) addNotification(tr('cull_complete'), 'info');
-  };
-
-  const applySimilarity = (workMap: Map<string, CullingResult>) => {
-    const assignments = computeSimilarityGroups(
-      Array.from(workMap.entries()).map(([id, r]) => ({
-        id, hash: r.metrics.hash, aspectRatio: r.aspectRatio, finalScore: r.finalScore,
-      }))
-    );
-    for (const [id, assignment] of assignments) {
-      const current = workMap.get(id);
-      if (!current) continue;
-      const withGroup = { ...current, ...assignment };
-      // AI a ruční verdikty jsou autoritativní; heuristické se s novou skupinou přepočítají.
-      workMap.set(id, current.aiStatus === 'done' || current.manualDecision
-        ? withGroup
-        : rescoreCullingResult(withGroup, genreRef.current?.genre ?? null, sharpnessContextRef.current));
-    }
-  };
-
-  const rescoreAll = (workMap: Map<string, CullingResult>, genre: CullingGenre) => {
+  const applySimilarity = async (workMap: Map<string, CullingResult>, session: CullingSession, selectedGenre: CullingGenre) => {
+    const assignments = await session.group(files.flatMap(file => {
+      const r = workMap.get(file.id);
+      return r?.engineVersion === CULLING_ENGINE_VERSION && r.analysisStatus === 'done' ? [{
+        id: file.id, filename: file.file.name, signature: r.metrics.signature, aspectRatio: r.aspectRatio,
+        finalScore: r.finalScore, sharpness: r.metrics.technical?.laplacianVariance ?? 0, exif: r.exif,
+      }] : [];
+    }));
     for (const [id, result] of workMap) {
-      workMap.set(id, rescoreCullingResult(result, genre, sharpnessContextRef.current));
+      if (result.engineVersion !== CULLING_ENGINE_VERSION || result.analysisStatus !== 'done') continue;
+      const { duplicateGroupId, isBestInGroup, groupRank, groupKind, similarityToBest, relativeSharpness, scoreGap, ...base } = result;
+      workMap.set(id, rescoreCullingResult({ ...base, ...assignments.get(id) }, selectedGenre));
     }
-    applySimilarity(workMap);
   };
 
-  const finishRun = (workMap: Map<string, CullingResult>) => {
-    // Po stopce nesmí zůstat viset pending — scan-line by běžela donekonečna.
-    for (const [id, result] of workMap) {
-      if (result.aiStatus === 'pending') workMap.set(id, { ...result, aiStatus: 'idle' });
+  const runCulling = async (selectedGenre: CullingGenre = genre, rescoreOnly = false) => {
+    if (!files.length || sessionRef.current) return;
+    let session: CullingSession;
+    try { session = new CullingSession(); } catch { addNotification(tr('cull_worker_unavailable'), 'error'); return; }
+    sessionRef.current = session; cancelledRef.current = false;
+    const workMap = new Map(mapRef.current);
+    let failed = 0, runFailed = false;
+    setPhase(rescoreOnly ? 'grouping' : 'analyzing'); setProgress({ current: 0, total: files.length });
+    try {
+      if (!rescoreOnly) {
+        for (let index = 0; index < files.length; index += 1) {
+          if (cancelledRef.current) break;
+          const file = files[index];
+          try {
+            const analysis = await session.analyze(file);
+            const result = await session.score(analysis, selectedGenre);
+            workMap.set(file.id, { ...result, manualDecision: workMap.get(file.id)?.manualDecision });
+          } catch (error) {
+            if ((error as Error).name === 'AbortError' || cancelledRef.current) throw error;
+            failed += 1;
+            workMap.set(file.id, {
+              metrics: { hash: '', meanLuma: 0, sharpnessScore: 0, exposureScore: 0, highlightClipping: 0,
+                shadowClipping: 0, contrastScore: 0, noiseScore: 0, compositionScore: 0, nativeSharpness: 0 },
+              finalScore: 0, decision: 'review', manualDecision: workMap.get(file.id)?.manualDecision,
+              reasons: ['cull_reason_unreadable'], risks: ['cull_risk_unreadable'], aspectRatio: 1,
+              engineVersion: CULLING_ENGINE_VERSION, analysisStatus: 'error', source: file.cullingSource ?? 'image',
+            });
+          }
+          if (sessionRef.current !== session) return;
+          setProgress({ current: index + 1, total: files.length }); setCullingMap(new Map(workMap));
+        }
+      } else {
+        for (const [id, result] of workMap) workMap.set(id, rescoreCullingResult(result, selectedGenre));
+      }
+      if (!cancelledRef.current && sessionRef.current === session) { setPhase('grouping'); await applySimilarity(workMap, session, selectedGenre); }
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError' && !cancelledRef.current) { runFailed = true; addNotification(tr('cull_worker_failed'), 'error'); }
+    } finally {
+      session.close();
+      if (mountedRef.current && sessionRef.current === session) {
+        sessionRef.current = null; setCullingMap(new Map(workMap)); setPhase('done');
+        commitToFiles(workMap, tr('cull_history'));
+        if (failed) addNotification(failed + ' ' + tr('cull_failed_count'), 'error');
+        if (!runFailed) addNotification(cancelledRef.current ? tr('cull_stopped') : tr('cull_complete'), 'info');
+      }
     }
-    setCullingMap(new Map(workMap));
-    commitToFiles(workMap, 'AI Culling');
-    setPhase('done');
   };
-
-  const stopCulling = () => { cancelRef.current = true; };
-
-  // --- Ruční zásahy ---
-
+  const stopCulling = () => { cancelledRef.current = true; sessionRef.current?.close(); };
   const setManualDecision = (id: string, decision: CullingDecision) => {
-    const current = mapRef.current.get(id);
+    if (sessionRef.current) return;
+    const next = new Map(mapRef.current), current = next.get(id);
     if (!current) return;
-    const next = new Map(mapRef.current);
-    const toggledOff = current.manualDecision === decision;
-    const manualDecision = toggledOff ? undefined : decision;
-    next.set(id, { ...current, manualDecision });
-    if (
-      manualDecision &&
-      !(manualDecision === 'reject' && current.duplicateGroupId && !current.isBestInGroup)
-    ) {
-      recordTasteSample(current.metrics, manualDecision);
-    }
-    setCullingMap(next);
-    commitToFiles(next, tr('cull_manual_decision'));
+    next.set(id, { ...current, manualDecision: current.manualDecision === decision ? undefined : decision });
+    setCullingMap(next); commitToFiles(next, tr('cull_manual_decision'));
   };
-
   const setSeriesWinner = (groupId: string, winnerId: string) => {
+    if (sessionRef.current) return;
     const next = new Map(mapRef.current);
-    for (const [id, result] of next) {
-      if (result.duplicateGroupId !== groupId) continue;
-      next.set(id, {
-        ...result,
-        manualDecision: id === winnerId ? 'keep' : 'reject',
-        isBestInGroup: id === winnerId,
-        groupRank: id === winnerId ? 1 : Math.max(2, result.groupRank ?? 2),
-      });
-      if (id === winnerId) recordTasteSample(result.metrics, 'keep');
+    for (const [id, r] of next) {
+      if (r.duplicateGroupId === groupId) next.set(id, { ...r, manualDecision: id === winnerId ? 'keep' : r.manualDecision,
+        isBestInGroup: id === winnerId, groupRank: id === winnerId ? 1 : Math.max(2, r.groupRank ?? 2) });
     }
-    setCullingMap(next);
-    commitToFiles(next, tr('cull_series_winner'));
+    setCullingMap(next); commitToFiles(next, tr('cull_series_winner'));
   };
-
   const handleGenreChange = (value: string) => {
-    if (value === 'auto') {
-      setGenreInfo(null);
-      return;
-    }
-    const genre = value as CullingGenre;
-    const info: BatchGenreInfo = { genre, confidence: 100, note: tr('cull_genre_manual_note'), manual: true };
-    setGenreInfo(info);
-    if (mapRef.current.size > 0) {
-      const next = new Map(mapRef.current);
-      rescoreAll(next, genre);
-      setCullingMap(next);
-      commitToFiles(next, tr('cull_genre_changed'));
-    }
+    const nextGenre = value as CullingGenre; setGenre(nextGenre);
+    if (mapRef.current.size) void runCulling(nextGenre, true);
   };
-
-  // Odstranění rejectů: vždy ukázat rozpad podle zdroje verdiktu. Heuristic-only
-  // rejecty (bez AI/ručního ověření) vyžadují samostatné explicitní potvrzení —
-  // jednoduchá heuristika nesmí sama definitivně vyřadit fotku. Akce jde přes
-  // App history, takže zůstává dostupné Undo.
   const removeRejects = () => {
+    if (sessionRef.current) return;
     const rejects = files.filter(f => getEffectiveDecision(cullingMap.get(f.id)) === 'reject');
-    if (rejects.length === 0) return;
-
-    const bySource: Record<CullingVerdictSource, string[]> = { manual: [], ai: [], heuristic: [] };
-    for (const file of rejects) {
-      const source = getVerdictSource(cullingMap.get(file.id)) ?? 'heuristic';
-      bySource[source].push(file.id);
-    }
-
-    const summary = [
-      `${tr('cull_source_ai')}: ${bySource.ai.length}`,
-      `${tr('cull_source_manual')}: ${bySource.manual.length}`,
-      `${tr('cull_source_heuristic')}: ${bySource.heuristic.length}`,
-    ].join(' · ');
-
-    const confirmedIds = new Set<string>([...bySource.manual, ...bySource.ai]);
-    if (confirmedIds.size > 0) {
-      const ok = window.confirm(
-        `${tr('cull_remove_confirm')} (${confirmedIds.size})\n${summary}\n${tr('cull_remove_undo_hint')}`
-      );
-      if (!ok) return;
-    }
-    if (bySource.heuristic.length > 0) {
-      const alsoHeuristic = window.confirm(
-        `${tr('cull_remove_confirm_heur')} (${bySource.heuristic.length})`
-      );
-      if (alsoHeuristic) {
-        for (const id of bySource.heuristic) confirmedIds.add(id);
-      }
-    }
-    if (confirmedIds.size === 0) return;
-
-    onSetFiles(prev => prev.filter(f => !confirmedIds.has(f.id)), tr('cull_remove_rejects'));
-    addNotification(`${confirmedIds.size} ${tr('cull_removed_count')} — ${tr('cull_remove_undo_hint')}`, 'info');
+    if (!rejects.length || !window.confirm(tr('cull_remove_confirm') + ' (' + rejects.length + ')\n' + tr('cull_remove_undo_hint'))) return;
+    const ids = new Set(rejects.map(f => f.id));
+    onSetFiles(prev => prev.filter(f => !ids.has(f.id)), tr('cull_remove_rejects'));
+    addNotification(ids.size + ' ' + tr('cull_removed_count'), 'info');
   };
 
   // --- Odvozené pohledy ---
@@ -449,7 +182,6 @@ const CullingView: React.FC<CullingViewProps> = ({
     }
     return c;
   }, [files, cullingMap]);
-  const tasteProfile = getTasteProfile();
 
   const scored = files.length - counts.none;
 
@@ -458,7 +190,7 @@ const CullingView: React.FC<CullingViewProps> = ({
       const result = cullingMap.get(file.id);
       const decision = getEffectiveDecision(result);
       if (filter !== 'all' && decision !== filter) return false;
-      if (collapseSeries && result?.duplicateGroupId && !result.isBestInGroup && !expandedGroups.has(result.duplicateGroupId)) {
+      if (filter === 'all' && collapseSeries && result?.duplicateGroupId && !result.isBestInGroup && !expandedGroups.has(result.duplicateGroupId)) {
         return false;
       }
       return true;
@@ -471,6 +203,7 @@ const CullingView: React.FC<CullingViewProps> = ({
   // Klávesy jako v profi cullingu: šipky = fokus, K/R/X = verdikt.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (sessionRef.current) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
@@ -500,10 +233,7 @@ const CullingView: React.FC<CullingViewProps> = ({
     return () => window.removeEventListener('keydown', handler);
   }, [visibleFiles, focusedId]);
 
-  const phaseLabel = phase === 'heuristics' ? tr('cull_phase_heuristics')
-    : phase === 'genre' ? tr('cull_phase_genre')
-    : phase === 'ai' ? tr('cull_phase_ai')
-    : null;
+  const phaseLabel = phase === 'analyzing' ? tr('cull_phase_local') : phase === 'grouping' ? tr('cull_phase_grouping') : null;
 
   const translateTag = (tag: string) => tag.startsWith('cull_') ? tr(tag) : tag;
 
@@ -524,9 +254,9 @@ const CullingView: React.FC<CullingViewProps> = ({
           ${isFocused ? `ring-2 ${style?.ring ?? 'ring-fm-blue'} shadow-lg` : 'hover:ring-1 hover:ring-gray-600'}`}
         onClick={() => setFocusedId(file.id)}
       >
-        <img src={file.previewUrl} className="w-full h-full object-cover" loading="lazy" />
+        <img src={file.previewUrl} className="w-full h-full object-cover" loading="lazy" alt={file.file.name} />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/30 opacity-80" />
-        {isRunning && (!result || result.aiStatus === 'pending') && <div className="fm-scanline" />}
+        {isRunning && !result && <div className="fm-scanline" />}
 
         {/* Verdikt + skóre */}
         <div className="absolute top-2 left-2 flex items-center gap-1.5">
@@ -544,18 +274,8 @@ const CullingView: React.FC<CullingViewProps> = ({
         {result && (
           <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
             <span className="bg-black/60 backdrop-blur text-white text-[11px] font-mono font-bold px-1.5 py-0.5 rounded">
-              {result.ai?.aiScore ?? result.finalScore}
+              {result.engineVersion === CULLING_ENGINE_VERSION ? result.finalScore : '—'}
             </span>
-            {(result.faceCount ?? 0) > 0 && (
-              <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full border backdrop-blur ${
-                (result.eyeBlink ?? 0) >= 0.5
-                  ? 'bg-fm-red/25 text-fm-red border-fm-red/40'
-                  : 'bg-black/55 text-gray-200 border-white/10'
-              }`}>
-                {result.faceCount} {tr('cull_faces')}
-                {(result.eyeBlink ?? 0) >= 0.5 ? ` · ${tr('cull_eyes_closed')}` : ''}
-              </span>
-            )}
           </div>
         )}
 
@@ -564,6 +284,7 @@ const CullingView: React.FC<CullingViewProps> = ({
           {(['keep', 'review', 'reject'] as CullingDecision[]).map(d => (
             <button
               key={d}
+              disabled={isRunning}
               onClick={(e) => { e.stopPropagation(); setManualDecision(file.id, d); }}
               className={`${DECISION_STYLE[d].chip} w-8 h-8 rounded-full text-xs font-black shadow-xl hover:scale-110 transition-transform`}
               title={tr(`cull_decision_${d}`)}
@@ -573,12 +294,12 @@ const CullingView: React.FC<CullingViewProps> = ({
           ))}
         </div>
 
-        {/* Patka: název + AI shrnutí + rizika */}
+        {/* Patka: název + technické důvody + rizika */}
         <div className="absolute bottom-0 inset-x-0 p-2.5">
           <p className="text-[11px] text-gray-300 truncate font-mono">{file.file.name}</p>
-          {result?.ai?.summary && !inStrip && (
-            <p className="text-[11px] text-gray-200 leading-snug line-clamp-2 mt-0.5">{result.ai.summary}</p>
-          )}
+          {result && !inStrip && <p className="text-[11px] text-gray-200 leading-snug line-clamp-2 mt-0.5">
+            {result.engineVersion === CULLING_ENGINE_VERSION ? result.reasons.map(translateTag).join(' · ') : tr('cull_reason_reanalyze')}
+          </p>}
           {result && result.risks.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {result.risks.slice(0, 2).map((risk, i) => (
@@ -628,93 +349,20 @@ const CullingView: React.FC<CullingViewProps> = ({
             <p className="text-xs text-gray-400 leading-relaxed">{tr('cull_desc')}</p>
           </div>
 
-          {/* Žánr */}
           <div className="space-y-2">
-            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_genre')}</label>
-            <select
-              value={genreInfo?.manual ? genreInfo.genre : 'auto'}
-              onChange={(e) => handleGenreChange(e.target.value)}
-              className="w-full bg-elevated border border-border-subtle rounded-xl px-3 py-2.5 text-xs text-white focus:border-fm-blue focus:outline-none"
-            >
-              <option value="auto">{tr('cull_genre_auto')}</option>
-              {CULLING_GENRES.map(g => (
-                <option key={g} value={g}>{GENRE_PROFILES[g].label}</option>
-              ))}
+            <label htmlFor="culling-genre" className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">{tr('cull_genre')}</label>
+            <select id="culling-genre" value={genre} disabled={isRunning} onChange={e => handleGenreChange(e.target.value)}
+              className="w-full bg-elevated border border-border-subtle rounded-xl px-3 py-2.5 text-xs text-white focus:border-fm-blue focus:outline-none">
+              {CULLING_GENRES.map(g => <option key={g} value={g}>{tr('cull_genre_' + g)}</option>)}
             </select>
-            {genreInfo && !genreInfo.manual && (
-              <p className="text-[11px] text-gray-400 pl-1 leading-relaxed">
-                <span className="text-fm-green font-bold">{GENRE_PROFILES[genreInfo.genre].label}</span>
-                {' '}({genreInfo.confidence} %) — {genreInfo.note}
-              </p>
-            )}
+            <p className="text-[11px] text-gray-400 leading-relaxed">{tr('cull_genre_hint')}</p>
           </div>
-
-          {/* Brief */}
-          <div className="space-y-2">
-            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_brief')}</label>
-            <textarea
-              value={brief}
-              onChange={(e) => setBrief(e.target.value)}
-              maxLength={500}
-              rows={3}
-              placeholder={tr('cull_brief_placeholder')}
-              className="w-full bg-elevated border border-border-subtle rounded-xl px-3 py-2.5 text-xs text-white placeholder-gray-600 resize-none focus:border-fm-blue focus:outline-none"
-            />
-          </div>
-
-          {/* Režim AI kontroly */}
-          <div className="space-y-2">
-            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest pl-1">{tr('cull_mode_label')}</label>
-            <div className="grid grid-cols-2 gap-1.5">
-              {(['safe', 'economy'] as CullingMode[]).map(m => (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  disabled={isRunning}
-                  className={`py-2 rounded-lg text-[11px] font-bold uppercase transition-colors ${
-                    mode === m
-                      ? 'bg-white/10 text-white border border-white/25'
-                      : 'bg-elevated text-gray-500 border border-transparent hover:text-gray-300'
-                  }`}
-                >
-                  {tr(`cull_mode_${m}`)}
-                </button>
-              ))}
-            </div>
-            {mode === 'safe' ? (
-              <p className="text-[11px] text-gray-400 pl-1 leading-relaxed">{tr('cull_mode_safe_desc')}</p>
-            ) : (
-              <p className="text-[11px] text-fm-red leading-relaxed border border-fm-red/30 bg-fm-red/10 rounded-lg px-2.5 py-2">
-                {tr('cull_mode_economy_warning')}
-              </p>
-            )}
-          </div>
-
-          {/* Lokální profil vkusu */}
-          <div className="rounded-xl border border-border-subtle bg-elevated/70 px-3 py-2.5 space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
-                {tr('cull_taste_title')}
-              </span>
-              <span className={`text-[11px] font-mono ${tasteProfile.ready ? 'text-fm-green' : 'text-gray-500'}`}>
-                {tasteProfile.samples}/{tasteProfile.minSamples}
-              </span>
-            </div>
-            <div className="h-1 rounded-full bg-black/40 overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-fm-magenta via-fm-blue to-fm-green transition-all"
-                style={{ width: `${Math.min(100, (tasteProfile.samples / tasteProfile.minSamples) * 100)}%` }}
-              />
-            </div>
-            <p className="text-[11px] text-gray-400 leading-relaxed">
-              {tasteProfile.ready ? tr('cull_taste_ready') : tr('cull_taste_learning')}
-            </p>
-          </div>
+          <p className="text-[11px] text-gray-400 leading-relaxed border border-border-subtle rounded-xl p-3">{tr('cull_limits')}</p>
 
           {/* Spuštění */}
           {!isRunning ? (
             <button
-              onClick={runCulling}
+              onClick={() => void runCulling()}
               disabled={files.length === 0}
               className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-fm-magenta via-fm-blue to-fm-green text-white text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 transition-all hover:shadow-[0_0_20px_rgba(47,111,224,0.45)] disabled:opacity-40 disabled:cursor-not-allowed"
             >
@@ -763,99 +411,34 @@ const CullingView: React.FC<CullingViewProps> = ({
             </div>
           )}
 
-          {/* Ostrost subjektu — proč culling vyřadil (nebo nevyřadil) to, co vyřadil. */}
-          {(sharpnessStats || subjectStats) && (
-            <div className="glass-panel rounded-2xl p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                  {tr('cull_sharp_title')}
-                </span>
-                <span className="font-mono text-sm text-fm-blue">
-                  {sharpnessStats ? Math.round(sharpnessStats.median) : '—'}
-                </span>
-              </div>
-              {subjectStats && (
-                <div className="flex items-center justify-between text-[11px] text-gray-500">
-                  <span>{tr('cull_sharp_subject')}</span>
-                  <span className="font-mono text-gray-300">
-                    {subjectStats.found} / {subjectStats.total}
-                  </span>
-                </div>
-              )}
-              {subjectStats && subjectStats.total > 0 && subjectStats.found < subjectStats.total * 0.3 && (
-                <p className="text-[11px] text-gray-600 leading-snug pt-1">
-                  {tr('cull_sharp_no_subject')}
-                </p>
-              )}
-              {sharpnessStats && (
-              <>
-              <div className="flex items-center justify-between text-[11px] text-gray-500">
-                <span>{tr('cull_sharp_range')}</span>
-                <span className="font-mono text-gray-300">
-                  {Math.round(sharpnessStats.min)} – {Math.round(sharpnessStats.max)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-gray-500">
-                <span>{tr('cull_sharp_p10')}</span>
-                <span className="font-mono text-gray-300">{Math.round(sharpnessStats.p10)}</span>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-gray-500">
-                <span>{tr('cull_sharp_thresholds')}</span>
-                <span className="font-mono text-gray-300">
-                  {Math.round(sharpnessStats.softThreshold)} / {Math.round(sharpnessStats.badThreshold)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-gray-500">
-                <span>{tr('cull_sharp_below')}</span>
-                <span className="font-mono text-gray-300">
-                  {sharpnessStats.softCount} / {sharpnessStats.badCount}
-                </span>
-              </div>
-              {sharpnessStats.softCount === 0 && (
-                <p className="text-[11px] text-gray-600 leading-snug pt-1">
-                  {tr('cull_sharp_even_set')}
-                </p>
-              )}
-              </>
-              )}
-            </div>
-          )}
-
-          {/* Spotřeba AI za tenhle běh — účtenka, ne odhad. */}
-          {usage.calls > 0 && (
-            <div className="glass-panel rounded-2xl p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                  {tr('cull_usage_title')}
-                </span>
-                <span className="font-mono text-sm text-fm-green">
-                  {formatUsd(usage.costUsd)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-gray-500">
-                <span>{tr('cull_usage_calls')}</span>
-                <span className="font-mono text-gray-300">{usage.calls}</span>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-gray-500">
-                <span>{tr('cull_usage_per_photo')}</span>
-                <span className="font-mono text-gray-300">
-                  {formatUsd(usage.costUsd / usage.calls)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-gray-500">
-                <span>{tr('cull_usage_tokens')}</span>
-                <span className="font-mono text-gray-300">
-                  {formatTokens(usage.promptTokens)} / {formatTokens(usage.outputTokens)}
-                </span>
-              </div>
-              {usage.thoughtTokens > 0 && (
-                <div className="flex items-center justify-between text-[11px] text-gray-500">
-                  <span>{tr('cull_usage_thinking')}</span>
-                  <span className="font-mono text-gray-300">{formatTokens(usage.thoughtTokens)}</span>
-                </div>
-              )}
-            </div>
-          )}
+          {focusedId && cullingMap.get(focusedId) && (() => {
+            const result = cullingMap.get(focusedId)!;
+            const technical = result.engineVersion === CULLING_ENGINE_VERSION ? result.metrics.technical : undefined;
+            return <div className="glass-panel rounded-2xl p-4 space-y-3" data-testid="culling-detail">
+              <h3 className="text-xs font-bold">{tr('cull_detail_title')}</h3>
+              <p className="text-[11px] text-gray-400">{tr(result.source === 'embedded-jpeg-preview' ? 'cull_source_raw_preview' : 'cull_source_image')}</p>
+              {technical && <dl className="text-[11px] space-y-1">
+                {[[tr('cull_metric_preview'), technical.width + ' × ' + technical.height],
+                  [tr('cull_metric_detail'), String(Math.round(technical.laplacianVariance))],
+                  [tr('cull_metric_range'), technical.p5 + ' – ' + technical.p95],
+                  [tr('cull_metric_highlights'), (result.metrics.highlightClipping * 100).toFixed(1) + ' %'],
+                  [tr('cull_metric_shadows'), (result.metrics.shadowClipping * 100).toFixed(1) + ' %'],
+                  [tr('cull_metric_noise'), technical.noiseEstimate.toFixed(1) + ' / 255'],
+                  [tr('cull_metric_evidence'), Math.round(technical.detailConfidence * 100) + ' / 100'],
+                ].map(([label, value]) => <div key={label} className="flex justify-between gap-2"><dt className="text-gray-400">{label}</dt><dd className="font-mono">{value}</dd></div>)}
+              </dl>}
+              {result.scoreBreakdown && <dl className="text-[11px] space-y-1">
+                {Object.entries(result.scoreBreakdown).map(([part, value]) => <div key={part} className="flex justify-between gap-2">
+                  <dt className="text-gray-400">{tr('cull_part_' + part)}</dt><dd className="font-mono">{value.contribution.toFixed(1)} / {Math.round(value.weight * 100)}</dd>
+                </div>)}
+              </dl>}
+              <p className="text-[11px] text-gray-400">{tr('cull_score_hint')}</p>
+              {result.exif && <p className="text-[11px] text-gray-400 font-mono">
+                {result.exif.iso ? 'ISO ' + result.exif.iso + ' · ' : ''}{result.exif.aperture ? 'f/' + result.exif.aperture + ' · ' : ''}
+                {result.exif.exposureTime ? result.exif.exposureTime.toFixed(4) + ' s' : ''}
+              </p>}
+            </div>;
+          })()}
 
           {/* Filtry + série */}
           <div className="space-y-3">
@@ -888,6 +471,7 @@ const CullingView: React.FC<CullingViewProps> = ({
             <p className="text-[11px] text-gray-600 text-center font-mono">{tr('cull_keyboard_hint')}</p>
             {counts.reject > 0 && (
               <button
+                disabled={isRunning}
                 onClick={removeRejects}
                 className="w-full py-2.5 rounded-xl bg-elevated border border-border-subtle hover:border-fm-red hover:text-fm-red text-xs text-gray-300 font-bold uppercase"
               >
@@ -940,6 +524,7 @@ const CullingView: React.FC<CullingViewProps> = ({
                         <div key={member.id} className="space-y-1.5">
                           {renderCard(member, true)}
                           <button
+                            disabled={isRunning}
                             onClick={() => setSeriesWinner(groupId, member.id)}
                             className={`w-full py-1 rounded-lg text-[11px] font-bold uppercase transition-colors ${
                               cullingMap.get(member.id)?.isBestInGroup

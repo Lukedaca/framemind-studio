@@ -17,6 +17,7 @@ import ApiKeyModal from './components/ApiKeyModal';
 import type { UploadedFile, View, EditorAction, History, HistoryEntry } from './types';
 import { initApiKeyStorage } from './utils/apiKey';
 import { normalizeImageFile } from './utils/imageProcessor';
+import { getRawOriginal } from './utils/rawProvenance';
 import { useTranslation } from './contexts/LanguageContext';
 import { useProject } from './contexts/ProjectContext';
 
@@ -143,11 +144,14 @@ function App() {
           continue;
         }
         try {
+          const rawOriginal = getRawOriginal(file);
           const normalizedFile = await normalizeImageFile(file);
           const previewUrl = URL.createObjectURL(normalizedFile);
           results[index] = {
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
             file: normalizedFile,
+            originalFile: rawOriginal ?? file,
+            cullingSource: rawOriginal ? 'embedded-jpeg-preview' : 'image',
             previewUrl,
             originalPreviewUrl: previewUrl,
           };
@@ -255,7 +259,6 @@ function App() {
           <CullingView
             title={t.pipeline_step_culling}
             onToggleSidebar={toggleSidebar}
-            onOpenApiKeyModal={openApiKey}
             files={files}
             onSetFiles={setFiles}
             addNotification={addNotification}
