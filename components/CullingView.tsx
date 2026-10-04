@@ -85,12 +85,13 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
       const r = workMap.get(file.id);
       return r?.engineVersion === CULLING_ENGINE_VERSION && r.analysisStatus === 'done' ? [{
         id: file.id, filename: file.file.name, signature: r.metrics.signature, aspectRatio: r.aspectRatio,
-        finalScore: r.finalScore, sharpness: r.metrics.technical?.laplacianVariance ?? 0, exif: r.exif,
+        finalScore: r.finalScore, sharpness: r.metrics.technical?.laplacianVariance ?? 0,
+        detailConfidence: r.metrics.technical?.detailConfidence ?? 0, exif: r.exif,
       }] : [];
     }));
     for (const [id, result] of workMap) {
       if (result.engineVersion !== CULLING_ENGINE_VERSION || result.analysisStatus !== 'done') continue;
-      const { duplicateGroupId, isBestInGroup, groupRank, groupKind, similarityToBest, relativeSharpness, scoreGap, ...base } = result;
+      const { duplicateGroupId, isBestInGroup, groupRank, groupKind, similarityToBest, relativeSharpness, scoreGap, referenceDetailConfidence, ...base } = result;
       workMap.set(id, rescoreCullingResult({ ...base, ...assignments.get(id) }, selectedGenre));
     }
   };

@@ -91,20 +91,35 @@ network APIs, AI/model services or telemetry. Original files are read-only.
   filenames never override conflicting capture times. Complete linkage avoids
   transitive scene chains. Large sets use bounded candidates and groups of at
   most 48; grouping is deliberately incomplete rather than increasingly broad.
-- Automatic results suggest keep/review. Rejection is manual; choosing a series
-  representative does not reject its alternatives. Reruns and profile changes
+- Automatic results suggest keep/review/reject. Local 1.1 adds explained rejection
+  suggestions for almost empty clipped previews, redundant near duplicates and
+  substantially softer variants of verified similar scenes with a measurable,
+  stronger reference. Low texture, isolated clipping and motion cues alone remain
+  review evidence. Scores retain profile weights when evidence is weak instead of
+  dropping sharpness weight and inflating the overall result. Choosing a series
+  representative preserves manual decisions. Reruns and profile changes
   preserve manual decisions. Legacy automatic results require fresh analysis
   and do not collapse older groups or reuse AI labels.
 - Import retains the session's original File and RAW preview provenance. RAW
   metadata comes from the original RAW, pixels from the extracted JPEG preview.
   Existing localStorage project storage still cannot persist original Files.
 
-Verification: 91 unit tests passed; typecheck and production build passed.
+Historical local-1.0 verification: 91 unit tests passed; typecheck and production build passed.
 Browser smoke passed import, preview bounds, manual decisions across reruns and
 profile changes, cancelled/confirmed set removal and stopping a 60-file batch.
 The actual worker produced local-1.0 results without AI fields; SHA-256 of the
 synthetic original stayed unchanged. External requests and page errors: zero.
 Artifacts are in output/playwright/ and ignored by Git.
+
+Local-1.1 verification (Studio 0.1.1): 113 tests passed across 17 files;
+typecheck and web/desktop frontend builds passed. The native WebView2 smoke
+used a separate application identifier and synthetic JPEGs, leaving the open
+installed application untouched. An informative copy and an empty black frame
+received automatic reject suggestions. Manual keep/review/reject survived
+reruns and a profile change; removal required confirmation and cancellation
+left the set intact. Stopping a 60-file run also passed. Culling external
+requests and page errors: zero. This is regression evidence, not calibration
+on the user's football gallery.
 
 Reproduce with npm run typecheck, npm run test:run, npm run build and
 node scripts/culling-local-smoke.mjs against a local Vite server on port 3100.

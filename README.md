@@ -104,10 +104,12 @@ Profil vyberete ručně; mění váhy technického skóre, nikoli obsahovou anal
 - Podobnost využívá obrazovou strukturu, barvy a hashe. Série navíc používají čas pořízení
   nebo návaznost názvů souborů. Seskupení nemusí najít všechny podobné snímky,
   zejména u velkých sad s omezeným hledáním kandidátů.
-- Automatika navrhuje pouze **ponechat** nebo **zkontrolovat**. Vyřazení je ruční.
+- Automatika navrhuje **ponechat**, **zkontrolovat** i **vyřadit**. Vyřazovací návrhy
+  mají konkrétní důvod: téměř prázdný plošně oříznutý náhled, nadbytečný téměř
+  totožný záběr nebo výrazně slabší detail oproti lepšímu snímku ověřené série.
 - **K** = ponechat, **R** = zkontrolovat, **X** = vyřadit.
 - Ruční volby zůstávají při opakované analýze i změně profilu.
-- Výběr reprezentanta série nevyřadí ostatní snímky.
+- Ruční výběr reprezentanta zachovává ruční verdikty ostatních snímků.
 - Odebrání vyřazených vyžaduje potvrzení a odstraní je ze sady v aplikaci.
   Originály na disku se nemažou.
 - Běh lze zastavit; hotová měření zůstávají k dispozici.

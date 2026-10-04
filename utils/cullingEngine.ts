@@ -4,7 +4,7 @@ import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, Cullin
 import { clamp01 } from './cullingMetrics';
 import { compareSignatures, isValidSignature, type SimilarityComparison } from './cullingSimilarity';
 
-export const CULLING_ENGINE_VERSION = 'local-1.0';
+export const CULLING_ENGINE_VERSION = 'local-1.1';
 export const SIMILARITY_EXACT_LIMIT = 320;
 export const MAX_SERIES_SIZE = 48;
 const PARTS: CullingScorePart[] = ['sharpness', 'exposure', 'clipping', 'noise', 'contrast', 'motion'];
@@ -24,10 +24,12 @@ export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGen
   const values = [metrics.sharpnessScore, metrics.exposureScore,
     1 - Math.min(1, (metrics.highlightClipping + metrics.shadowClipping) * 1.5),
     metrics.noiseScore, metrics.contrastScore, 1 - (technical?.motionBlurEstimate ?? 0)];
-  const total = weights.reduce((sum, w, i) => sum + w * confidence[i], 0);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
   return Object.fromEntries(PARTS.map((part, i) => {
-    const weight = weights[i] * confidence[i] / Math.max(1e-9, total);
-    const score = clamp01(values[i]) * 100;
+    const weight = weights[i] / Math.max(1e-9, total);
+    // Weak detail evidence must not remove its weight and inflate a blurred photo's score.
+    const evidence = clamp01(confidence[i]);
+    const score = (clamp01(values[i]) * evidence + 0.5 * (1 - evidence)) * 100;
     return [part, { score, weight, contribution: score * weight }];
   })) as CullingScoreBreakdown;
 }
@@ -37,7 +39,7 @@ export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre |
 }
 
 export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: number,
-  context: Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'relativeSharpness' | 'scoreGap'> = {}):
+  context: Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence'> = {}):
   { decision: CullingDecision; reasons: string[]; risks: string[] } {
   const technical = metrics.technical;
   if (!technical || !Object.values(technical).every(Number.isFinite)) {
@@ -47,7 +49,7 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
   const reasons: string[] = [];
   if (technical.detailConfidence < 0.15) risks.push('cull_risk_low_detail');
   else if (metrics.sharpnessScore >= 0.6) reasons.push('cull_reason_detail');
-  else if (metrics.sharpnessScore < 0.25) risks.push('cull_risk_preview_soft');
+  else if (metrics.sharpnessScore < 0.6) risks.push('cull_risk_preview_soft');
   if (metrics.highlightClipping > 0.1) risks.push('cull_risk_highlights');
   if (metrics.shadowClipping > 0.25) risks.push('cull_risk_shadows');
   if (Math.max(technical.redClip, technical.greenClip, technical.blueClip) > 0.2 && metrics.highlightClipping <= 0.1) risks.push('cull_risk_channel_clip');
@@ -61,9 +63,32 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
       if ((context.relativeSharpness ?? 1) < 0.5 && technical.detailConfidence >= 0.3) risks.push('cull_risk_soft_vs_series');
     }
   }
-  // Neither texture nor preview blur can prove a failed subject/moment.
-  // Automatic alternatives are review suggestions; rejection stays manual.
-  const decision = risks.length || finalScore < 65 ? 'review' : 'keep';
+  // A nearly empty clipped preview has lost essentially all luminance data.
+  // Isolated highlights, silhouettes and ordinary low-key/high-key photos do not qualify.
+  const emptyHighlights = metrics.highlightClipping >= 0.98 &&
+    Math.min(technical.redClip, technical.greenClip, technical.blueClip) >= 0.98;
+  const emptyShadows = metrics.shadowClipping >= 0.98 &&
+    Math.min(technical.redShadowClip, technical.greenShadowClip, technical.blueShadowClip) >= 0.98;
+  const emptyClippedPreview = (emptyHighlights || emptyShadows) && technical.dynamicRange <= 8 && technical.entropy < 1;
+  const alternative = !!context.duplicateGroupId && context.isBestInGroup === false;
+  const redundantCopy = alternative && context.groupKind === 'near-duplicate' &&
+    (context.similarityToBest ?? 0) >= 0.965;
+  // Relative rejection is restricted to verified similar frames with a measurable,
+  // technically stronger reference. Never rank unrelated photos by global texture.
+  const referenceScore = finalScore / Math.max(0.01, 1 - (context.scoreGap ?? 0));
+  const muchSofterAlternative = alternative && (context.groupKind === 'burst' || context.groupKind === 'near-duplicate') &&
+    (context.similarityToBest ?? 0) >= 0.84 && Number.isFinite(context.scoreGap) &&
+    (context.scoreGap ?? 0) < 1 &&
+    Number.isFinite(context.relativeSharpness) && (context.relativeSharpness ?? 1) >= 0 &&
+    (context.relativeSharpness ?? 1) < 0.35 && (context.scoreGap ?? 0) > 0.1 &&
+    (context.referenceDetailConfidence ?? 0) >= 0.35 && referenceScore >= 75;
+  const rejectReasons = [
+    ...(emptyClippedPreview ? ['cull_reason_empty_clipped'] : []),
+    ...(redundantCopy ? ['cull_reason_redundant_copy'] : []),
+    ...(muchSofterAlternative ? ['cull_reason_soft_alternative'] : []),
+  ];
+  const decision = rejectReasons.length ? 'reject' : risks.length || finalScore < 75 ? 'review' : 'keep';
+  reasons.unshift(...rejectReasons);
   if (decision === 'review') reasons.push('cull_reason_needs_review');
   return { decision, reasons, risks };
 }
@@ -105,6 +130,7 @@ export interface SimilarityInput {
   aspectRatio: number;
   finalScore: number;
   sharpness: number;
+  detailConfidence?: number;
   exif?: CullingExif;
 }
 export interface SimilarityAssignment {
@@ -115,6 +141,7 @@ export interface SimilarityAssignment {
   similarityToBest?: number;
   relativeSharpness?: number;
   scoreGap?: number;
+  referenceDetailConfidence?: number;
 }
 const lexical = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 
@@ -172,7 +199,7 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
   }
   for (const group of groups) {
     if (group.length < 2) continue;
-    group.sort((a, b) => b.finalScore - a.finalScore || lexical(a.id, b.id));
+    group.sort((a, b) => b.finalScore - a.finalScore || lexical(a.filename, b.filename) || lexical(a.id, b.id));
     const best = group[0];
     let nearDuplicate = true;
     for (let i = 0; i < group.length; i += 1) for (let j = 0; j < i; j += 1) {
@@ -184,6 +211,7 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
       groupKind: nearDuplicate ? 'near-duplicate' : 'burst', similarityToBest: pair(item, best)?.score ?? 1,
       relativeSharpness: Math.max(0, item.sharpness) / Math.max(1, best.sharpness),
       scoreGap: Math.max(0, best.finalScore - item.finalScore) / Math.max(1, best.finalScore),
+      referenceDetailConfidence: best.detailConfidence ?? 0,
     }));
   }
   return assignments;

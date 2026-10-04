@@ -17,9 +17,30 @@ function pixels(pixel: (x: number, y: number) => number | number[]): Uint8Clampe
 }
 const scene = (offset = 0) => readMetrics(pixels((x, y) => 85 + offset + Math.sin(x / 9) * 24 +
   Math.cos(y / 8) * 30 + ((Math.floor(x / 16) + Math.floor(y / 16)) % 2) * 32), WIDTH, HEIGHT);
+const detailedScene = () => pixels((x, y) => 90 + Math.sin(x / 9) * 24 + Math.cos(y / 8) * 30 +
+  ((Math.floor(x / 16) + Math.floor(y / 16)) % 2) * 32 + ((Math.floor(x / 2) + Math.floor(y / 2)) % 2 ? 36 : -36));
+function blur(data: Uint8ClampedArray, radius: number): Uint8ClampedArray {
+  const result = data.slice();
+  for (let y = 0; y < HEIGHT; y += 1) for (let x = 0; x < WIDTH; x += 1) {
+    let total = 0, count = 0;
+    for (let dy = -radius; dy <= radius; dy += 1) for (let dx = -radius; dx <= radius; dx += 1) {
+      const sx = Math.max(0, Math.min(WIDTH - 1, x + dx)), sy = Math.max(0, Math.min(HEIGHT - 1, y + dy));
+      total += data[(sy * WIDTH + sx) * 4]; count += 1;
+    }
+    result.set([total / count, total / count, total / count, 255], (y * WIDTH + x) * 4);
+  }
+  return result;
+}
 function input(id: string, metrics: CullingMetrics, overrides: Partial<SimilarityInput> = {}): SimilarityInput {
   return { id, filename: 'IMG_' + id + '.jpg', signature: metrics.signature, aspectRatio: WIDTH / HEIGHT,
-    finalScore: 80, sharpness: metrics.technical!.laplacianVariance, ...overrides };
+    finalScore: 80, sharpness: metrics.technical!.laplacianVariance,
+    detailConfidence: metrics.technical!.detailConfidence, ...overrides };
+}
+
+function rankedPair(a: CullingMetrics, b: CullingMetrics) {
+  const results = [a, b].map(metrics => buildCullingResult({ metrics, aspectRatio: 4 / 3, source: 'image' }, 'other'));
+  const groups = computeSimilarityGroups(results.map((result, index) => input(String(index + 1), result.metrics, { finalScore: result.finalScore })));
+  return results.map((result, index) => rescoreCullingResult({ ...result, ...groups.get(String(index + 1)) }, 'other'));
 }
 
 describe('bounded preview measurements', () => {
@@ -60,11 +81,55 @@ describe('bounded preview measurements', () => {
   });
 });
 
-describe('conservative technical suggestions', () => {
-  it('flat, clipped or low-detail images require review, never automatic deletion', () => {
-    for (const value of [0, 128, 255]) {
+describe('local keep, review and reject suggestions', () => {
+  it('almost entirely clipped previews receive an explained reject suggestion', () => {
+    for (const value of [0, 255]) {
       const m = readMetrics(pixels(() => value), WIDTH, HEIGHT);
+      const verdict = deriveTechnicalDecision(m, computeFinalScore(m, 'other'));
+      expect(verdict.decision).toBe('reject');
+      expect(verdict.reasons).toContain('cull_reason_empty_clipped');
+    }
+  });
+  it('low-texture scenes, silhouettes and single-channel clipping are not auto-rejected', () => {
+    for (const data of [pixels(() => 128), pixels(x => x < WIDTH / 2 ? 0 : 150), pixels(() => [255, 100, 100, 255])]) {
+      const m = readMetrics(data, WIDTH, HEIGHT);
       expect(deriveTechnicalDecision(m, computeFinalScore(m, 'other')).decision).toBe('review');
+    }
+  });
+  it('weak sharpness evidence cannot boost a soft photo by dropping its weight', () => {
+    const sharp = readMetrics(detailedScene(), WIDTH, HEIGHT);
+    const soft = { ...sharp, sharpnessScore: 0.2, technical: { ...sharp.technical!, detailConfidence: 0 } };
+    for (const genre of CULLING_GENRES) {
+      expect(computeFinalScore(soft, genre)).toBeLessThan(computeFinalScore(sharp, genre));
+      expect(computeScoreBreakdown(soft, genre).sharpness.weight).toBeCloseTo(computeScoreBreakdown(sharp, genre).sharpness.weight);
+    }
+  });
+  it('an unchanged informative copy is rejected while its representative stays available', () => {
+    const m = readMetrics(detailedScene(), WIDTH, HEIGHT);
+    const [representative, copy] = rankedPair(m, m);
+    expect(representative.isBestInGroup).toBe(true); expect(representative.decision).not.toBe('reject');
+    expect(copy.decision).toBe('reject'); expect(copy.reasons).toContain('cull_reason_redundant_copy');
+    expect(getEffectiveDecision({ ...copy, manualDecision: 'keep' })).toBe('keep');
+    expect(getEffectiveDecision({ ...copy, manualDecision: 'review' })).toBe('review');
+  });
+  it('blur degrades the score and the weaker verified similar frame is rejected', () => {
+    const data = detailedScene();
+    const sharp = readMetrics(data, WIDTH, HEIGHT), soft = readMetrics(blur(data, 3), WIDTH, HEIGHT);
+    expect(computeFinalScore(soft, 'other')).toBeLessThan(computeFinalScore(sharp, 'other'));
+    const [reference, alternative] = rankedPair(sharp, soft);
+    expect(reference.isBestInGroup).toBe(true); expect(reference.decision).not.toBe('reject');
+    expect(alternative.duplicateGroupId).toBe(reference.duplicateGroupId);
+    expect(alternative.decision).toBe('reject');
+  });
+  it('unrelated soft frames are reviewed rather than rejected against the whole gallery', () => {
+    const soft = readMetrics(blur(detailedScene(), 3), WIDTH, HEIGHT);
+    expect(buildCullingResult({ metrics: soft, aspectRatio: 4 / 3, source: 'image' }, 'other').decision).toBe('review');
+  });
+  it('there is no reject quota for a clean gallery of distinct frames', () => {
+    const base = readMetrics(detailedScene(), WIDTH, HEIGHT);
+    for (const genre of CULLING_GENRES) {
+      const result = buildCullingResult({ metrics: base, aspectRatio: 4 / 3, source: 'image' }, genre);
+      expect(result.decision).toBe('keep');
     }
   });
   it('missing or corrupt evidence never produces an automatic keep', () => {
@@ -103,6 +168,12 @@ describe('local series without hash-only or transitive grouping', () => {
     expect(groups.get('001')!.duplicateGroupId).toBeDefined();
     expect(groups.get('001')!.duplicateGroupId).toBe(groups.get('002')!.duplicateGroupId);
     expect(groups.get('002')!.isBestInGroup).toBe(true); expect(groups.get('001')!.groupKind).toBe('near-duplicate');
+  });
+  it('equal scores choose a stable filename instead of a random import id', () => {
+    const m = scene();
+    const groups = computeSimilarityGroups([input('a', m, { filename: 'IMG_0002.jpg' }), input('z', m, { filename: 'IMG_0001.jpg' })]);
+    expect(groups.get('z')!.isBestInGroup).toBe(true);
+    expect(groups.get('a')!.isBestInGroup).toBe(false);
   });
   it('same uniform hash does not group empty images', () => {
     const black = readMetrics(pixels(() => 0), WIDTH, HEIGHT), white = readMetrics(pixels(() => 255), WIDTH, HEIGHT);

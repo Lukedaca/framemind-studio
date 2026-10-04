@@ -105,10 +105,12 @@ it changes technical score weights rather than analyzing image content.
 - Similarity uses image structure, colors and hashes. Series also use capture time
   or filename sequence. Grouping may miss similar images, especially in large
   sets with bounded candidate searches.
-- Automatic suggestions are **keep** or **review**. Rejection is manual.
+- Automatic suggestions include **keep**, **review** and **reject**. Reject suggestions
+  have a specific reason: an almost empty clipped preview, a redundant near identical
+  frame, or substantially weaker detail than a stronger frame in a verified series.
 - **K** = keep, **R** = review, **X** = reject.
 - Manual choices survive reruns and profile changes.
-- Choosing a series representative does not reject the other images.
+- Choosing a series representative preserves the other images' manual decisions.
 - Removing rejected images requires confirmation and removes them from the application set.
   Original files on disk are not deleted.
 - A run can be stopped; completed measurements remain available.

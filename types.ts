@@ -128,6 +128,7 @@ export interface CullingResult {
   similarityToBest?: number;
   relativeSharpness?: number;
   scoreGap?: number; // fractional difference from the best technical score
+  referenceDetailConfidence?: number; // detail evidence of the technical series representative
 }
 
 export interface SocialMediaContent {

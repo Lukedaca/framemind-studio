@@ -1,6 +1,6 @@
 [package]
 name = "framemind-studio"
-version = "0.1.0"
+version = "0.1.1"
 description = "FrameMind Studio desktop application"
 authors = ["Lukáš Drštička"]
 license = "MIT"

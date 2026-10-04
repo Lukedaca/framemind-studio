@@ -63,6 +63,14 @@ try {
   assert.equal(await page.getByText('Chyba čtení / obnov import', { exact: true }).count(), 0);
   await page.getByRole('checkbox', { name: 'Sbalit série (jeden reprezentant)' }).uncheck();
   assert.equal(await page.locator('.fm-grid-photos > div').count(), 3);
+  const namedCard = name => page.locator('.fm-grid-photos > div').filter({ has: page.getByText(name, { exact: true }) });
+  assert.match(await namedCard('IMG_0002.jpg').innerText(), /Nadbytečný téměř totožný záběr/);
+  assert.match(await namedCard('IMG_0003.jpg').innerText(), /Téměř celý náhled bez jasových dat/);
+  report.automaticRejectSuggestions = 2;
+  await namedCard('IMG_0002.jpg').click({ position: { x: 10, y: 80 } });
+  await page.keyboard.press('k');
+  await namedCard('IMG_0003.jpg').click({ position: { x: 10, y: 80 } });
+  await page.keyboard.press('r');
   const card = () => page.locator('.fm-grid-photos > div').filter({ has: page.getByText('IMG_0001.jpg', { exact: true }) });
   await card().click({ position: { x: 10, y: 80 } }); await page.getByTestId('culling-detail').waitFor();
   assert.match(await page.getByTestId('culling-detail').innerText(), /768 × 512/);
@@ -71,6 +79,8 @@ try {
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor({ timeout: 30000 });
   assert.equal(await card().getByText('Ručně', { exact: true }).count(), 1, 'Manual choice lost on rerun');
+  assert.equal(await namedCard('IMG_0002.jpg').getByText('Ručně', { exact: true }).count(), 1, 'Manual keep override lost on rerun');
+  assert.equal(await namedCard('IMG_0003.jpg').getByText('Ručně', { exact: true }).count(), 1, 'Manual review override lost on rerun');
   await page.locator('#culling-genre').selectOption('product'); await ready();
   assert.equal(await card().getByText('Ručně', { exact: true }).count(), 1, 'Manual choice lost on profile change');
   const remove = page.getByRole('button', { name: 'Odebrat vyřazené ze sady (1)', exact: true });
@@ -111,7 +121,7 @@ try {
     } finally { session.close(); }
   }, images.image);
   if (!desktopCdp) {
-    assert.equal(report.worker.version, 'local-1.0'); assert.equal(report.worker.originalUnchanged, true);
+    assert.equal(report.worker.version, 'local-1.1'); assert.equal(report.worker.originalUnchanged, true);
     assert.equal(report.worker.aiPresent, false); assert.equal(report.worker.signatureLength, 1024);
   }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
