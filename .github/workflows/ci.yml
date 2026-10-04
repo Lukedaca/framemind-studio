@@ -28,3 +28,5 @@ jobs:
 
       - name: Build verification (no deployment)
         run: npm run build
+      - name: Desktop frontend verification
+        run: npm run build:desktop

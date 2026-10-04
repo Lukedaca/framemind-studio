@@ -1,0 +1,52 @@
+name: Windows desktop build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.css'
+      - 'index.html'
+      - 'public/**'
+      - 'package*.json'
+      - 'vite.config.ts'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.css'
+      - 'index.html'
+      - 'public/**'
+      - 'package*.json'
+      - 'vite.config.ts'
+      - '.github/workflows/desktop.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Select stable Rust
+        run: rustup default stable
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build Windows installer (no deployment)
+        run: npm run desktop:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FrameMind-Studio-Windows-x64
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

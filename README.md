@@ -1,7 +1,7 @@
 <div align="center">
   <img src="public/brand/readme-logo-cs.png" alt="FrameMind" width="440" />
   <h1>FrameMind Studio</h1>
-  <p>Import, výběr, úpravy, retuš a export fotografií v prohlížeči.</p>
+  <p>Lokální desktopové fotostudio pro Windows: import, výběr, úpravy, retuš a export.</p>
   <p><a href="README.md">Česky</a> · <a href="README.en.md">English</a> · <a href="LICENSE">MIT</a></p>
 </div>
 
@@ -13,7 +13,26 @@ Autorem a správcem je [Lukáš Drštička (Lukedaca)](https://github.com/Lukeda
 Celé Studio zatím není plně offline: editor stále obsahuje dvě cloudové funkce
 a modely retuše i písma se stahují. Přesný stav je v části [Připojení a data](#připojení-a-data).
 
-## Spuštění lokálně
+## Instalace do Windows
+
+Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v Reactu
+je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
+Vite, terminál ani externí prohlížeč.
+
+1. V [GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases) stáhněte
+   Windows x64 soubor `FrameMind-Studio_0.1.0_x64-setup.exe`.
+2. Spusťte instalátor a vyberte češtinu nebo angličtinu. Instalace je pro současného uživatele.
+3. Na závěrečné stránce ponechte volbu vytvoření zástupce na ploše.
+4. Studio spusťte z plochy nebo nabídky Start. Odinstalace je dostupná v nastavení aplikací Windows.
+
+Uživatel nepotřebuje Git, Node.js ani Rust. Instalátor obsahuje offline instalační
+program WebView2 pro počítače, kde runtime chybí; proto má přibližně 213 MiB.
+Verze 0.1.0 je předběžná a instalátor zatím není podepsaný certifikátem vydavatele.
+Vydání pro macOS a Linux nebyla sestavena ani ověřena.
+
+Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md).
+
+## Vývoj a spuštění ze zdrojů
 
 Potřebujete Git, Node.js 22 a npm. Node 22 používá také CI.
 
@@ -35,13 +54,25 @@ npm run preview
 ```
 
 Build vzniká v `dist/`; `preview` jej otevře na lokálním serveru, obvykle na portu 4173.
-GitHub Actions provádí kontrolu typů, testy a build. Nic nenasazuje.
+GitHub Actions provádí kontrolu typů, testy a oba frontendové buildy.
+Samostatný Windows workflow sestavuje instalátor jako stažitelný artefakt. Nic nenasazuje.
 Automatické Vercel deploye při změnách v Gitu jsou vypnuté v `vercel.json`.
 
 Pro culling musí prohlížeč podporovat Web Workers, `createImageBitmap` ve workeru
 a `OffscreenCanvas`. Bez nich analýza ohlásí chybu; těžký výpočet se nepřesouvá
 na hlavní vlákno. WebGPU retuše závisí na prohlížeči a ovladači; existuje také
 WASM cesta. Dev i preview posílají hlavičky pro cross-origin izolaci.
+
+Pro sestavení desktopové verze jsou navíc potřeba Rust stable, MSVC C++ nástroje,
+Windows SDK a WebView2. Postup popisuje [desktopová dokumentace](docs/desktop.md).
+
+```bash
+npm run desktop:dev
+npm run desktop:build
+```
+
+Instalátor vzniká v `src-tauri/target/release/bundle/nsis/`.
+`npm run build:desktop` sestaví pouze frontend do `dist-desktop/`, nikoli instalátor.
 
 ## Co aplikace obsahuje
 
@@ -50,13 +81,14 @@ WASM cesta. Dev i preview posílají hlavičky pro cross-origin izolaci.
 | Import | JPEG, PNG, WebP; podporované RAW přípony se zpracují přes vložený JPEG náhled |
 | Culling | Technické metriky, podobné záběry, ruční profily, filtry a volby K / R / X |
 | Úpravy | Automatická úprava z histogramu, posuvníky a ořez |
-| Lokální retuš | Štětec, klikací chytré laso, ONNX modely v prohlížeči |
+| Lokální retuš | Štětec, klikací chytré laso, ONNX modely v lokálním WebView nebo prohlížeči |
 | Export | JPEG / PNG, kvalita, velikost a vodoznak; jednotlivá fotka nebo sada |
-| Projekty a klienti | Lokální CRM a náhled galerie v tomto prohlížeči |
-| Rozhraní | Čeština a angličtina, PWA konfigurace |
+| Projekty a klienti | Lokální CRM a náhled galerie v profilu aplikace nebo prohlížeče |
+| Rozhraní | Čeština a angličtina; Windows desktop, PWA konfigurace pouze pro webový build |
 
-Ukládání sady do složky používá File System Access API, pokud jej prohlížeč nabízí.
-Jinak se jednotlivé soubory stahují přes prohlížeč.
+Desktop používá systémové dialogy pro uložení jedné fotky i výběr složky pro sadu.
+Ve webovém vývojovém režimu ukládání používá File System Access API, pokud jej
+prohlížeč nabízí; jinak se jednotlivé soubory stahují přes prohlížeč.
 
 ## Culling bez AI
 
@@ -111,9 +143,9 @@ Výkon závisí na zařízení, prohlížeči a zvolené výpočetní cestě.
 | Funkce nebo zdroj | Připojení / uložení |
 |---|---|
 | Culling | Žádná síťová volání, modely ani klíče |
-| Instalace balíčků | `npm ci` stahuje závislosti z npm |
-| Retuš a klikací laso | Modely se načítají z Hugging Face, URL jsou připnuté na commit; cache je v prohlížeči |
-| Písmo rozhraní | Google Fonts; PWA má pravidla pro jejich cache |
+| Vývojové závislosti | `npm ci` a první Rust build stahují závislosti; instalovaný uživatel je nepotřebuje |
+| Retuš a klikací laso | Modely se načítají z Hugging Face, URL jsou připnuté na commit; cache je v profilu WebView nebo prohlížeče |
+| Písmo rozhraní | Google Fonts; webová PWA má pravidla pro jejich cache, desktop PWA nepoužívá |
 | Laso podle popisu | Stále používá Gemini a posílá zmenšenou fotografii, delší strana nejvýše 1 536 px |
 | Úprava textem | Stále posílá fotografii do Gemini |
 | Projekty a klienti | JSON v `localStorage`, bez synchronizace mezi zařízeními |
@@ -129,6 +161,11 @@ nejsou zaručené. PWA konfigurace sama nedokazuje úplný offline provoz všech
 `blob:` URL po nové relaci. Originály uchovejte na disku a výsledky exportujte.
 Smazání dat prohlížeče odstraní místní CRM; změna hostu nebo portu používá jiné úložiště.
 Náhled galerie není služba pro veřejné hostování fotografií.
+
+Desktop má vlastní profil WebView2 pod `%LOCALAPPDATA%\cz.framemind.studio\`.
+Data z původního prohlížeče se do něj automaticky nepřenesou. Také v desktopu je
+CRM stále JSON v `localStorage`, nikoli záloha či trvalé uložení fotografií.
+Při odinstalaci je odstranění dat samostatná volba.
 
 ## Omezení a ověření
 

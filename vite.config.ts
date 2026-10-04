@@ -38,7 +38,7 @@ export default defineConfig(({ mode }) => {
       plugins: [
         react(),
         detectApiKeys(),
-        VitePWA({
+        ...(mode === 'desktop' ? [] : [VitePWA({
           registerType: 'autoUpdate',
           manifest: {
             name: 'FrameMind Studio',
@@ -90,7 +90,7 @@ export default defineConfig(({ mode }) => {
               },
             ],
           },
-        }),
+        })]),
       ],
       resolve: {
         alias: {

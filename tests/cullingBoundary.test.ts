@@ -18,7 +18,8 @@ describe('culling dependency boundary', () => {
       expect(forbidden?.[0], relative).toBeUndefined();
       for (const match of source.matchAll(/(?:from\s+|import\s*\(|new URL\s*\()\s*['"]([^'"]+)['"]/g)) {
         if (!match[1].startsWith('.')) {
-          expect(['react', 'exifr']).toContain(match[1]); continue;
+          // Desktop confirmation uses in-process IPC to a native dialog.
+          expect(['react', 'exifr', '@tauri-apps/api/core', '@tauri-apps/plugin-dialog']).toContain(match[1]); continue;
         }
         const base = resolve(dirname(file), match[1]);
         const dependency = [base, base + '.ts', base + '.tsx'].find(p => existsSync(p));

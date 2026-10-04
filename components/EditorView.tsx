@@ -511,7 +511,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const handleDownload = () => withBusy(t.export_running, async () => {
     if (!activeFile) return;
     const { blob, fileName } = await buildExport(activeFile);
-    downloadBlob(blob, fileName);
+    await downloadBlob(blob, fileName);
   });
 
   const handleSaveAs = () => withBusy(t.export_running, async () => {
@@ -531,7 +531,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       used.set(fileName, seen + 1);
       const name = seen === 0 ? fileName : fileName.replace(/(\.[^.]+)?$/, `_${seen + 1}$1`);
       if (dir) await saveBlobToDirectory(dir, blob, name);
-      else downloadBlob(blob, name);
+      else await downloadBlob(blob, name);
     }
     addNotification(dir ? `${files.length} ${t.export_batch_saved_to_folder}` : t.export_batch_native_fallback, 'info');
   });

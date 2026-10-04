@@ -1,7 +1,7 @@
 <div align="center">
   <img src="public/brand/readme-logo-en.png" alt="FrameMind" width="440" />
   <h1>FrameMind Studio</h1>
-  <p>Import, select, adjust, retouch and export photographs in the browser.</p>
+  <p>A local Windows photo studio: import, select, adjust, retouch and export.</p>
   <p><a href="README.md">Česky</a> · <a href="README.en.md">English</a> · <a href="LICENSE">MIT</a></p>
 </div>
 
@@ -13,7 +13,26 @@ The author and maintainer is [Lukáš Drštička (Lukedaca)](https://github.com/
 The entire Studio is not fully offline yet: the editor still has two cloud features,
 and retouch models and fonts are downloaded. See [Connections and data](#connections-and-data).
 
-## Run locally
+## Install on Windows
+
+The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
+interface runs in a dedicated application window. The installed application
+does not require Vite, a terminal or an external browser.
+
+1. Download the Windows x64 `FrameMind-Studio_0.1.0_x64-setup.exe` from
+   [GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases).
+2. Run the installer and select Czech or English. Installation is per user.
+3. Keep the desktop shortcut option on the final page.
+4. Start Studio from the desktop or Start menu. Uninstall it through Windows application settings.
+
+Users do not need Git, Node.js or Rust. The installer includes an offline WebView2
+installer for computers without the runtime, making it about 213 MiB.
+Version 0.1.0 is a prerelease; its installer has no publisher certificate signature.
+macOS and Linux packages have not been built or verified.
+
+Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
+
+## Develop and run from source
 
 You need Git, Node.js 22 and npm. CI also uses Node 22.
 
@@ -35,13 +54,25 @@ npm run preview
 ```
 
 The build is written to `dist/`; preview serves it locally, usually on port 4173.
-GitHub Actions checks types, tests and the build. It does not deploy.
+GitHub Actions checks types, tests and both frontend builds. A separate Windows
+workflow builds an installer as a downloadable artifact. Neither deploys the application.
 Automatic Vercel deployments on Git changes are disabled in `vercel.json`.
 
 Culling requires Web Workers, `createImageBitmap` inside a worker and
 `OffscreenCanvas`. Without them, analysis reports an error rather than moving
 heavy processing to the main thread. WebGPU retouching depends on the browser
 and driver; a WASM path also exists. Dev and preview send cross-origin isolation headers.
+
+Desktop builds also require Rust stable, MSVC C++ tools, the Windows SDK and WebView2.
+See the [desktop guide](docs/desktop.md).
+
+```bash
+npm run desktop:dev
+npm run desktop:build
+```
+
+The installer is written to `src-tauri/target/release/bundle/nsis/`.
+`npm run build:desktop` only builds the frontend into `dist-desktop/`, not an installer.
 
 ## Current features
 
@@ -50,13 +81,14 @@ and driver; a WASM path also exists. Dev and preview send cross-origin isolation
 | Import | JPEG, PNG, WebP; supported RAW extensions use an embedded JPEG preview |
 | Culling | Technical metrics, similar frames, manual profiles, filters and K / R / X decisions |
 | Adjustments | Histogram-based auto adjustment, sliders and crop |
-| Local retouching | Brush, click-based smart lasso and ONNX models in the browser |
+| Local retouching | Brush, click-based smart lasso and ONNX models in the local WebView or browser |
 | Export | JPEG / PNG, quality, size and watermark; one photo or the set |
-| Projects and clients | Local CRM and a gallery preview in this browser |
-| Interface | Czech and English, PWA configuration |
+| Projects and clients | Local CRM and gallery preview in the application or browser profile |
+| Interface | Czech and English; Windows desktop, PWA configuration for web builds only |
 
-Saving a set to a folder uses the File System Access API when available.
-Otherwise, individual files are downloaded through the browser.
+Desktop exports use system dialogs for saving one photo or selecting a batch folder.
+The web development version uses the File System Access API when available;
+otherwise, individual files are downloaded through the browser.
 
 ## Culling without AI
 
@@ -111,9 +143,9 @@ Performance depends on the device, browser and execution path.
 | Feature or resource | Connection / storage |
 |---|---|
 | Culling | No network calls, models or keys |
-| Package installation | `npm ci` downloads dependencies from npm |
-| Retouching and click-based lasso | Models load from Hugging Face at commit-pinned URLs; cached in the browser |
-| Interface fonts | Google Fonts; PWA has caching rules |
+| Development dependencies | `npm ci` and the first Rust build download dependencies; installed users do not need them |
+| Retouching and click-based lasso | Models load from Hugging Face at commit-pinned URLs; cached in the WebView or browser profile |
+| Interface fonts | Google Fonts; web PWA caching rules apply only to web builds, desktop does not use PWA |
 | Lasso by description | Still uses Gemini and sends a downscaled photo, longer side at most 1,536 px |
 | Edit with text | Still sends the photo to Gemini |
 | Projects and clients | JSON in `localStorage`, without cross-device synchronization |
@@ -130,6 +162,11 @@ offline operation of every feature.
 original `blob:` URLs in a new session. Keep originals on disk and export results.
 Clearing browser data removes local CRM records; a different host or port uses
 different storage. Gallery preview is not a public photo-hosting service.
+
+Desktop has a separate WebView2 profile under `%LOCALAPPDATA%\cz.framemind.studio\`.
+Existing browser data is not migrated automatically. Desktop CRM is still JSON
+in `localStorage`, not photo backup or persistent photo storage. Deleting application
+data is a separate uninstall option.
 
 ## Limitations and verification
 

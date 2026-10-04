@@ -1,3 +1,6 @@
+import { isDesktopApp, pickDesktopDirectory, saveDesktopBlob, writeDesktopBlob } from './desktopFiles';
+import type { DesktopDirectory } from './desktopFiles';
+
 export type SupportedExportFormat = 'jpeg' | 'png';
 
 const MIME_BY_FORMAT: Record<SupportedExportFormat, string> = {
@@ -24,7 +27,7 @@ type SaveFilePicker = (options?: {
   }>;
 }>;
 
-export type NativeDirectoryHandle = {
+type BrowserDirectoryHandle = {
   getFileHandle: (name: string, options?: { create?: boolean }) => Promise<{
     createWritable: () => Promise<{
       write: (data: Blob) => Promise<void>;
@@ -33,9 +36,11 @@ export type NativeDirectoryHandle = {
   }>;
 };
 
+export type NativeDirectoryHandle = BrowserDirectoryHandle | DesktopDirectory;
+
 type DirectoryPicker = (options?: {
   mode?: 'read' | 'readwrite';
-}) => Promise<NativeDirectoryHandle>;
+}) => Promise<BrowserDirectoryHandle>;
 
 const getSaveFilePicker = (): SaveFilePicker | null => {
   if (typeof window === 'undefined') return null;
@@ -57,15 +62,19 @@ const getDirectoryPicker = (): DirectoryPicker | null => {
   return pickerWindow.showDirectoryPicker ?? null;
 };
 
-export const supportsNativeSavePicker = (): boolean => getSaveFilePicker() !== null;
-export const supportsNativeDirectoryPicker = (): boolean => getDirectoryPicker() !== null;
+export const supportsNativeSavePicker = (): boolean => isDesktopApp() || getSaveFilePicker() !== null;
+export const supportsNativeDirectoryPicker = (): boolean => isDesktopApp() || getDirectoryPicker() !== null;
 
 export const buildEditedFileName = (originalName: string, format: SupportedExportFormat): string => {
   const baseName = originalName.replace(/\.[^/.]+$/, '');
   return `edited_${baseName}.${EXTENSION_BY_FORMAT[format]}`;
 };
 
-export const downloadBlob = (blob: Blob, fileName: string) => {
+export const downloadBlob = async (blob: Blob, fileName: string): Promise<void> => {
+  if (isDesktopApp()) {
+    await saveDesktopBlob(blob, fileName, blob.type === 'image/png' ? 'png' : 'jpeg');
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -81,6 +90,10 @@ export const saveBlobWithPicker = async (
   fileName: string,
   format: SupportedExportFormat
 ) => {
+  if (isDesktopApp()) {
+    await saveDesktopBlob(blob, fileName, format);
+    return;
+  }
   const savePicker = getSaveFilePicker();
   if (!savePicker) {
     throw new Error('SAVE_PICKER_UNSUPPORTED');
@@ -104,6 +117,7 @@ export const saveBlobWithPicker = async (
 };
 
 export const pickDirectoryForSave = async (): Promise<NativeDirectoryHandle> => {
+  if (isDesktopApp()) return pickDesktopDirectory();
   const directoryPicker = getDirectoryPicker();
   if (!directoryPicker) {
     throw new Error('DIRECTORY_PICKER_UNSUPPORTED');
@@ -117,6 +131,10 @@ export const saveBlobToDirectory = async (
   blob: Blob,
   fileName: string
 ) => {
+  if ('desktopPath' in directoryHandle) {
+    await writeDesktopBlob(directoryHandle, blob, fileName);
+    return;
+  }
   const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(blob);

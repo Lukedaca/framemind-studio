@@ -8,7 +8,8 @@ changes must not introduce automatic application deployments.
 
 ## Report a problem
 
-Include the steps to reproduce, expected and actual behavior, browser/version,
+Include the steps to reproduce, expected and actual behavior, application version
+and desktop/browser mode, browser/version where relevant,
 operating system and relevant console errors. For import problems, describe the
 file type and camera model if known. Share a minimal sample only when you have
 permission to publish it. Do not put API keys, client details or private photos
@@ -27,11 +28,19 @@ user-visible behavior changes.
 npm run typecheck
 npm run test:run
 npm run build
+npm run build:desktop
 ```
 
 CI runs these checks on pushes to main and pull requests. It verifies a build,
 without deploying the application. Explain additional browser or real-image
 checks in the pull request; distinguish completed checks from unverified behavior.
+
+For native changes, build and exercise the Windows installer with
+`npm run desktop:build`; requirements and optional WebView smoke checks are in
+[docs/desktop.md](docs/desktop.md). Windows CI builds an installer artifact and
+does not publish a release or deploy anything. Keep `Cargo.lock` committed.
+Use and await `confirmAction` for confirmations. It selects the public Tauri
+dialog API in desktop mode and browser confirmation in web mode.
 
 ## Preserve culling boundaries
 

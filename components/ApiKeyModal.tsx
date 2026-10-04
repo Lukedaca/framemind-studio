@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { confirmAction } from '../utils/confirmAction';
 import { KeyIcon, XIcon } from './icons';
 import { useTranslation } from '../contexts/LanguageContext';
 import Button from './common/Button';
@@ -99,11 +100,11 @@ const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose }) => {
                             <input
                                 type="checkbox"
                                 checked={sessionOnly}
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                     const next = e.target.checked;
                                     if (!next) {
                                         // Persistent (localStorage) jen po explicitním souhlasu
-                                        if (!window.confirm(t.apikey_persist_confirm)) return;
+                                        if (!await confirmAction(t.apikey_persist_confirm)) return;
                                     }
                                     setSessionOnlyState(next);
                                     setApiKeyStorageMode(next ? 'session' : 'persistent');

@@ -18,7 +18,7 @@
     <div id="root"></div>
     <script>
       // Force SW update - smaže starý cache a reload
-      if ('serviceWorker' in navigator) {
+      if ('serviceWorker' in navigator && location.hostname !== 'tauri.localhost') {
         navigator.serviceWorker.getRegistrations().then(function(regs) {
           regs.forEach(function(reg) {
             reg.update();

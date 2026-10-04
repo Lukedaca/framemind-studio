@@ -5,6 +5,7 @@ import { CullingSession } from '../services/cullingSession';
 import { SparklesIcon, StackIcon, XCircleIcon } from './icons';
 import Aperture from './common/Aperture';
 import Header from './Header';
+import { confirmAction } from '../utils/confirmAction';
 import { useTranslation } from '../contexts/LanguageContext';
 
 interface CullingViewProps {
@@ -162,10 +163,10 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     const nextGenre = value as CullingGenre; setGenre(nextGenre);
     if (mapRef.current.size) void runCulling(nextGenre, true);
   };
-  const removeRejects = () => {
+  const removeRejects = async () => {
     if (sessionRef.current) return;
     const rejects = files.filter(f => getEffectiveDecision(cullingMap.get(f.id)) === 'reject');
-    if (!rejects.length || !window.confirm(tr('cull_remove_confirm') + ' (' + rejects.length + ')\n' + tr('cull_remove_undo_hint'))) return;
+    if (!rejects.length || !await confirmAction(tr('cull_remove_confirm') + ' (' + rejects.length + ')\n' + tr('cull_remove_undo_hint'))) return;
     const ids = new Set(rejects.map(f => f.id));
     onSetFiles(prev => prev.filter(f => !ids.has(f.id)), tr('cull_remove_rejects'));
     addNotification(ids.size + ' ' + tr('cull_removed_count'), 'info');
