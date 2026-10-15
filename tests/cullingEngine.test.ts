@@ -3,7 +3,7 @@ import { CULLING_ENGINE_VERSION, CULLING_GENRES, buildCullingResult, computeFina
   computeSimilarityGroups, deriveTechnicalDecision, getEffectiveDecision, getVerdictSource, rescoreCullingResult,
   type SimilarityInput } from '../utils/cullingEngine';
 import { PREVIEW_MAX_SIDE, readMetrics } from '../utils/cullingMetrics';
-import { compareSignatures, isValidSignature } from '../utils/cullingSimilarity';
+import { compareAlignedSignatures, compareSignatures, isValidSignature } from '../utils/cullingSimilarity';
 import type { CullingMetrics } from '../types';
 
 const WIDTH = 128, HEIGHT = 96;
@@ -162,6 +162,24 @@ describe('local keep, review and reject suggestions', () => {
 });
 
 describe('local series without hash-only or transitive grouping', () => {
+  it('camera translation supports a burst without claiming identical action', () => {
+    const shifted = readMetrics(pixels((x, y) => 85 + Math.sin((x - 8) / 9) * 24 + Math.cos((y - 3) / 8) * 30 +
+      ((Math.floor((x - 8) / 16) + Math.floor((y - 3) / 16)) % 2) * 32), WIDTH, HEIGHT);
+    const a = scene();
+    expect(compareSignatures(a.signature!, shifted.signature!).similarScene).toBe(false);
+    const aligned = compareAlignedSignatures(a.signature!, shifted.signature!);
+    expect(aligned.similarScene).toBe(true); expect(aligned.nearDuplicate).toBe(false);
+    expect(compareAlignedSignatures(shifted.signature!, a.signature!).score).toBeCloseTo(aligned.score);
+    const groups = computeSimilarityGroups([input('001', a), input('002', shifted)]);
+    expect(groups.get('001')!.groupKind).toBe('burst');
+    expect(groups.get('002')!.groupKind).toBe('burst');
+    expect(computeSimilarityGroups([input('001', a), input('999', shifted)]).get('001')!.duplicateGroupId).toBeUndefined();
+  });
+  it('alignment retains the local-change veto for different moments', () => {
+    const changed = readMetrics(pixels((x, y) => x > 40 && x < 88 && y > 25 && y < 70 ? 240 :
+      85 + Math.sin(x / 9) * 24 + Math.cos(y / 8) * 30 + ((Math.floor(x / 16) + Math.floor(y / 16)) % 2) * 32), WIDTH, HEIGHT);
+    expect(compareAlignedSignatures(scene().signature!, changed.signature!).similarScene).toBe(false);
+  });
   it('groups informative identical previews, ranked by technical score', () => {
     const m = scene();
     const groups = computeSimilarityGroups([input('001', m, { finalScore: 60 }), input('002', m, { finalScore: 90 })]);

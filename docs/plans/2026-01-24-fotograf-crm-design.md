@@ -1,5 +1,7 @@
 # Fotograf AI + CRM - Design Document
 
+> Historický návrh. Aktuální ukládání projektů a fotografií popisuje [dokumentace Studia](../README.md).
+
 **Autor:** Lukáš Drštička
 **Datum:** 2026-01-24
 **Repo:** https://github.com/Lukedaca/Fotograf-AI

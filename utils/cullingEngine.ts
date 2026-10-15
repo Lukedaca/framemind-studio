@@ -2,9 +2,9 @@
 import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, CullingResult,
   CullingScoreBreakdown, CullingScorePart, CullingSignature, CullingVerdictSource } from '../types';
 import { clamp01 } from './cullingMetrics';
-import { compareSignatures, isValidSignature, type SimilarityComparison } from './cullingSimilarity';
+import { compareAlignedSignatures, compareSignatures, isValidSignature, type SimilarityComparison } from './cullingSimilarity';
 
-export const CULLING_ENGINE_VERSION = 'local-1.1';
+export const CULLING_ENGINE_VERSION = 'local-1.2';
 export const SIMILARITY_EXACT_LIMIT = 320;
 export const MAX_SERIES_SIZE = 48;
 const PARTS: CullingScorePart[] = ['sharpness', 'exposure', 'clipping', 'noise', 'contrast', 'motion'];
@@ -17,11 +17,16 @@ const profiles = {
 } satisfies Record<CullingGenre, number[]>;
 export const CULLING_GENRES = Object.keys(profiles) as CullingGenre[];
 
+function nativeSharpness(metrics: CullingMetrics): number {
+  return metrics.native && metrics.native.informativeSamples >= 2 ?
+    Math.min(metrics.sharpnessScore, metrics.native.maxSharpnessScore) : metrics.sharpnessScore;
+}
+
 export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGenre | null): CullingScoreBreakdown {
   const technical = metrics.technical;
   const weights = profiles[genre ?? 'other'] ?? profiles.other;
   const confidence = [technical?.detailConfidence ?? 0, 1, 1, technical?.noiseConfidence ?? 0, 1, technical?.motionConfidence ?? 0];
-  const values = [metrics.sharpnessScore, metrics.exposureScore,
+  const values = [nativeSharpness(metrics), metrics.exposureScore,
     1 - Math.min(1, (metrics.highlightClipping + metrics.shadowClipping) * 1.5),
     metrics.noiseScore, metrics.contrastScore, 1 - (technical?.motionBlurEstimate ?? 0)];
   const total = weights.reduce((sum, weight) => sum + weight, 0);
@@ -42,14 +47,15 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
   context: Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence'> = {}):
   { decision: CullingDecision; reasons: string[]; risks: string[] } {
   const technical = metrics.technical;
-  if (!technical || !Object.values(technical).every(Number.isFinite)) {
+  if (!technical || !Object.values(technical).every(Number.isFinite) ||
+      (metrics.native && !Object.values(metrics.native).every(v => Number.isFinite(v) && v >= 0))) {
     return { decision: 'review', reasons: ['cull_reason_reanalyze'], risks: ['cull_risk_missing_metrics'] };
   }
   const risks: string[] = [];
   const reasons: string[] = [];
   if (technical.detailConfidence < 0.15) risks.push('cull_risk_low_detail');
-  else if (metrics.sharpnessScore >= 0.6) reasons.push('cull_reason_detail');
-  else if (metrics.sharpnessScore < 0.6) risks.push('cull_risk_preview_soft');
+  else if (nativeSharpness(metrics) >= 0.6) reasons.push(metrics.native ? 'cull_reason_native_detail' : 'cull_reason_detail');
+  else risks.push(metrics.native ? 'cull_risk_native_soft' : 'cull_risk_preview_soft');
   if (metrics.highlightClipping > 0.1) risks.push('cull_risk_highlights');
   if (metrics.shadowClipping > 0.25) risks.push('cull_risk_shadows');
   if (Math.max(technical.redClip, technical.greenClip, technical.blueClip) > 0.2 && metrics.highlightClipping <= 0.1) risks.push('cull_risk_channel_clip');
@@ -70,6 +76,12 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
   const emptyShadows = metrics.shadowClipping >= 0.98 &&
     Math.min(technical.redShadowClip, technical.greenShadowClip, technical.blueShadowClip) >= 0.98;
   const emptyClippedPreview = (emptyHighlights || emptyShadows) && technical.dynamicRange <= 8 && technical.entropy < 1;
+  const native = metrics.native;
+  // Broad, measurable edges but almost no fine detail across the 1:1 sample grid.
+  // Low texture, noisy samples and any observed sharp patch veto this suggestion.
+  const severelySoftNative = native && native.sampleCount === 9 && native.informativeSamples >= 5 &&
+    native.maxSharpnessScore < 0.56 && native.maxLaplacianVariance < 8 &&
+    native.maxEdgeAcutance < 0.0045 && native.maxNoiseEstimate < 3;
   const alternative = !!context.duplicateGroupId && context.isBestInGroup === false;
   const redundantCopy = alternative && context.groupKind === 'near-duplicate' &&
     (context.similarityToBest ?? 0) >= 0.965;
@@ -84,6 +96,7 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
     (context.referenceDetailConfidence ?? 0) >= 0.35 && referenceScore >= 75;
   const rejectReasons = [
     ...(emptyClippedPreview ? ['cull_reason_empty_clipped'] : []),
+    ...(severelySoftNative ? ['cull_reason_native_blur'] : []),
     ...(redundantCopy ? ['cull_reason_redundant_copy'] : []),
     ...(muchSofterAlternative ? ['cull_reason_soft_alternative'] : []),
   ];
@@ -164,9 +177,13 @@ function pair(a: SimilarityInput, b: SimilarityInput): SimilarityComparison | nu
   // Cheap hash gate before the more expensive spatial comparison.
   let different = 0;
   for (let i = 0; i < 256; i += 1) if (a.signature.averageHash[i] !== b.signature.averageHash[i]) different += 1;
-  if (different > 36) return null;
+  const nearby = relatedTime(a, b);
+  if (different > 36 && !nearby) return null;
   const comparison = compareSignatures(a.signature, b.signature);
-  return comparison.nearDuplicate || (comparison.similarScene && relatedTime(a, b)) ? comparison : null;
+  if (comparison.nearDuplicate || (comparison.similarScene && nearby)) return comparison;
+  if (!nearby || different > 96) return null;
+  const aligned = compareAlignedSignatures(a.signature, b.signature);
+  return aligned.similarScene ? aligned : null;
 }
 
 export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, SimilarityAssignment> {

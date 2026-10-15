@@ -14,6 +14,15 @@ export interface Rect {
   height: number;
 }
 
+/** Content rectangle inside the fixed model square; never stretch the photo. */
+export const fitInpaintViewport = (width: number, height: number, size = MODEL_SIZE): Rect => {
+  if (![width, height, size].every(value => Number.isFinite(value) && value > 0) || !Number.isInteger(size)) throw new RangeError('Invalid inpaint dimensions.');
+  const scale = size / Math.max(width, height);
+  const w = Math.max(1, Math.min(size, Math.round(width * scale)));
+  const h = Math.max(1, Math.min(size, Math.round(height * scale)));
+  return { x: Math.floor((size - w) / 2), y: Math.floor((size - h) / 2), width: w, height: h };
+};
+
 // Obdélník kolem všech pixelů masky nad prahem. `alpha` je jeden bajt na pixel.
 export const maskBoundingBox = (
   alpha: ArrayLike<number>,

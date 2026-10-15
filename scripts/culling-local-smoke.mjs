@@ -121,7 +121,7 @@ try {
     } finally { session.close(); }
   }, images.image);
   if (!desktopCdp) {
-    assert.equal(report.worker.version, 'local-1.1'); assert.equal(report.worker.originalUnchanged, true);
+    assert.equal(report.worker.version, 'local-1.2'); assert.equal(report.worker.originalUnchanged, true);
     assert.equal(report.worker.aiPresent, false); assert.equal(report.worker.signatureLength, 1024);
   }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);

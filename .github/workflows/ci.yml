@@ -30,3 +30,14 @@ jobs:
         run: npm run build
       - name: Desktop frontend verification
         run: npm run build:desktop
+      - name: Install optional screenshot tooling
+        run: npm install --no-save --package-lock=false playwright@1.61.1
+      - name: Capture current release interface with public demo images
+        env:
+          STUDIO_CAPTURE_BROWSER: /usr/bin/google-chrome
+        run: node scripts/capture-release-ui.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FrameMind-Studio-0.1.2-interface
+          path: output/playwright/release-ui/
+          if-no-files-found: error

@@ -48,7 +48,8 @@ Culling is local and deterministic. Its import graph must not reach Gemini,
 API-key management, downloaded detectors, ONNX, usage tracking or network calls.
 Keep preview limits visible. Preserve manual choices across reruns and profile
 changes, require confirmation for set removal, and leave original disk files intact.
-Automatic culling suggestions are keep/review; rejection stays manual.
+Automatic suggestions may include keep, review or reject with an explained technical reason.
+Preserve manual decisions; removing rejected images from the set still requires confirmation.
 
 The editor currently contains separate local ONNX paths and two Gemini paths.
 Document their actual data flow instead of claiming that the entire application
@@ -84,6 +85,31 @@ node scripts/culling-local-smoke.mjs
 The script blocks external requests and checks that culling makes none after
 entering the culling screen. It does not prove that application startup or every
 editor feature is offline. Synthetic tests do not calibrate photographic quality.
+
+For adjustment-preview checks, run the dev server on port 3101 and execute
+`node scripts/editor-preview-smoke.mjs`. Override `EDITOR_SMOKE_URL` for another
+local URL. The script checks worker/export pixel parity, alpha preservation,
+source caching, latest-request handling, fallback rendering and photo switching.
+It also records timings on a generated 24 MP image in `output/playwright/`.
+Optional `EDITOR_BASELINE_MODULE` points to a Vite-served copy of an earlier
+renderer from this repository for before/after pixel and timing comparisons.
+These checks exercise Chromium; they do not verify the installed Tauri application.
+
+Run `node scripts/editor-history-smoke.mjs` against the same local server to test
+Undo/Redo gestures, auto adjustment, crop, restoring originals, project isolation,
+save failure/retry and complete browser shutdown/restart. It uses synthetic photos
+and an isolated Chromium profile under ignored `output/playwright/history-profile-*`.
+It checks original hashes, asset deduplication, atomic rollback and preservation
+of legacy metadata. It never opens a normal browser profile or existing user photos.
+
+For local retouching, place the exact model files configured in
+`utils/inpaintModels.ts` in ignored `output/playwright/retouch-quality/` as
+`fast.onnx` and `quality.onnx`, then run `node scripts/retouch-quality-smoke.mjs`.
+The script checks file sizes, seeds an isolated browser cache from those local
+copies, and blocks external requests. It exercises both real models on synthetic
+images, crop proportions, lossless saves and preservation outside the patch.
+Metrics and before/after PNGs are written beside the test models. This is not
+an assessment of retouch quality on real photographs or native WebView2 evidence.
 
 ## License
 

@@ -1,5 +1,7 @@
 # Fotograf AI - Bugfix Implementation Plan
 
+> Historical implementation plan. See [current Studio documentation](../README.md) for release behavior and verification.
+
 **Autor:** Lukáš Drštička + Claude Code Review
 **Datum:** 2026-01-24
 **Status:** Ready for implementation

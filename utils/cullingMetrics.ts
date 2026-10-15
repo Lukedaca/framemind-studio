@@ -1,5 +1,5 @@
 // Pure measurements on a bounded preview. No content/face/subject inference.
-import type { CullingMetrics, CullingTechnicalMetrics } from '../types';
+import type { CullingMetrics, CullingNativeMetrics, CullingTechnicalMetrics } from '../types';
 import { createSignature } from './cullingSimilarity';
 
 export const PREVIEW_MAX_SIDE = 768;
@@ -21,7 +21,7 @@ function median(values: number[]): number {
   return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
 }
 
-export function readMetrics(data: Uint8ClampedArray, width: number, height: number): CullingMetrics {
+export function readMetrics(data: Uint8ClampedArray, width: number, height: number, withSignature = true): CullingMetrics {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
       width > PREVIEW_MAX_SIDE || height > PREVIEW_MAX_SIDE || data.length !== width * height * 4) {
     throw new Error('Invalid or unbounded culling preview');
@@ -107,14 +107,40 @@ export function readMetrics(data: Uint8ClampedArray, width: number, height: numb
     laplacianVariance, tenengrad, edgeDensity, detailConfidence, noiseEstimate, noiseConfidence,
     gradientAnisotropy, motionBlurEstimate, motionConfidence,
   };
-  const signature = createSignature(gray, data, width, height, histogram, standardDeviation);
+  const signature = withSignature ? createSignature(gray, data, width, height, histogram, standardDeviation) : undefined;
   return {
-    hash: signature.averageHash, meanLuma,
+    hash: signature?.averageHash ?? '', meanLuma,
     sharpnessScore: clamp01((Math.log10(laplacianVariance + 1) / 3 + Math.log10(tenengrad + 1) / 4) / 2),
     // No preference for middle grey exposure: only measurable clipping.
     exposureScore: clamp01(1 - (highlights + shadows) / count * 0.7),
     highlightClipping: highlights / count, shadowClipping: shadows / count,
     contrastScore: clamp01((p95 - p5) / 100), noiseScore: clamp01(1 - noiseEstimate / 32),
     compositionScore: 0, nativeSharpness: 0, technical, signature,
+  };
+}
+
+export const NATIVE_SAMPLE_SIZE = 384;
+export function nativeSampleRects(width: number, height: number): { x: number; y: number; width: number; height: number }[] {
+  const w = Math.min(width, NATIVE_SAMPLE_SIZE), h = Math.min(height, NATIVE_SAMPLE_SIZE);
+  const rects = new Map<string, { x: number; y: number; width: number; height: number }>();
+  for (const fy of [0.25, 0.5, 0.75]) for (const fx of [0.25, 0.5, 0.75]) {
+    const x = Math.max(0, Math.min(width - w, Math.round(width * fx - w / 2)));
+    const y = Math.max(0, Math.min(height - h, Math.round(height * fy - h / 2)));
+    rects.set(`${x}:${y}`, { x, y, width: w, height: h });
+  }
+  return [...rects.values()];
+}
+
+export function summarizeNativeSamples(samples: CullingMetrics[], sourceWidth: number, sourceHeight: number): CullingNativeMetrics {
+  const informative = samples.filter(m => m.technical && m.technical.detailConfidence >= 0.3 &&
+    m.technical.tenengrad >= 100 && m.technical.standardDeviation >= 10);
+  return {
+    sourceWidth, sourceHeight, sampleSize: NATIVE_SAMPLE_SIZE, sampleCount: samples.length,
+    informativeSamples: informative.length,
+    maxSharpnessScore: Math.max(0, ...informative.map(m => m.sharpnessScore)),
+    // The strongest observed detail protects shallow depth of field from a majority of blurred background samples.
+    maxLaplacianVariance: Math.max(0, ...samples.map(m => m.technical?.laplacianVariance ?? 0)),
+    maxEdgeAcutance: Math.max(0, ...informative.map(m => m.technical!.laplacianVariance / m.technical!.tenengrad)),
+    maxNoiseEstimate: Math.max(0, ...samples.map(m => m.technical?.noiseEstimate ?? 0)),
   };
 }

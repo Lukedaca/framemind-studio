@@ -21,6 +21,8 @@ interface LassoObject {
 import type { InpaintModelId } from '../utils/inpaintModels';
 import { computeAutoAdjust } from '../utils/autoAdjust';
 import { applyEditsAndExport } from '../utils/imageProcessor';
+import { EditorPreviewRenderer } from '../utils/editorPreview';
+import { applyFileEdits, INITIAL_EDITS } from '../utils/editorHistory';
 import {
   buildEditedFileName,
   downloadBlob,
@@ -31,6 +33,7 @@ import {
   supportsNativeSavePicker,
 } from '../utils/fileSave';
 import { useTranslation } from '../contexts/LanguageContext';
+import { useProject } from '../contexts/ProjectContext';
 
 interface EditorViewProps {
   files: UploadedFile[];
@@ -48,21 +51,6 @@ interface EditorViewProps {
 }
 
 type Mode = 'adjust' | 'retouch' | 'export';
-
-const INITIAL_EDITS: ManualEdits = {
-  brightness: 0,
-  contrast: 0,
-  saturation: 0,
-  vibrance: 0,
-  shadows: 0,
-  highlights: 0,
-  clarity: 0,
-  sharpness: 0,
-  noiseReduction: 0,
-  aspectRatio: undefined,
-  cropRect: undefined,
-  watermark: { enabled: false, text: '', opacity: 50, size: 20, position: 'bottom-right', color: '#ffffff' },
-};
 
 const modeFromAction = (action: EditorAction): Mode => {
   if (action?.action === 'export') return 'export';
@@ -94,10 +82,13 @@ const loadBrush = () => {
 const EditorView: React.FC<EditorViewProps> = (props) => {
   const { files, activeFileId, onSetFiles, onSetActiveFileId, activeAction, addNotification, history, onUndo, onRedo, onOpenApiKeyModal } = props;
   const { t, language } = useTranslation();
+  const { storageStatus, retryStorage } = useProject();
 
   const [mode, setMode] = useState<Mode>(() => modeFromAction(activeAction));
-  const [editsById, setEditsById] = useState<Record<string, ManualEdits>>({});
-  const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
+  const [draftEdits, setDraftEdits] = useState<Record<string, ManualEdits> | null>(null);
+  const draftRef = useRef<Record<string, ManualEdits> | null>(null);
+  const [editedPreview, setEditedPreview] = useState<{ sourceKey: string; url: string } | null>(null);
+  const previewRendererRef = useRef<EditorPreviewRenderer | null>(null);
   const [exportOptions, setExportOptions] = useState<ExportOptions>({ format: 'jpeg', quality: 92, scale: 1 });
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [isComparing, setIsComparing] = useState(false);
@@ -149,39 +140,93 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const savingRef = useRef(false);
   savingRef.current = savingRetouch;
   const activeFile = useMemo(() => files.find((f) => f.id === activeFileId), [files, activeFileId]);
-  const manualEdits = (activeFileId && editsById[activeFileId]) || INITIAL_EDITS;
+  const manualEdits = (activeFileId && draftEdits?.[activeFileId]) || activeFile?.edits || INITIAL_EDITS;
   const activeIndex = files.findIndex((f) => f.id === activeFileId);
+  const previewSourceKey = activeFile ? `${activeFile.id}:${activeFile.previewUrl}` : null;
+  const editedPreviewUrl = editedPreview?.sourceKey === previewSourceKey ? editedPreview.url : null;
+
+  useEffect(() => {
+    const renderer = new EditorPreviewRenderer();
+    previewRendererRef.current = renderer;
+    return () => { renderer.dispose(); previewRendererRef.current = null; };
+  }, []);
+
+  useEffect(() => () => {
+    if (editedPreview) URL.revokeObjectURL(editedPreview.url);
+  }, [editedPreview]);
 
   useEffect(() => {
     if (activeAction) setMode(modeFromAction(activeAction));
   }, [activeAction]);
 
+  const commitEdits = useCallback((updates: Record<string, ManualEdits>, label: string) => {
+    onSetFiles(previous => applyFileEdits(previous, updates), label);
+  }, [onSetFiles]);
+
+  const beginEdit = useCallback(() => { draftRef.current ??= {}; }, []);
+  const finishEdit = useCallback(() => {
+    const updates = draftRef.current;
+    draftRef.current = null;
+    setDraftEdits(null);
+    if (updates) commitEdits(updates, t.editor_history_adjust);
+  }, [commitEdits, t.editor_history_adjust]);
+
+  // A navigation/unmount commits the last gesture as well.
+  useEffect(() => () => {
+    const updates = draftRef.current;
+    draftRef.current = null;
+    if (updates) commitEdits(updates, t.editor_history_adjust);
+  }, [commitEdits, t.editor_history_adjust]);
+
   const setEdit = useCallback(<K extends keyof ManualEdits>(key: K, value: ManualEdits[K]) => {
     if (!activeFileId) return;
-    setEditsById((prev) => ({ ...prev, [activeFileId]: { ...(prev[activeFileId] || INITIAL_EDITS), [key]: value } }));
-  }, [activeFileId]);
+    const previous = draftRef.current?.[activeFileId] || filesRef.current.find(file => file.id === activeFileId)?.edits || INITIAL_EDITS;
+    const updates = { [activeFileId]: { ...previous, [key]: value } };
+    if (draftRef.current) {
+      draftRef.current = { ...draftRef.current, ...updates };
+      setDraftEdits(draftRef.current);
+    } else commitEdits(updates, t.editor_history_adjust);
+  }, [activeFileId, commitEdits, t.editor_history_adjust]);
 
-  // Náhled s úpravami posuvníků (poloviční rozlišení, jen pro zobrazení).
-  useEffect(() => {
+  const undo = useCallback(() => { finishEdit(); onUndo(); }, [finishEdit, onUndo]);
+  const redo = useCallback(() => { finishEdit(); onRedo(); }, [finishEdit, onRedo]);
+
+  const restoreOriginal = () => {
     if (!activeFile) return;
+    finishEdit();
+    onSetFiles(previous => {
+      let changed = false;
+      const next = previous.map(file => {
+        if (file.id !== activeFile.id) return file;
+        const base = file.baseFile || (file.previewUrl === file.originalPreviewUrl ? file.file : undefined);
+        if (!base) return file;
+        const unchanged = applyFileEdits([file], { [file.id]: INITIAL_EDITS })[0] === file && file.file === base;
+        if (unchanged) return file;
+        changed = true;
+        return { ...file, file: base, previewUrl: file.originalPreviewUrl, edits: INITIAL_EDITS };
+      });
+      return changed ? next : previous;
+    }, t.editor_restore_original);
+  };
+
+  // Bezeztrátový, omezený náhled mimo hlavní vlákno. Export zůstává v plném rozlišení.
+  useEffect(() => {
+    if (!activeFile || !previewSourceKey || mode === 'retouch') return;
     let cancelled = false;
-    let created: string | null = null;
     const timer = setTimeout(async () => {
       try {
-        const blob = await applyEditsAndExport(activeFile.previewUrl, manualEdits, { format: 'jpeg', quality: 90, scale: 0.5 });
-        if (cancelled) return;
-        created = URL.createObjectURL(blob);
-        setEditedPreviewUrl(created);
+        const blob = await previewRendererRef.current?.render(activeFile.file, previewSourceKey, manualEdits);
+        if (!blob || cancelled) return;
+        setEditedPreview({ sourceKey: previewSourceKey, url: URL.createObjectURL(blob) });
       } catch (e) {
-        if (!cancelled) console.error('Preview generation failed:', e);
+        if (!cancelled && !(e instanceof DOMException && e.name === 'AbortError')) console.error('Preview generation failed:', e);
       }
-    }, 120);
+    }, 40);
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      if (created) setTimeout(() => URL.revokeObjectURL(created!), 1000);
     };
-  }, [activeFile?.id, activeFile?.previewUrl, manualEdits]);
+  }, [previewSourceKey, activeFile?.file, manualEdits, mode]);
 
   // --- Retuš ---
   const loadModel = useCallback((id: InpaintModelId) => {
@@ -474,7 +519,8 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       ctx.drawImage(bitmap, 0, 0);
       bitmap.close();
       const auto = computeAutoAdjust(ctx.getImageData(0, 0, c.width, c.height).data);
-      setEditsById((prev) => ({ ...prev, [activeFileId]: { ...(prev[activeFileId] || INITIAL_EDITS), ...auto } }));
+      const latest = filesRef.current.find(file => file.id === activeFileId);
+      if (latest) commitEdits({ [activeFileId]: { ...(latest.edits || INITIAL_EDITS), ...auto } }, t.adjust_auto);
     } catch (e) {
       console.error('Auto adjust failed:', e);
       addNotification(t.msg_error, 'error');
@@ -488,12 +534,13 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const buildExport = useCallback(async (file: UploadedFile) => {
     const url = URL.createObjectURL(file.file);
     try {
-      const blob = await applyEditsAndExport(url, editsById[file.id] || INITIAL_EDITS, exportOptions);
+      const latestEdits = draftRef.current?.[file.id] || filesRef.current.find(item => item.id === file.id)?.edits || file.edits || INITIAL_EDITS;
+      const blob = await applyEditsAndExport(url, latestEdits, exportOptions);
       return { blob, fileName: buildEditedFileName(file.file.name, exportOptions.format) };
     } finally {
       URL.revokeObjectURL(url);
     }
-  }, [editsById, exportOptions]);
+  }, [exportOptions]);
 
   const withBusy = async (label: string, job: () => Promise<void>) => {
     setBusyLabel(label);
@@ -540,21 +587,29 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const goTo = useCallback((index: number) => {
     const target = files[index];
     if (!target || target.id === activeFileId) return;
+    finishEdit();
     viewportRef.current?.clearMask();
     onSetActiveFileId(target.id);
-  }, [files, activeFileId, onSetActiveFileId]);
+  }, [files, activeFileId, onSetActiveFileId, finishEdit]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      const textInput = target.tagName === 'TEXTAREA' || target.isContentEditable || (target.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'range');
+      if (textInput) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (savingRef.current) return;
-        if (e.shiftKey) onRedo();
-        else onUndo();
+        if (e.shiftKey) redo();
+        else undo();
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        if (!savingRef.current) redo();
+        return;
+      }
+      if (target.tagName === 'INPUT') return;
       if (e.key === 'ArrowLeft') goTo(activeIndex - 1);
       if (e.key === 'ArrowRight') goTo(activeIndex + 1);
       if (mode === 'retouch' && e.key === '[') setBrushSize((s) => Math.max(8, Math.round(s / 1.2)));
@@ -570,12 +625,14 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activeIndex, goTo, mode, onUndo, onRedo]);
+  }, [activeIndex, goTo, mode, undo, redo]);
 
   if (!activeFile) {
     return (
       <div className="flex h-full flex-1 flex-col items-center justify-center gap-6 p-8 text-center">
         <p className="font-display text-3xl text-ink-100">{t.editor_no_image}</p>
+        {history.past.length > 0 && <button onClick={undo} className="fm-btn-ghost">{t.retouch_undo}</button>}
+        {history.future.length > 0 && <button onClick={redo} className="fm-btn-primary">{t.editor_redo}</button>}
         <button onClick={() => props.onNavigate({ view: 'upload' })} className="fm-btn-primary px-6">
           {t.editor_go_import}
         </button>
@@ -601,6 +658,10 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
         <div className="hidden min-w-0 flex-1 md:block">
           <p className="truncate text-[13px] text-ink-100">{activeFile.file.name}</p>
           <p className="font-mono text-[11px] text-ink-500">{activeIndex + 1} / {files.length}</p>
+          <p className={`text-[11px] ${storageStatus === 'error' ? 'text-[#ffb3c0]' : 'text-ink-500'}`} role="status" aria-live="polite">
+            {storageStatus === 'error' ? t.storage_save_failed : storageStatus === 'saving' || draftEdits ? t.storage_saving : t.storage_saved}
+            {storageStatus === 'error' && <button onClick={retryStorage} className="ml-2 underline">{t.storage_retry}</button>}
+          </p>
         </div>
         <div className="flex-1 md:flex-none">
           <Segmented<Mode>
@@ -615,10 +676,10 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
           />
         </div>
         <div className="flex flex-1 items-center justify-end gap-1">
-          <button onClick={onUndo} disabled={history.past.length === 0 || retouching || savingRetouch} className="fm-icon-btn" title={`${t.retouch_undo} (Ctrl+Z)`}>
+          <button onClick={undo} disabled={history.past.length === 0 || retouching || savingRetouch} className="fm-icon-btn" title={`${t.retouch_undo} (Ctrl+Z)`}>
             <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M7.5 5 3.5 9l4 4M4 9h8a4.5 4.5 0 0 1 0 9h-2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
-          <button onClick={onRedo} disabled={history.future.length === 0 || retouching} className="fm-icon-btn" title="Ctrl+Shift+Z">
+          <button onClick={redo} disabled={history.future.length === 0 || retouching || savingRetouch} className="fm-icon-btn" title="Ctrl+Shift+Z">
             <svg viewBox="0 0 20 20" className="h-[18px] w-[18px] -scale-x-100" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M7.5 5 3.5 9l4 4M4 9h8a4.5 4.5 0 0 1 0 9h-2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
           <button
@@ -629,6 +690,9 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
             title={`${t.editor_compare_hint} (\\)`}
           >
             {t.editor_compare}
+          </button>
+          <button onClick={restoreOriginal} disabled={retouching || savingRetouch || autoRunning} className="fm-icon-btn ml-1" title={t.editor_restore_original} aria-label={t.editor_restore_original}>
+            <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden><path d="M4 8a6 6 0 1 1 0 5M4 3v5h5" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         </div>
       </header>
@@ -667,9 +731,11 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               edits={manualEdits}
               previewUrl={editedPreviewUrl}
               onChange={setEdit}
+              onChangeStart={beginEdit}
+              onChangeEnd={finishEdit}
               onAuto={runAuto}
               isAutoRunning={autoRunning}
-              onReset={() => activeFileId && setEditsById((prev) => ({ ...prev, [activeFileId]: { ...INITIAL_EDITS, watermark: manualEdits.watermark } }))}
+              onReset={() => activeFileId && commitEdits({ [activeFileId]: { ...INITIAL_EDITS, watermark: manualEdits.watermark } }, t.manual_reset)}
             />
           )}
           {mode === 'retouch' && (
@@ -686,7 +752,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               isProcessing={retouching}
               lastRunMs={lastRunMs}
               canUndo={history.past.length > 0 && !savingRetouch}
-              onUndo={onUndo}
+              onUndo={undo}
               onPromptSubmit={runPromptRetouch}
               promptHistory={promptHistory}
               fileCount={files.length}
@@ -712,13 +778,13 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               onOptionsChange={setExportOptions}
               watermark={manualEdits.watermark}
               onWatermarkChange={(wm) => {
-                // Vodoznak platí pro celou sadu — typicky jde o podpis fotografa.
-                setEditsById((prev) => {
-                  const next = { ...prev };
-                  for (const f of files) next[f.id] = { ...(prev[f.id] || INITIAL_EDITS), watermark: wm };
-                  return next;
-                });
+                const updates: Record<string, ManualEdits> = {};
+                for (const file of filesRef.current) updates[file.id] = { ...(draftRef.current?.[file.id] || file.edits || INITIAL_EDITS), watermark: wm };
+                if (draftRef.current) { draftRef.current = updates; setDraftEdits(updates); }
+                else commitEdits(updates, t.manual_watermark);
               }}
+              onChangeStart={beginEdit}
+              onChangeEnd={finishEdit}
               fileCount={files.length}
               canUseNativeSave={canUseNativeSave}
               onDownload={handleDownload}

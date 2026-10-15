@@ -110,6 +110,7 @@ const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
       <Header title={title} onToggleSidebar={onToggleSidebar} />
 
       <div className="fm-page w-full space-y-8 animate-fade-in">
+        {!!project.unavailableFileCount && <p role="status" className="rounded-xl border border-hairline p-4 text-sm text-ink-300">{t.storage_legacy_files} ({project.unavailableFileCount})</p>}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-3xl font-black text-white">{project.name}</h2>

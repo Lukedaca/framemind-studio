@@ -1,6 +1,6 @@
 import exifr from 'exifr';
 import type { CullingExif } from '../types';
-import { PREVIEW_MAX_SIDE, readMetrics } from '../utils/cullingMetrics';
+import { PREVIEW_MAX_SIDE, nativeSampleRects, readMetrics, summarizeNativeSamples } from '../utils/cullingMetrics';
 import { buildCullingResult, computeSimilarityGroups, type PhotoAnalysis } from '../utils/cullingEngine';
 import type { CullingRequest } from '../utils/cullingProtocol';
 
@@ -35,6 +35,15 @@ async function analyze(request: Extract<CullingRequest, { kind: 'analyze' }>): P
     context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
     context.drawImage(bitmap, 0, 0, width, height);
     const metrics = readMetrics(context.getImageData(0, 0, width, height).data, width, height);
+    if (Math.max(bitmap.width, bitmap.height) > PREVIEW_MAX_SIDE) {
+      const samples = nativeSampleRects(bitmap.width, bitmap.height).map(rect => {
+        // Reuse the canvas and original bitmap; no full-resolution pixel buffer or model.
+        canvas.width = rect.width; canvas.height = rect.height;
+        context.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+        return readMetrics(context.getImageData(0, 0, rect.width, rect.height).data, rect.width, rect.height, false);
+      });
+      metrics.native = summarizeNativeSamples(samples, bitmap.width, bitmap.height);
+    }
     return { metrics, aspectRatio: bitmap.width / bitmap.height, source: request.source, exif: await readExif(request.metadataFile) };
   } finally { bitmap.close(); }
 }

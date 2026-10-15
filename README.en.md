@@ -19,13 +19,13 @@ The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
 interface runs in a dedicated application window. The installed application
 does not require Vite, a terminal or an external browser.
 
-**A client release is not available yet.** The 0.1.1 package on
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.1) is an unsigned
+**A client release is not available yet.** The 0.1.2 package on
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.2) is an unsigned
 development preview. Do not distribute it to clients. Windows may show SmartScreen
 or block installation; disabling protection is not part of the installation instructions.
 
 Users do not need Git, Node.js or Rust. The installer includes an offline WebView2
-installer for computers without the runtime, making it about 213 MiB.
+installer for computers without the runtime, making it about 220 MiB.
 Installation is per user, with shortcuts and standard uninstallation.
 Preparing a client release requires a trusted publisher signature. Signing verifies
 file origin and integrity; it does not guarantee immediate SmartScreen reputation.
@@ -33,6 +33,7 @@ file origin and integrity; it does not guarantee immediate SmartScreen reputatio
 macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
+Changes in this version: [release 0.1.2](docs/releases/0.1.2.md). Documentation index: [docs/README.md](docs/README.md).
 
 ## Develop and run from source
 
@@ -89,6 +90,19 @@ The installer is written to `src-tauri/target/release/bundle/nsis/`.
 | Projects and clients | Local CRM and gallery preview in the application or browser profile |
 | Interface | Czech and English; Windows desktop, PWA configuration for web builds only |
 
+Adjustment previews are lossless PNGs with a maximum long edge of 1600 px.
+Rendering runs in a worker and slider changes reuse the decoded photo;
+intermediate requests are discarded. A bounded main-thread fallback is available
+when workers are unsupported. Preview and export share the same rendering pipeline,
+while export retains the selected resolution of the original photo. The working
+preview is not a 1:1 inspection of the original image detail.
+
+Adjustments, auto adjustment, cropping, retouching and restoring the original
+share Undo/Redo history. One slider gesture is one step; up to 60 steps are kept
+in each direction. Projects and the current workspace persist locally with image
+copies and history across sessions. “Saved locally” confirms a completed write;
+failed saves can be retried. Imported originals on disk are never overwritten.
+
 Desktop exports use system dialogs for saving one photo or selecting a batch folder.
 The web development version uses the File System Access API when available;
 otherwise, individual files are downloaded through the browser.
@@ -101,13 +115,20 @@ shadows, contrast, and detail, noise and directional blur indicators.
 EXIF is read from the original input when available. You select a profile manually;
 it changes technical score weights rather than analyzing image content.
 
+Local engine 1.2 also measures up to nine unscaled 384 × 384 px samples from
+larger sources. The strongest measured sample detail limits the sharpness score
+so downscaling cannot hide blur. Samples are processed sequentially. This is
+not subject detection; a small sharp object between sample positions can be missed.
+
 - The 0–100 score shows its weighted contributions. It is not a probability of photo quality.
 - Similarity uses image structure, colors and hashes. Series also use capture time
   or filename sequence. Grouping may miss similar images, especially in large
-  sets with bounded candidate searches.
+  sets with bounded candidate searches. Small camera translations are compensated
+  for series comparisons; an aligned match alone does not establish a duplicate.
 - Automatic suggestions include **keep**, **review** and **reject**. Reject suggestions
   have a specific reason: an almost empty clipped preview, a redundant near identical
-  frame, or substantially weaker detail than a stronger frame in a verified series.
+  frame, substantially weaker detail than a stronger frame in a verified series,
+  or widespread soft detail in informative 1:1 samples without an observed sharp patch.
 - **K** = keep, **R** = review, **X** = reject.
 - Manual choices survive reruns and profile changes.
 - Choosing a series representative preserves the other images' manual decisions.
@@ -138,8 +159,11 @@ dimensions and LaMa for larger areas. It does not recognize people.
 The fast model is prepared when retouching opens; other models load as needed.
 
 Retouching processes the mask's neighborhood at 512 × 512 and blends the result
-back into the photo. Canvas dimensions remain unchanged, but detail in large filled
-areas is limited by model resolution. Saving an edited JPEG recompresses it.
+back into the photo. The crop keeps its aspect ratio; reflected edges fill the
+remaining model input. Canvas dimensions remain unchanged, but detail in large
+filled areas is limited by model resolution. Retouch working copies use lossless
+PNG, so repeated strokes do not add JPEG compression. JPEG remains available for
+the final export. Working PNGs can take more space than the original JPEG.
 The lasso offers candidate masks; exact outlines and fill quality are not guaranteed.
 Performance depends on the device, browser and execution path.
 
@@ -153,7 +177,7 @@ Performance depends on the device, browser and execution path.
 | Interface fonts | Google Fonts; web PWA caching rules apply only to web builds, desktop does not use PWA |
 | Lasso by description | Still uses Gemini and sends a downscaled photo, longer side at most 1,536 px |
 | Edit with text | Still sends the photo to Gemini |
-| Projects and clients | JSON in `localStorage`, without cross-device synchronization |
+| Projects, clients and current workspace | IndexedDB in the local profile; images, adjustments and history, without cross-device synchronization |
 
 The two Gemini features belong only to the editor and need your own key.
 Key storage is session-only by default; persistent storage requires confirmation.
@@ -163,15 +187,18 @@ Caching may allow subsequent model use without internet, but cache availability
 and quota are not guaranteed. PWA configuration alone does not establish full
 offline operation of every feature.
 
-`localStorage` **is not a photo backup**: JSON cannot restore `File` objects or
-original `blob:` URLs in a new session. Keep originals on disk and export results.
-Clearing browser data removes local CRM records; a different host or port uses
-different storage. Gallery preview is not a public photo-hosting service.
+The local profile **is not an independent photo backup**. IndexedDB stores image
+copies separately from settings; slider changes do not rewrite image bytes.
+Keep originals on disk and export results. Clearing profile data removes local
+projects and stored image copies; a different host or port uses different storage.
+Legacy `localStorage` JSON is kept intact and its metadata is read. Image bytes
+that JSON never contained must be reimported; the affected project shows a notice.
+Gallery preview is not a public photo-hosting service.
 
 Desktop has a separate WebView2 profile under `%LOCALAPPDATA%\cz.framemind.studio\`.
-Existing browser data is not migrated automatically. Desktop CRM is still JSON
-in `localStorage`, not photo backup or persistent photo storage. Deleting application
-data is a separate uninstall option.
+Existing browser data is not migrated automatically. The new frontend uses the
+same local IndexedDB storage; recovery was verified in Chromium, not in a newly
+packaged installed application. Deleting application data is a separate uninstall option.
 
 ## Limitations and verification
 

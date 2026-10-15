@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MODEL_SIZE,
+  fitInpaintViewport,
   computeInpaintCrop,
   grainSigma,
   missingGrain,
@@ -10,6 +11,30 @@ import {
   planarToRgba,
   rgbaToPlanar,
 } from '../utils/inpaintMath';
+
+describe('fitInpaintViewport', () => {
+  it('preserves square inputs and letterboxes landscape and portrait without stretching', () => {
+    expect(fitInpaintViewport(512, 512)).toEqual({ x: 0, y: 0, width: 512, height: 512 });
+    expect(fitInpaintViewport(2048, 512)).toEqual({ x: 0, y: 192, width: 512, height: 128 });
+    expect(fitInpaintViewport(512, 2048)).toEqual({ x: 192, y: 0, width: 128, height: 512 });
+  });
+  it('keeps thin strips encodable and all content inside model bounds', () => {
+    for (const [width, height] of [[1, 2000], [6000, 1], [4000, 3000], [333, 777]]) {
+      const v = fitInpaintViewport(width, height);
+      expect(v.width).toBeGreaterThanOrEqual(1);
+      expect(v.height).toBeGreaterThanOrEqual(1);
+      expect(v.x).toBeGreaterThanOrEqual(0);
+      expect(v.y).toBeGreaterThanOrEqual(0);
+      expect(v.x + v.width).toBeLessThanOrEqual(MODEL_SIZE);
+      expect(v.y + v.height).toBeLessThanOrEqual(MODEL_SIZE);
+      expect(Math.max(v.width, v.height)).toBe(MODEL_SIZE);
+    }
+  });
+  it('rejects empty or nonfinite images', () => {
+    expect(() => fitInpaintViewport(0, 512)).toThrow(RangeError);
+    expect(() => fitInpaintViewport(512, Infinity)).toThrow(RangeError);
+  });
+});
 
 describe('maskBoundingBox', () => {
   it('vrátí null pro prázdnou masku', () => {

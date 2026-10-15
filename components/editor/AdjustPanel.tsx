@@ -10,6 +10,8 @@ interface AdjustPanelProps {
   onChange: <K extends keyof ManualEdits>(key: K, value: ManualEdits[K]) => void;
   onAuto: () => void;
   onReset: () => void;
+  onChangeStart: () => void;
+  onChangeEnd: () => void;
   isAutoRunning: boolean;
 }
 
@@ -21,9 +23,10 @@ const RATIOS: { value: string; ratio: number | undefined; label: string }[] = [
   { value: '16:9', ratio: 16 / 9, label: '16:9' },
 ];
 
-const AdjustPanel: React.FC<AdjustPanelProps> = ({ edits, previewUrl, onChange, onAuto, onReset, isAutoRunning }) => {
+const AdjustPanel: React.FC<AdjustPanelProps> = ({ edits, previewUrl, onChange, onAuto, onReset, isAutoRunning, onChangeStart, onChangeEnd }) => {
   const { t } = useTranslation();
   const ratioValue = RATIOS.find((r) => r.ratio === edits.aspectRatio)?.value ?? 'orig';
+  const gesture = { onChangeStart, onChangeEnd };
 
   return (
     <div>
@@ -46,21 +49,21 @@ const AdjustPanel: React.FC<AdjustPanelProps> = ({ edits, previewUrl, onChange, 
           </button>
         }
       >
-        <Range label={t.manual_brightness} value={edits.brightness} onChange={(v) => onChange('brightness', v)} />
-        <Range label={t.manual_contrast} value={edits.contrast} onChange={(v) => onChange('contrast', v)} />
-        <Range label={t.manual_highlights} value={edits.highlights} onChange={(v) => onChange('highlights', v)} />
-        <Range label={t.manual_shadows} value={edits.shadows} onChange={(v) => onChange('shadows', v)} />
+        <Range {...gesture} label={t.manual_brightness} value={edits.brightness} onChange={(v) => onChange('brightness', v)} />
+        <Range {...gesture} label={t.manual_contrast} value={edits.contrast} onChange={(v) => onChange('contrast', v)} />
+        <Range {...gesture} label={t.manual_highlights} value={edits.highlights} onChange={(v) => onChange('highlights', v)} />
+        <Range {...gesture} label={t.manual_shadows} value={edits.shadows} onChange={(v) => onChange('shadows', v)} />
       </PanelSection>
 
       <PanelSection title={t.adjust_color}>
-        <Range label={t.manual_saturation} value={edits.saturation} onChange={(v) => onChange('saturation', v)} />
-        <Range label={t.manual_vibrance} value={edits.vibrance} onChange={(v) => onChange('vibrance', v)} />
+        <Range {...gesture} label={t.manual_saturation} value={edits.saturation} onChange={(v) => onChange('saturation', v)} />
+        <Range {...gesture} label={t.manual_vibrance} value={edits.vibrance} onChange={(v) => onChange('vibrance', v)} />
       </PanelSection>
 
       <PanelSection title={t.adjust_detail}>
-        <Range label={t.manual_clarity} value={edits.clarity} min={0} onChange={(v) => onChange('clarity', v)} />
-        <Range label={t.manual_sharpness} value={edits.sharpness} min={0} onChange={(v) => onChange('sharpness', v)} />
-        <Range label={t.manual_noise} value={edits.noiseReduction} min={0} onChange={(v) => onChange('noiseReduction', v)} />
+        <Range {...gesture} label={t.manual_clarity} value={edits.clarity} min={0} onChange={(v) => onChange('clarity', v)} />
+        <Range {...gesture} label={t.manual_sharpness} value={edits.sharpness} min={0} onChange={(v) => onChange('sharpness', v)} />
+        <Range {...gesture} label={t.manual_noise} value={edits.noiseReduction} min={0} onChange={(v) => onChange('noiseReduction', v)} />
       </PanelSection>
 
       <PanelSection title={t.adjust_crop}>
@@ -68,8 +71,10 @@ const AdjustPanel: React.FC<AdjustPanelProps> = ({ edits, previewUrl, onChange, 
           size="sm"
           value={ratioValue}
           onChange={(v) => {
+            onChangeStart();
             onChange('aspectRatio', RATIOS.find((r) => r.value === v)?.ratio);
             onChange('cropRect', undefined);
+            onChangeEnd();
           }}
           options={RATIOS.map((r) => ({ value: r.value, label: r.value === 'orig' ? t.export_original : r.label }))}
         />

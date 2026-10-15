@@ -429,6 +429,13 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
                   [tr('cull_metric_evidence'), Math.round(technical.detailConfidence * 100) + ' / 100'],
                 ].map(([label, value]) => <div key={label} className="flex justify-between gap-2"><dt className="text-gray-400">{label}</dt><dd className="font-mono">{value}</dd></div>)}
               </dl>}
+              {result.metrics.native && <dl className="text-[11px] space-y-1">
+                {[[tr('cull_metric_native_source'), result.metrics.native.sourceWidth + ' × ' + result.metrics.native.sourceHeight],
+                  [tr('cull_metric_native_samples'), result.metrics.native.sampleCount + ' × ' + result.metrics.native.sampleSize + ' px (1:1)'],
+                  [tr('cull_metric_native_detail'), result.metrics.native.maxLaplacianVariance.toFixed(1)],
+                  [tr('cull_metric_native_acutance'), result.metrics.native.maxEdgeAcutance.toFixed(4)],
+                ].map(([label, value]) => <div key={label} className="flex justify-between gap-2"><dt className="text-gray-400">{label}</dt><dd className="font-mono">{value}</dd></div>)}
+              </dl>}
               {result.scoreBreakdown && <dl className="text-[11px] space-y-1">
                 {Object.entries(result.scoreBreakdown).map(([part, value]) => <div key={part} className="flex justify-between gap-2">
                   <dt className="text-gray-400">{tr('cull_part_' + part)}</dt><dd className="font-mono">{value.contribution.toFixed(1)} / {Math.round(value.weight * 100)}</dd>

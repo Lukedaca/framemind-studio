@@ -14,38 +14,13 @@ const GalleryPreviewView = lazy(() => import('./components/GalleryPreviewView'))
 import Sidebar from './components/Sidebar';
 import ApiKeyModal from './components/ApiKeyModal';
 
-import type { UploadedFile, View, EditorAction, History, HistoryEntry } from './types';
+import type { UploadedFile, View, EditorAction, Project } from './types';
+import { createHistory, historyReducer } from './utils/editorHistory';
 import { initApiKeyStorage } from './utils/apiKey';
 import { normalizeImageFile } from './utils/imageProcessor';
 import { getRawOriginal } from './utils/rawProvenance';
 import { useTranslation } from './contexts/LanguageContext';
 import { useProject } from './contexts/ProjectContext';
-
-// --- History Reducer ---
-const initialHistoryState: History = {
-  past: [],
-  present: { state: [], actionName: 'Initial State' },
-  future: [],
-};
-
-function historyReducer(state: History, action: { type: 'SET'; payload: HistoryEntry } | { type: 'UNDO' } | { type: 'REDO' }) {
-  const { past, present, future } = state;
-  switch (action.type) {
-    case 'SET':
-      if (action.payload.state === present.state) return state;
-      return { past: [...past, present], present: action.payload, future: [] };
-    case 'UNDO': {
-      if (past.length === 0) return state;
-      return { past: past.slice(0, -1), present: past[past.length - 1], future: [present, ...future] };
-    }
-    case 'REDO': {
-      if (future.length === 0) return state;
-      return { past: [...past, present], present: future[0], future: future.slice(1) };
-    }
-    default:
-      return state;
-  }
-}
 
 interface Notification {
   id: number;
@@ -61,9 +36,11 @@ const Loading = () => (
 
 function App() {
   const { t } = useTranslation();
-  const { projects, currentProject, setCurrentProject, updateProject } = useProject();
+  const { projects, currentProject, setCurrentProject, updateProject, workspace, saveWorkspace, storageReady, storageStatus, retryStorage } = useProject();
   const [view, setView] = useState<View>('dashboard');
-  const [history, dispatchHistory] = useReducer(historyReducer, initialHistoryState);
+  const [history, dispatchHistory] = useReducer(historyReducer, undefined, () => createHistory());
+  const [workspaceProjectId, setWorkspaceProjectId] = useState<string | null>(null);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const { present: { state: files } } = history;
 
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
@@ -79,17 +56,50 @@ function App() {
   activeFileIdRef.current = activeFileId;
 
   useEffect(() => {
+    if (!storageReady || workspaceReady) return;
+    if (workspace) {
+      dispatchHistory({ type: 'REPLACE', payload: workspace.history });
+      filesRef.current = workspace.history.present.state;
+      setWorkspaceProjectId(workspace.projectId);
+      setActiveFileId(workspace.activeFileId);
+      const project = projects.find(item => item.id === workspace.projectId);
+      if (project) setCurrentProject(project);
+      if (workspace.history.present.state.length || workspace.history.past.length || workspace.history.future.length) setView('editor');
+    }
+    setWorkspaceReady(true);
+  }, [storageReady, workspaceReady, workspace, projects, setCurrentProject]);
+
+  useEffect(() => {
+    if (workspaceReady) saveWorkspace({ projectId: workspaceProjectId, activeFileId, history });
+  }, [workspaceReady, workspaceProjectId, activeFileId, history, saveWorkspace]);
+
+  useEffect(() => {
+    if (!activeFileId || !files.some(file => file.id === activeFileId)) setActiveFileId(files[0]?.id ?? null);
+  }, [files, activeFileId]);
+
+  const loadProjectWorkspace = useCallback((project: Project) => {
+    const restored = project.editorHistory || createHistory(project.files);
+    filesRef.current = restored.present.state;
+    dispatchHistory({ type: 'REPLACE', payload: restored });
+    setWorkspaceProjectId(project.id);
+    setCurrentProject(project);
+    setActiveFileId(project.editorActiveFileId && restored.present.state.some(file => file.id === project.editorActiveFileId) ? project.editorActiveFileId : restored.present.state[0]?.id ?? null);
+  }, [setCurrentProject]);
+
+  useEffect(() => {
     initApiKeyStorage();
     document.documentElement.classList.add('dark');
   }, []);
 
   useEffect(() => {
+    if (!workspaceReady) return;
     const syncFromLocation = () => {
       const path = window.location.pathname;
       if (path.startsWith('/projects/')) {
         const id = path.split('/')[2];
         const project = projects.find((item) => item.id === id);
-        if (project) setCurrentProject(project);
+        if (project && workspaceProjectId !== project.id) loadProjectWorkspace(project);
+        else if (project) setCurrentProject(project);
         setGalleryProjectId(null);
         setView('project-detail');
       } else if (path === '/projects') {
@@ -112,10 +122,11 @@ function App() {
     syncFromLocation();
     window.addEventListener('popstate', syncFromLocation);
     return () => window.removeEventListener('popstate', syncFromLocation);
-  }, [projects, setCurrentProject]);
+  }, [projects, setCurrentProject, workspaceReady, workspaceProjectId, loadProjectWorkspace]);
 
   const setFiles = useCallback((newState: UploadedFile[] | ((prevState: UploadedFile[]) => UploadedFile[]), actionName: string) => {
     const newFiles = typeof newState === 'function' ? newState(filesRef.current) : newState;
+    filesRef.current = newFiles;
     dispatchHistory({ type: 'SET', payload: { state: newFiles, actionName } });
     const currentActive = activeFileIdRef.current;
     if (newFiles.length > 0 && (!currentActive || !newFiles.find((f) => f.id === currentActive))) {
@@ -151,6 +162,7 @@ function App() {
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
             file: normalizedFile,
             originalFile: rawOriginal ?? file,
+            baseFile: normalizedFile,
             cullingSource: rawOriginal ? 'embedded-jpeg-preview' : 'image',
             previewUrl,
             originalPreviewUrl: previewUrl,
@@ -168,7 +180,6 @@ function App() {
   const syncFilesToCurrentProject = useCallback((newFiles: UploadedFile[], description: string) => {
     if (!currentProject || newFiles.length === 0) return;
     updateProject(currentProject.id, {
-      files: [...currentProject.files, ...newFiles],
       status: 'editing',
       activity: [
         ...currentProject.activity,
@@ -192,8 +203,7 @@ function App() {
     if (newView === 'project-detail' && id) {
       const project = projects.find((item) => item.id === id);
       if (project) {
-        setCurrentProject(project);
-        setFiles(project.files, 'Loaded project files');
+        loadProjectWorkspace(project);
       }
       push(`/projects/${id}`);
     }
@@ -210,7 +220,7 @@ function App() {
     }
     setView(newView);
     setActiveAction(action ? { action, timestamp: Date.now() } : null);
-  }, [addNotification, t.editor_no_image, projects, setCurrentProject, setFiles]);
+  }, [addNotification, t.editor_no_image, projects, setCurrentProject, loadProjectWorkspace]);
 
   // Po importu: víc fotek → nejdřív výběr, jedna fotka → rovnou úpravy.
   const handleFilesSelected = useCallback(async (selectedFiles: File[]) => {
@@ -272,7 +282,7 @@ function App() {
       case 'project-detail': {
         const openUploadFor = (id: string) => {
           const project = projects.find((item) => item.id === id);
-          if (project) setCurrentProject(project);
+          if (project) loadProjectWorkspace(project);
           handleNavigate({ view: 'upload' });
         };
         return view === 'project-detail' && currentProject ? (
@@ -283,7 +293,7 @@ function App() {
             onStartUpload={() => handleNavigate({ view: 'upload' })}
             onOpenEditor={(fileId) => {
               setActiveFileId(fileId);
-              setView('editor');
+              handleNavigate({ view: 'editor', action: 'base-edit' });
             }}
             onOpenGalleryPreview={() => handleNavigate({ view: 'gallery-preview', id: currentProject.id })}
           />
@@ -312,6 +322,15 @@ function App() {
         return <DashboardView onNavigate={handleNavigate} onToggleSidebar={toggleSidebar} fileCount={files.length} />;
     }
   };
+
+  if (!workspaceReady) {
+    return storageStatus === 'error' ? (
+      <div className="flex h-screen flex-col items-center justify-center gap-4 p-8 text-center text-ink-100" role="alert">
+        <p>{t.storage_load_failed}</p>
+        <button className="fm-btn-primary" onClick={retryStorage}>{t.storage_retry}</button>
+      </div>
+    ) : <Loading />;
+  }
 
   if (view === 'gallery-preview' && galleryProjectId) {
     return (

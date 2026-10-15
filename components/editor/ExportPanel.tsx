@@ -15,6 +15,8 @@ interface ExportPanelProps {
   onOptionsChange: (options: ExportOptions) => void;
   watermark: ManualEdits['watermark'];
   onWatermarkChange: (watermark: WatermarkSettings) => void;
+  onChangeStart: () => void;
+  onChangeEnd: () => void;
   fileCount: number;
   canUseNativeSave: boolean;
   onDownload: () => void;
@@ -84,6 +86,8 @@ const ExportPanel: React.FC<ExportPanelProps> = (props) => {
                 <input
                   type="text"
                   value={wm.text}
+                  onFocus={props.onChangeStart}
+                  onBlur={props.onChangeEnd}
                   onChange={(e) => setWm({ text: e.target.value })}
                   placeholder={t.manual_wm_placeholder}
                   className="fm-input"
@@ -98,7 +102,7 @@ const ExportPanel: React.FC<ExportPanelProps> = (props) => {
                     { value: 'center', label: t.manual_pos_center },
                   ]}
                 />
-                <Range label={t.manual_opacity} value={wm.opacity} min={10} max={100} unit=" %" onChange={(opacity) => setWm({ opacity })} />
+                <Range onChangeStart={props.onChangeStart} onChangeEnd={props.onChangeEnd} label={t.manual_opacity} value={wm.opacity} min={10} max={100} unit=" %" onChange={(opacity) => setWm({ opacity })} />
               </>
             )}
           </div>

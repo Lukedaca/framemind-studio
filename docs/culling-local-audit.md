@@ -1,5 +1,7 @@
 # FrameMind Solutions for Photo 1.0 — culling audit
 
+> Dated audit and implementation history. Current product behavior and release evidence are indexed in [docs/README.md](README.md).
+
 Audit of checkout `Lukedaca/framemind-studio`, baseline `69a17bc`.
 
 The sections before "Implemented local branch" describe the historical baseline
@@ -126,3 +128,51 @@ node scripts/culling-local-smoke.mjs against a local Vite server on port 3100.
 The browser smoke needs separately installed Playwright and Chromium, or
 CULLING_SMOKE_BROWSER pointing to an installed Chromium executable. See CONTRIBUTING.md.
 Real photo/RAW batch calibration and large-device performance remain unverified.
+
+## Local 1.2 — original-resolution samples and translated series, 2026-10-13
+
+The previous implementation reproduced 110 keep / 4 review / 0 reject and no
+groups on an authorized 114-image football JPEG set. Original-resolution
+inspection showed that downscaling hid substantial softness in three frames.
+
+- Larger sources now add up to nine sequential, unscaled 384px samples. The
+  strongest informative sample limits the sharpness score. The original bitmap
+  and a reused bounded canvas are used; no original-resolution RGBA array is kept.
+- A native-blur reject suggestion requires measurable structure across at least
+  five of nine samples, uniformly weak fine detail and low noise. Any observed
+  sharp patch vetoes this rule. Low texture and insufficient samples alone cannot
+  trigger it. Sampling can still miss a small sharp subject between positions;
+  these are reversible technical suggestions, not content-aware quality labels.
+- A symmetric, bounded translation search compensates for small camera shifts
+  when capture time or filename sequence supports a burst. Local luminance changes
+  and color disagreement still veto grouping. Registration never establishes a
+  near duplicate; complete linkage and existing group limits remain in force.
+- Stored automatic local-1.1 results require fresh analysis. Manual choices retain
+  precedence. The detail panel exposes source size and native sample measurements
+  in Czech and English; RAW still measures its embedded JPEG, not sensor pixels.
+
+Verification: 122 tests across 18 files, typecheck, web build and desktop frontend
+build passed. The same real JPEG set produced 94 keep / 17 review / 3 reject and
+three two-frame burst groups in 92 seconds on this machine, compared with 54 seconds
+for the previous engine. Reject suggestions were IMG_9944, IMG_9945 and IMG_9946.
+All 114 original SHA-256 hashes matched after analysis; culling external requests
+and page errors were zero. Private reports and contact sheets are in ignored
+output/playwright/sigma-{baseline,final}-audit.json and associated images.
+
+The browser UI smoke passed manual decisions, reruns, profile changes, cancellation
+and confirmed/dismissed set removal. A separate native application identifier
+cz.framemind.studio.culling-qa-20261013 was used for the Windows WebView2 check.
+All three real soft frames received reject suggestions; IMG_9981 stayed keep.
+Native sample diagnostics and a manual keep override across rerun/profile change
+passed, with zero culling external requests and page errors. The user's open
+installed application was left running. The normal-identifier NSIS development
+installer was subsequently built at version 0.1.2 (214.41 MiB), without installing
+or publishing it. Native evidence is in output/playwright/native-culling-real.json.
+
+This is calibration and regression evidence for one JPEG gallery. Accuracy across
+other genres/cameras, real RAW sets and small subjects between samples remains
+unverified. Native export and retouch were outside this change.
+
+Reproduce the real-set audit with a local server on port 3100:
+node scripts/culling-batch-audit.mjs "<local photo folder>" calibration
+The script only reads the supplied folder and writes reports to ignored output/.

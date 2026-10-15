@@ -1,5 +1,7 @@
 # ULTRON: Fotograf-AI Massive Upgrade Plan
 
+> Historical proposal. See [current Studio documentation](../README.md) for implemented behavior and verification.
+
 **Datum**: 2026-01-24
 **Projekt**: Fotograf-AI
 **Kódové jméno**: ULTRON

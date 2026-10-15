@@ -64,6 +64,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path development-artifact | Out-Null
           Copy-Item src-tauri/target/release/bundle/nsis/*-setup.exe development-artifact/
+          Copy-Item src-tauri/target/release/framemind-studio.exe development-artifact/
           'DEVELOPMENT ONLY. Unsigned installer; not approved for client distribution. Do not disable Windows security or install custom trust certificates.' | Set-Content development-artifact/DEVELOPMENT-ONLY.txt
       - uses: actions/upload-artifact@v4
         with:

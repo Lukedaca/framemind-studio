@@ -19,13 +19,13 @@ Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v
 je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
 Vite, terminál ani externí prohlížeč.
 
-**Klientské vydání zatím není dostupné.** Balíček 0.1.1 v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.1) je nepodepsaný
+**Klientské vydání zatím není dostupné.** Balíček 0.1.2 v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.2) je nepodepsaný
 vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může zobrazit
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
 Uživatel nepotřebuje Git, Node.js ani Rust. Instalátor obsahuje offline instalační
-program WebView2 pro počítače, kde runtime chybí; proto má přibližně 213 MiB.
+program WebView2 pro počítače, kde runtime chybí; proto má přibližně 220 MiB.
 Instalace je pro současného uživatele; aplikace má zástupce a standardní odinstalaci.
 Pro přípravu klientského vydání je nutný důvěryhodný podpis vydavatele.
 Podpis ověřuje původ a integritu souboru; sám negarantuje okamžité odstranění
@@ -33,6 +33,7 @@ varování SmartScreen. [Oficiální vysvětlení Microsoftu](https://learn.micr
 Vydání pro macOS a Linux nebyla sestavena ani ověřena.
 
 Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md).
+Změny aktuální verze: [vydání 0.1.2](docs/releases/0.1.2.md). Přehled dokumentace: [docs/README.md](docs/README.md).
 
 ## Vývoj a spuštění ze zdrojů
 
@@ -89,6 +90,19 @@ Instalátor vzniká v `src-tauri/target/release/bundle/nsis/`.
 | Projekty a klienti | Lokální CRM a náhled galerie v profilu aplikace nebo prohlížeče |
 | Rozhraní | Čeština a angličtina; Windows desktop, PWA konfigurace pouze pro webový build |
 
+Pracovní náhled úprav je bezeztrátový PNG s delší stranou nejvýše 1600 px.
+Výpočet běží ve workeru a opakované posuny používají již dekódovanou fotku;
+mezilehlé požadavky se zahazují. Bez podpory workeru je dostupný omezený náhled
+na hlavním vlákně. Náhled i export používají stejný vykreslovací postup,
+export ale zachovává zvolené rozlišení původní fotky. Pracovní náhled není
+kontrola detailu originálu v měřítku 1:1.
+
+Úpravy, automatika, ořez, retuš a obnovení originálu sdílejí historii Zpět/Znovu.
+Jeden tah posuvníku tvoří jeden krok; historie drží nejvýše 60 kroků v každém
+směru. Rozpracovaná sada i projekty se ukládají lokálně včetně snímků a historie
+a obnoví se po nové relaci. Stav „Uloženo lokálně“ potvrzuje dokončený zápis;
+při chybě lze uložení opakovat. Importované originály na disku se nepřepisují.
+
 Desktop používá systémové dialogy pro uložení jedné fotky i výběr složky pro sadu.
 Ve webovém vývojovém režimu ukládání používá File System Access API, pokud jej
 prohlížeč nabízí; jinak se jednotlivé soubory stahují přes prohlížeč.
@@ -100,13 +114,20 @@ nejvýše 768 px: rozložení jasu, přepaly, stíny, kontrast, indikátory deta
 šumu a směrového rozmazání. EXIF se podle dostupnosti čte z původního souboru.
 Profil vyberete ručně; mění váhy technického skóre, nikoli obsahovou analýzu.
 
+Od lokálního enginu 1.2 se u větších zdrojů měří také až devět výřezů
+384 × 384 px bez zmenšení. Jejich nejsilnější naměřený detail omezuje skóre
+ostrosti, aby zmenšení nezakrylo rozmazání. Výřezy se měří postupně; nejde o
+detekci subjektu a malý ostrý objekt mezi vzorkovanými místy mohou minout.
+
 - Skóre 0–100 má rozpis jednotlivých příspěvků. Není to pravděpodobnost kvality snímku.
 - Podobnost využívá obrazovou strukturu, barvy a hashe. Série navíc používají čas pořízení
   nebo návaznost názvů souborů. Seskupení nemusí najít všechny podobné snímky,
-  zejména u velkých sad s omezeným hledáním kandidátů.
+  zejména u velkých sad s omezeným hledáním kandidátů. Malý posun fotoaparátu
+  se při porovnání sérií kompenzuje; taková shoda sama neznamená duplicitu.
 - Automatika navrhuje **ponechat**, **zkontrolovat** i **vyřadit**. Vyřazovací návrhy
   mají konkrétní důvod: téměř prázdný plošně oříznutý náhled, nadbytečný téměř
-  totožný záběr nebo výrazně slabší detail oproti lepšímu snímku ověřené série.
+  totožný záběr, výrazně slabší detail oproti lepšímu snímku ověřené série
+  nebo široce doložené měkké detaily ve výřezech 1:1 bez nalezené ostré oblasti.
 - **K** = ponechat, **R** = zkontrolovat, **X** = vyřadit.
 - Ruční volby zůstávají při opakované analýze i změně profilu.
 - Ruční výběr reprezentanta zachovává ruční verdikty ostatních snímků.
@@ -138,8 +159,11 @@ v rozměrech původní fotky a LaMa pro větší plochu. Neprovádí rozpoznáv�
 Rychlý model se připravuje při otevření retuše; další modely se načítají podle potřeby.
 
 Retuš zpracuje okolí masky na vstupu 512 × 512 a výsledek prolne zpět do fotky.
+Výřez zachovává proporce; zbývající plochu vstupu vyplní zrcadlené okraje.
 Rozměry plátna zůstávají zachované, detail doplněné velké oblasti je ale omezený
-rozlišením modelu. Uložení upravené fotky do JPEG ji znovu komprimuje.
+rozlišením modelu. Pracovní kopie retuše se ukládá bezeztrátově do PNG, takže
+opakované tahy nepřidávají JPEG kompresi. JPEG lze zvolit při konečném exportu.
+Pracovní PNG může zabírat více místa než původní JPEG.
 Laso poskytuje kandidátní masky; přesný obrys ani kvalita doplnění nejsou zaručené.
 Výkon závisí na zařízení, prohlížeči a zvolené výpočetní cestě.
 
@@ -153,7 +177,7 @@ Výkon závisí na zařízení, prohlížeči a zvolené výpočetní cestě.
 | Písmo rozhraní | Google Fonts; webová PWA má pravidla pro jejich cache, desktop PWA nepoužívá |
 | Laso podle popisu | Stále používá Gemini a posílá zmenšenou fotografii, delší strana nejvýše 1 536 px |
 | Úprava textem | Stále posílá fotografii do Gemini |
-| Projekty a klienti | JSON v `localStorage`, bez synchronizace mezi zařízeními |
+| Projekty, klienti a rozpracovaná sada | IndexedDB v místním profilu; snímky, úpravy a historie, bez synchronizace mezi zařízeními |
 
 Dvě Gemini funkce patří pouze do editoru a vyžadují vlastní klíč. Výchozí uložení
 klíče je na relaci; trvalé uložení vyžaduje potvrzení. Nejsou součástí cullingu.
@@ -162,14 +186,18 @@ Klíč nepatří do repozitáře ani do buildu.
 Cache může umožnit další použití modelů bez internetu, ale její dostupnost a kvóta
 nejsou zaručené. PWA konfigurace sama nedokazuje úplný offline provoz všech funkcí.
 
-`localStorage` **není záloha fotografií**: JSON neobnoví objekty `File` ani původní
-`blob:` URL po nové relaci. Originály uchovejte na disku a výsledky exportujte.
-Smazání dat prohlížeče odstraní místní CRM; změna hostu nebo portu používá jiné úložiště.
-Náhled galerie není služba pro veřejné hostování fotografií.
+Místní profil **není nezávislá záloha fotografií**. IndexedDB ukládá kopie snímků
+odděleně od nastavení, při posunu posuvníku se znovu nezapisují obrazová data.
+Ponechte originály na disku a výsledky exportujte. Smazání dat profilu odstraní
+místní projekty i uložené kopie; změna hostu nebo portu používá jiné úložiště.
+Starší JSON z `localStorage` zůstává zachovaný a jeho metadata se přečtou.
+Obrazová data, která JSON nikdy neobsahoval, je nutné importovat znovu; aplikace
+to u takového projektu zobrazí. Náhled galerie není veřejný hosting fotografií.
 
 Desktop má vlastní profil WebView2 pod `%LOCALAPPDATA%\cz.framemind.studio\`.
-Data z původního prohlížeče se do něj automaticky nepřenesou. Také v desktopu je
-CRM stále JSON v `localStorage`, nikoli záloha či trvalé uložení fotografií.
+Data z původního prohlížeče se do něj automaticky nepřenesou. Nový frontend používá
+stejné místní IndexedDB úložiště; obnova byla ověřena v Chromiu, nikoli v nově
+zabalené instalované aplikaci.
 Při odinstalaci je odstranění dat samostatná volba.
 
 ## Omezení a ověření

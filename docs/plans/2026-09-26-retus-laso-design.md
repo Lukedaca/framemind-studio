@@ -1,5 +1,7 @@
 # Retuš: tvrdost, síla, chytré laso — návrh (26. 9. 2026)
 
+> Historický návrh. Aktuální funkce a ověření popisuje [dokumentace Studia](../README.md).
+
 Schváleno Lukášem v chatu („jen do toho“).
 
 ## 1. Tvrdost a síla

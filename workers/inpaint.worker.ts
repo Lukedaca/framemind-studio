@@ -4,7 +4,9 @@
 // Vstup i výstup je čtverec MODEL_SIZE×MODEL_SIZE; výřez, zmenšení a vložení
 // zpátky do plného rozlišení řeší services/localInpaint.ts.
 
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/webgpu';
+import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
+import ortWasmModuleUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 import { INPAINT_MODELS, type InpaintModelId } from '../utils/inpaintModels';
 import { MODEL_SIZE } from '../utils/inpaintMath';
 import { fetchCachedModel } from './modelFetch';
@@ -18,19 +20,17 @@ const CACHE_NAME = 'fm-inpaint-models-v1';
 const sessions = new Map<InpaintModelId, Promise<ort.InferenceSession>>();
 const backends = new Map<InpaintModelId, string>();
 
-// Pomocná vlákna WASM spouští onnxruntime z TOHOTO souboru (bundler do něj
-// vložil i runtime) se jménem "em-pthread". V takovém vlákně nesmíme sahat na
-// self.onmessage ani na nastavení: přepsali bychom obsluhu vlákna, to by se
-// nikdy nenahlásilo a vytvoření modelu by čekalo donekonečna (zamrzlé
-// "Stahuji model 100 %" na produkci, kde je stránka cross-origin izolovaná).
-const IS_ORT_THREAD = typeof self.name === 'string' && self.name.startsWith('em-pthread');
-
+// Explicit URLs keep the WebGPU entry and both runtime assets on the same
+// installed version/variant. WASM threads start the standalone runtime module,
+// so they never replace their thread handler with this application's onmessage.
+ort.env.wasm.wasmPaths = {
+  wasm: new URL(ortWasmUrl, self.location.href).href,
+  mjs: new URL(ortWasmModuleUrl, self.location.href).href,
+};
 // Vlákna WASM jdou jen v cross-origin izolované stránce (SharedArrayBuffer).
-if (!IS_ORT_THREAD) {
-  ort.env.wasm.numThreads = self.crossOriginIsolated
-    ? Math.min(8, Math.max(1, (self.navigator?.hardwareConcurrency ?? 4) - 1))
-    : 1;
-}
+ort.env.wasm.numThreads = self.crossOriginIsolated
+  ? Math.min(8, Math.max(1, (self.navigator?.hardwareConcurrency ?? 4) - 1))
+  : 1;
 
 const WEBGPU_INIT_TIMEOUT_MS = 30_000;
 
@@ -152,32 +152,43 @@ const runModel = async (
 ): Promise<Uint8Array> => {
   const dims = [1, 3, MODEL_SIZE, MODEL_SIZE];
   const maskDims = [1, 1, MODEL_SIZE, MODEL_SIZE];
+  let inputs: Record<string, ort.Tensor>;
 
   if (model === 'fast') {
     // MI-GAN pipeline: uint8, maska 255 = zachovat, 0 = doplnit (ověřeno
     // na ukázce — opačná konvence vrací nesmysl přes celý obraz).
     const keep = new Uint8Array(N);
     for (let i = 0; i < N; i++) keep[i] = mask[i] ? 0 : 255;
-    const out = await session.run({
+    inputs = {
       image: new ort.Tensor('uint8', image, dims),
       mask: new ort.Tensor('uint8', keep, maskDims),
-    });
-    return new Uint8Array((out.result ?? out[session.outputNames[0]]).data as Uint8Array);
+    };
+  } else {
+    // LaMa: float 0–1, maska 1 = doplnit; výstup je float 0–255.
+    const img = new Float32Array(3 * N);
+    for (let i = 0; i < 3 * N; i++) img[i] = image[i] / 255;
+    const hole = new Float32Array(N);
+    for (let i = 0; i < N; i++) hole[i] = mask[i] ? 1 : 0;
+    inputs = {
+      image: new ort.Tensor('float32', img, dims),
+      mask: new ort.Tensor('float32', hole, maskDims),
+    };
   }
 
-  // LaMa: float 0–1, maska 1 = doplnit; výstup je float 0–255.
-  const img = new Float32Array(3 * N);
-  for (let i = 0; i < 3 * N; i++) img[i] = image[i] / 255;
-  const hole = new Float32Array(N);
-  for (let i = 0; i < N; i++) hole[i] = mask[i] ? 1 : 0;
-  const out = await session.run({
-    image: new ort.Tensor('float32', img, dims),
-    mask: new ort.Tensor('float32', hole, maskDims),
-  });
-  const data = (out.output ?? out[session.outputNames[0]]).data as Float32Array;
-  const result = new Uint8Array(3 * N);
-  for (let i = 0; i < 3 * N; i++) result[i] = Math.max(0, Math.min(255, Math.round(data[i])));
-  return result;
+  let outputs: ort.InferenceSession.ReturnType | undefined;
+  try {
+    outputs = await session.run(inputs);
+    if (model === 'fast') {
+      return new Uint8Array((outputs.result ?? outputs[session.outputNames[0]]).data as Uint8Array);
+    }
+    const data = (outputs.output ?? outputs[session.outputNames[0]]).data as Float32Array;
+    const result = new Uint8Array(3 * N);
+    for (let i = 0; i < 3 * N; i++) result[i] = Math.max(0, Math.min(255, Math.round(data[i])));
+    return result;
+  } finally {
+    // Copy results before releasing buffers, including warm-up and failed runs.
+    for (const tensor of new Set([...Object.values(inputs), ...Object.values(outputs ?? {})])) tensor.dispose();
+  }
 };
 
 const handle = async (event: MessageEvent<Request>) => {
@@ -205,4 +216,4 @@ const handle = async (event: MessageEvent<Request>) => {
   }
 };
 
-if (!IS_ORT_THREAD) self.onmessage = handle;
+self.onmessage = handle;

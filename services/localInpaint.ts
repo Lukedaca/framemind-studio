@@ -1,6 +1,6 @@
 // Retuš štětcem bez API: výřez kolem masky → lokální model ve web workeru →
 // doplněné pixely zpátky do plného rozlišení. Mimo masku zůstává fotka
-// nedotčená (jediná ztráta je finální JPEG komprese souboru).
+// nedotčená. Pracovní verze je bezeztrátové PNG; JPEG vzniká až při exportu.
 
 import {
   CONTEXT_FACTOR,
@@ -8,13 +8,16 @@ import {
   MODEL_SIZE,
   computeInpaintCrop,
   dilateMask,
+  fitInpaintViewport,
   grainSigma,
   maskBoundingBox,
   missingGrain,
   pickAutoModel,
   planarToRgba,
   rgbaToPlanar,
+  type Rect,
 } from '../utils/inpaintMath';
+import { drawInpaintInput } from '../utils/inpaintCanvas';
 import type { InpaintModelId } from '../utils/inpaintModels';
 
 /** Volba v panelu: auto vybere model podle velikosti retušované plochy. */
@@ -129,7 +132,7 @@ const canvas = (width: number, height: number) => {
   return c;
 };
 
-export const outputType = (file: File) => (file.type === 'image/png' || file.type === 'image/webp' ? file.type : 'image/jpeg');
+export const outputType = (_file: File) => 'image/png' as const;
 
 /** Doplněný kus fotky: vrstva s průhledností mimo masku, vkládá se na (x, y). */
 export interface InpaintPatch {
@@ -144,7 +147,7 @@ export interface InpaintPatch {
 // Doplněná plocha z modelu je hladší než fotka kolem (model počítá na 512 px
 // a výsledek se zvětšuje). Přidá se jí zrno změřené v prstenci kolem díry —
 // bez toho retuš prozradí „plastová" skvrna, i když tvary sedí.
-const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole: Uint8Array) => {
+const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole: Uint8Array, viewport: Rect) => {
   const w = layer.width;
   const h = layer.height;
   const pixels = w * h;
@@ -162,8 +165,8 @@ const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole:
   // Díra a prstenec kolem ní v souřadnicích modelu (512×512) → pixely výřezu.
   const ring = dilateMask(hole, MODEL_SIZE, MODEL_SIZE, 20);
   const toModel = (i: number) => {
-    const mx = Math.min(MODEL_SIZE - 1, Math.floor(((i % w) * MODEL_SIZE) / w));
-    const my = Math.min(MODEL_SIZE - 1, Math.floor((Math.floor(i / w) * MODEL_SIZE) / h));
+    const mx = viewport.x + Math.min(viewport.width - 1, Math.floor(((i % w) * viewport.width) / w));
+    const my = viewport.y + Math.min(viewport.height - 1, Math.floor((Math.floor(i / w) * viewport.height) / h));
     return my * MODEL_SIZE + mx;
   };
   const step = Math.max(1, Math.floor(pixels / 400_000));
@@ -241,18 +244,16 @@ export const inpaintRegion = async (
   for (let i = 0; i < alpha.length; i++) if (alpha[i] > HOLE_ALPHA_THRESHOLD) holeArea++;
   const model: InpaintModelId = choice === 'auto' ? pickAutoModel(holeArea * sx * sy) : choice;
   const crop = computeInpaintCrop(fullBox, W, H, CONTEXT_FACTOR[model]);
+  const viewport = fitInpaintViewport(crop.width, crop.height);
 
-  // Výřez fotky → 512×512.
-  const imgSmall = canvas(MODEL_SIZE, MODEL_SIZE);
+  // Preserve crop proportions; image and mask use the same reflected padding.
+  const imgSmall = drawInpaintInput(source, crop, viewport);
   const imgCtx = imgSmall.getContext('2d', { willReadFrequently: true })!;
-  imgCtx.imageSmoothingQuality = 'high';
-  imgCtx.drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, MODEL_SIZE, MODEL_SIZE);
   const image = rgbaToPlanar(imgCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data, MODEL_SIZE * MODEL_SIZE);
 
   // Odpovídající výřez masky → 512×512, binárně (alfa > 0) a s okrajem.
-  const maskSmall = canvas(MODEL_SIZE, MODEL_SIZE);
+  const maskSmall = drawInpaintInput(maskCanvas, { x: crop.x / sx, y: crop.y / sy, width: crop.width / sx, height: crop.height / sy }, viewport);
   const msCtx = maskSmall.getContext('2d', { willReadFrequently: true })!;
-  msCtx.drawImage(maskCanvas, crop.x / sx, crop.y / sy, crop.width / sx, crop.height / sy, 0, 0, MODEL_SIZE, MODEL_SIZE);
   const msData = msCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data;
   const binary = new Uint8Array(MODEL_SIZE * MODEL_SIZE);
   for (let i = 0; i < binary.length; i++) binary[i] = msData[i * 4 + 3] > HOLE_ALPHA_THRESHOLD ? 1 : 0;
@@ -280,15 +281,15 @@ export const inpaintRegion = async (
   const layer = canvas(crop.width, crop.height);
   const layerCtx = layer.getContext('2d')!;
   layerCtx.imageSmoothingQuality = 'high';
-  layerCtx.drawImage(resultSmall, 0, 0, crop.width, crop.height);
+  layerCtx.drawImage(resultSmall, viewport.x, viewport.y, viewport.width, viewport.height, 0, 0, crop.width, crop.height);
   layerCtx.globalCompositeOperation = 'destination-in';
   // Váha retuše. Tvrdý štětec: díra s okrajem a měkkým přechodem ~1,5 px
   // modelu (bez švu, bez duchů po obrysu). Měkký štětec: přímo alfa masky,
   // takže se retuš k okraji plynule vytrácí. Síla váhu celou násobí.
   layerCtx.globalAlpha = Math.min(1, Math.max(0, blend.strength));
   if (blend.hardness >= 0.99) {
-    layerCtx.filter = `blur(${Math.max(1, (crop.width / MODEL_SIZE) * 1.5)}px)`;
-    layerCtx.drawImage(holeCanvas, 0, 0, crop.width, crop.height);
+    layerCtx.filter = `blur(${Math.max(1, Math.max(crop.width / viewport.width, crop.height / viewport.height) * 1.5)}px)`;
+    layerCtx.drawImage(holeCanvas, viewport.x, viewport.y, viewport.width, viewport.height, 0, 0, crop.width, crop.height);
   } else {
     layerCtx.drawImage(maskCanvas, crop.x / sx, crop.y / sy, crop.width / sx, crop.height / sy, 0, 0, crop.width, crop.height);
   }
@@ -299,7 +300,7 @@ export const inpaintRegion = async (
   const originalCrop = canvas(crop.width, crop.height);
   originalCrop.getContext('2d')!.drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
   try {
-    matchGrain(layer, originalCrop, hole);
+    matchGrain(layer, originalCrop, hole, viewport);
   } catch (error) {
     // Zrno je doladění — když selže (např. paměť), výsledek platí i bez něj.
     console.warn('Grain matching skipped:', error);
@@ -309,8 +310,9 @@ export const inpaintRegion = async (
 };
 
 /** Uloží plátno do souboru. Běží až po zobrazení výsledku, uživatel na něj nečeká. */
-export const encodeCanvas = async (source: HTMLCanvasElement, name: string, type: string): Promise<File> => {
-  const blob = await new Promise<Blob | null>((resolve) => source.toBlob(resolve, type, 0.96));
+export const encodeCanvas = async (source: HTMLCanvasElement, name: string, _type?: string): Promise<File> => {
+  const blob = await new Promise<Blob | null>((resolve) => source.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('INPAINT_ENCODE_FAILED');
-  return new File([blob], name, { type, lastModified: Date.now() });
+  const stem = name.replace(/\.[^.]+$/, '');
+  return new File([blob], `${stem}.png`, { type: 'image/png', lastModified: Date.now() });
 };

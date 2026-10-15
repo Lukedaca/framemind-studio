@@ -1,4 +1,4 @@
-# FrameMind Studio desktop — Windows 0.1.1
+# FrameMind Studio desktop — Windows
 
 Desktopová aplikace používá Tauri 2. Rust vytvoří okno a propojí systémové dialogy
 a ukládání souborů. Současné rozhraní React/Vite běží v Microsoft WebView2.
@@ -7,18 +7,18 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 ## Instalace a aktualizace
 
 Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
-`FrameMind-Studio_0.1.1_x64-setup.exe` je v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.1); není určen klientům.
+`FrameMind-Studio_0.1.2_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.2); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
 
-Instalátor má přibližně 213 MiB. Obsahuje offline instalační program WebView2,
+Instalátor 0.1.2 má přibližně 219 MiB. Obsahuje offline instalační program WebView2,
 který použije, pokud runtime není nainstalovaný. Připojení není potřeba pro
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.1 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+Instalátor 0.1.2 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
 SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
@@ -42,7 +42,7 @@ Výstupy:
 
 - `dist-desktop/`: zabalený frontend bez PWA a service workeru.
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
-- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.1_x64-setup.exe`: instalátor.
+- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.2_x64-setup.exe`: instalátor.
 
 Pro vývoj okna aplikace použijte `npm run desktop:dev`. Tauri spustí Vite na
 `127.0.0.1:3000`; tento port musí být volný. Instalovaný release žádný Vite server
@@ -104,9 +104,13 @@ implementovaná. Interní origin je `https://tauri.localhost`, obsluhovaný apli
 Jeho schéma a identifikátor musí zůstat stabilní, jinak se změní přístup k místnímu
 úložišti. Viz [Tauri window configuration](https://v2.tauri.app/reference/config/).
 
-CRM pořád ukládá JSON do `localStorage`. Tato změna neřeší obnovení objektů
-`File`, fotek ani `blob:` URL po restartu aplikace. Originály uchovávejte na disku
-a výsledky exportujte. GitHub zálohuje zdrojový kód, nikoli místní fotografie či CRM.
+Nový frontend ukládá projekty, rozpracovanou sadu, historii a kopie fotek do
+IndexedDB v místním profilu. Obrazová data jsou oddělená od nastavení; posuvníky
+je znovu nezapisují. Starší JSON v `localStorage` zůstává zachovaný, ale jeho
+chybějící obrazová data je nutné importovat znovu. Původní soubory na disku se
+nemění. Obnova po úplném restartu byla ověřena v odděleném Chromiu na generovaných
+snímcích; nově zabalená instalovaná aplikace tím ověřena není. Originály uchovávejte
+na disku a výsledky exportujte. GitHub zálohuje kód, nikoli místní fotografie či CRM.
 
 ## Připojení a omezení
 
@@ -128,9 +132,11 @@ samostatně podle [CONTRIBUTING](../CONTRIBUTING.md#optional-browser-smoke-check
 Na Windows spusťte testovací aplikaci s diagnostickým portem pouze pro její proces:
 
 ```powershell
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9225'
-$studioProcess = Start-Process -FilePath "$env:LOCALAPPDATA\FrameMind Studio\framemind-studio.exe" -PassThru
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9225 --remote-debugging-address=127.0.0.1'
+$env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $PWD "output\playwright\native-test-$([guid]::NewGuid().ToString('N'))"
+$studioProcess = Start-Process -FilePath "$env:LOCALAPPDATA\FrameMind Studio\framemind-studio.exe" -WindowStyle Hidden -PassThru
 Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+Remove-Item Env:WEBVIEW2_USER_DATA_FOLDER
 $env:DESKTOP_SMOKE_CDP = 'http://127.0.0.1:9225'
 $env:DESKTOP_SMOKE_PID = "$($studioProcess.Id)"
 node scripts/culling-local-smoke.mjs
@@ -138,7 +144,9 @@ node scripts/desktop-export-smoke.mjs
 ```
 
 Před tím zavřete ostatní okna Studia: aplikace používá jedinou instanci.
-Testy dočasně ovládají tuto instanci a nahrají syntetické snímky. Helper pro
+Testujte výhradně s odděleným profilem; ověřte, že proces WebView2 používá zadanou
+složku. Culling a export spusťte každý s novým prázdným testovacím profilem,
+protože pracovní sada se nově obnovuje po restartu. Testy nahrají syntetické snímky. Helper pro
 systémové dialogy kontroluje zadaný proces `framemind-studio`, nikoli cizí okna.
 Výsledky a vytvořené fotky patří do ignorovaného `output/playwright/`.
 Po testu aplikaci zavřete a spusťte běžně bez diagnostického portu.
@@ -154,3 +162,13 @@ Místní ověření 2026-10-04: typecheck, 106 testů, webový a desktopový fro
 prošly. Nainstalovaná verze prošla oběma smoke testy: culling měl 0 externích
 požadavků a 0 chyb stránky; export ověřil JPEG, PNG 128 × 96, dva soubory ve
 vybrané složce a nezměněné SHA-256 originálů. Testovací Windows už obsahovaly WebView2.
+
+Ověření 2026-10-15: sestaven a nainstalován balíček 0.1.2. Nativní culling prošel
+měřením, ručními volbami, přepočtem profilu, potvrzením odebrání a zastavením;
+0 externích požadavků a 0 chyb stránky. Nativní export ověřil zrušení dialogu,
+JPEG, PNG 128 × 96, dva soubory dávky a nezměněné testovací originály.
+Testy použily oddělené profily WebView2. Šest souborů původního uživatelského
+úložiště zůstalo po aktualizaci beze změny. Finální oprava sloganů se sestavuje
+v GitHub Actions; obsah nainstalovaného EXE se porovnává s distribuovaným artefaktem.
+Tauri do NSIS payloadu mění pouze značku balíčku UNK → NSS; porovnání tuto
+zdokumentovanou změnu zohledňuje a vyžaduje shodu všech ostatních bajtů.

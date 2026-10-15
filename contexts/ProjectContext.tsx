@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import type { Client, Project } from '../types';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import type { Client, EditorWorkspace, Project } from '../types';
 import { projectStorage } from '../services/projectStorage';
 
 interface ProjectContextType {
@@ -10,6 +10,12 @@ interface ProjectContextType {
   addProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => Project;
   updateProject: (id: string, updates: Partial<Project>) => void;
   addClient: (client: Omit<Client, 'id' | 'createdAt'>) => void;
+  workspace: EditorWorkspace | null;
+  saveWorkspace: (workspace: EditorWorkspace) => void;
+  storageReady: boolean;
+  storageStatus: 'loading' | 'saving' | 'saved' | 'error';
+  storageError: string | null;
+  retryStorage: () => void;
 }
 
 const LEGACY_DEMO_IDS = new Set(['c1', 'c2', 'c3', 'p1', 'p2', 'p3']);
@@ -21,27 +27,48 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [workspace, setWorkspace] = useState<EditorWorkspace | null>(null);
+  const [storageStatus, setStorageStatus] = useState<'loading' | 'saving' | 'saved' | 'error'>('loading');
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    if (hydrated) return;
     let cancelled = false;
+    setStorageStatus('loading');
     projectStorage.load().then((data) => {
       if (cancelled) return;
       // Dřívější verze při prvním spuštění vkládala ukázkové zakázky (c1–c3, p1–p3).
       // Skutečné záznamy mají id s časovou značkou, takže ty ukázkové jde bezpečně odfiltrovat.
       setClients((data?.clients ?? []).filter((client) => !LEGACY_DEMO_IDS.has(client.id)));
       setProjects((data?.projects ?? []).filter((project) => !LEGACY_DEMO_IDS.has(project.id)));
+      setWorkspace(data?.workspace ?? null);
+      setStorageError(null);
       setHydrated(true);
+    }).catch((error) => {
+      if (cancelled) return;
+      setStorageError(error instanceof Error ? error.message : String(error));
+      setStorageStatus('error');
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [hydrated, retry]);
 
   // Ukládat až po hydrataci — jinak první render přepíše storage prázdnými poli.
   useEffect(() => {
     if (!hydrated) return;
-    projectStorage.save({ clients, projects }).catch((error) => {
+    let cancelled = false;
+    setStorageStatus('saving');
+    projectStorage.save({ clients, projects, workspace }).then(() => {
+      if (!cancelled) { setStorageStatus('saved'); setStorageError(null); }
+    }).catch((error) => {
       console.error('Failed to save CRM storage.', error);
+      if (!cancelled) {
+        setStorageStatus('error');
+        setStorageError(error instanceof Error ? error.message : String(error));
+      }
     });
-  }, [clients, projects, hydrated]);
+    return () => { cancelled = true; };
+  }, [clients, projects, workspace, hydrated, retry]);
 
   const currentProject = useMemo(() => {
     if (!currentProjectId) return null;
@@ -70,7 +97,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return newProject;
   };
 
-  const updateProject = (id: string, updates: Partial<Project>) => {
+  const updateProject = useCallback((id: string, updates: Partial<Project>) => {
     setProjects((prev) =>
       prev.map((project) =>
         project.id === id
@@ -82,11 +109,21 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
           : project
       )
     );
-  };
+  }, []);
 
-  const setCurrentProject = (project: Project | null) => {
+  const setCurrentProject = useCallback((project: Project | null) => {
     setCurrentProjectId(project ? project.id : null);
-  };
+  }, []);
+
+  const saveWorkspace = useCallback((next: EditorWorkspace) => {
+    setWorkspace(previous => previous?.history === next.history && previous.activeFileId === next.activeFileId && previous.projectId === next.projectId ? previous : next);
+    if (!next.projectId) return;
+    setProjects(previous => previous.map(project => {
+      if (project.id !== next.projectId || (project.editorHistory === next.history && project.editorActiveFileId === next.activeFileId)) return project;
+      return { ...project, files: next.history.present.state, editorHistory: next.history, editorActiveFileId: next.activeFileId, updatedAt: new Date().toISOString() };
+    }));
+  }, []);
+  const retryStorage = useCallback(() => setRetry(value => value + 1), []);
 
   return (
     <ProjectContext.Provider
@@ -98,6 +135,12 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         addProject,
         updateProject,
         addClient,
+        workspace,
+        saveWorkspace,
+        storageReady: hydrated,
+        storageStatus,
+        storageError,
+        retryStorage,
       }}
     >
       {children}

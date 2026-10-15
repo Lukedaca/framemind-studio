@@ -12,7 +12,9 @@ export interface UploadedFile {
   generatedVideo?: GeneratedVideo;
   assessment?: QualityAssessment;
   culling?: CullingResult;
-  originalFile?: File; // metadata and read-only original during this session
+  originalFile?: File; // immutable imported original, also persisted locally
+  baseFile?: File; // renderable import before retouch (JPEG preview for RAW)
+  edits?: ManualEdits;
   cullingSource?: 'image' | 'embedded-jpeg-preview';
   category?: string;
 }
@@ -74,6 +76,18 @@ export interface CullingTechnicalMetrics {
   motionConfidence: number;
 }
 
+export interface CullingNativeMetrics {
+  sourceWidth: number;
+  sourceHeight: number;
+  sampleSize: number;
+  sampleCount: number;
+  informativeSamples: number;
+  maxSharpnessScore: number;
+  maxLaplacianVariance: number;
+  maxEdgeAcutance: number; // Laplacian/Sobel energy at 1:1, texture-normalized
+  maxNoiseEstimate: number;
+}
+
 export type CullingScorePart = 'sharpness' | 'exposure' | 'clipping' | 'noise' | 'contrast' | 'motion';
 export type CullingScoreBreakdown = Record<CullingScorePart, { score: number; weight: number; contribution: number }>;
 
@@ -105,6 +119,7 @@ export interface CullingMetrics {
   // The 1.0 engine requires these before producing automatic technical verdicts.
   technical?: CullingTechnicalMetrics;
   signature?: CullingSignature;
+  native?: CullingNativeMetrics; // bounded 1:1 samples; no subject detection
 }
 
 export interface CullingResult {
@@ -300,6 +315,9 @@ export interface Project {
   activity: ActivityEvent[];
   createdAt: string;
   updatedAt: string;
+  editorHistory?: History;
+  editorActiveFileId?: string | null;
+  unavailableFileCount?: number;
 }
 
 export interface HistoryEntry {
@@ -311,6 +329,12 @@ export interface History {
   past: HistoryEntry[];
   present: HistoryEntry;
   future: HistoryEntry[];
+}
+
+export interface EditorWorkspace {
+  projectId: string | null;
+  activeFileId: string | null;
+  history: History;
 }
 
 export interface Preset {

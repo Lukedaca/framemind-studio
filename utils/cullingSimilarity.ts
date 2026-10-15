@@ -130,3 +130,52 @@ export function compareSignatures(a: CullingSignature, b: CullingSignature): Sim
       average >= 0.86 && maxLocalDifference <= 0.09,
   };
 }
+
+function sample(values: number[], size: number, x: number, y: number, channels = 1, channel = 0): number {
+  const ix = Math.floor(x), iy = Math.floor(y), dx = x - ix, dy = y - iy;
+  const at = (sx: number, sy: number) => values[(sy * size + sx) * channels + channel];
+  return at(ix, iy) * (1 - dx) * (1 - dy) + at(ix + 1, iy) * dx * (1 - dy) +
+    at(ix, iy + 1) * (1 - dx) * dy + at(ix + 1, iy + 1) * dx * dy;
+}
+
+// Small camera translations may support a burst, never an automatic duplicate.
+// Caller must also establish capture-time or filename-sequence proximity.
+export function compareAlignedSignatures(a: CullingSignature, b: CullingSignature): SimilarityComparison {
+  const base = compareSignatures(a, b);
+  if (!base.informative || base.histogram < 0.8 || base.meanDifference > 0.04) return { ...base, nearDuplicate: false, similarScene: false };
+  let best = { structure: 0, correlation: 0, maxLocalDifference: 1, dx: 0, dy: 0 };
+  for (let dy = -3; dy <= 3; dy += 0.5) for (let dx = -3; dx <= 3; dx += 0.5) {
+    let meanA = 0, meanB = 0;
+    // Fixed symmetric overlap avoids a shift winning merely by discarding more pixels.
+    for (let y = 4; y < 28; y++) for (let x = 4; x < 28; x++) {
+      meanA += sample(a.luma, 32, x - dx / 2, y - dy / 2);
+      meanB += sample(b.luma, 32, x + dx / 2, y + dy / 2);
+    }
+    meanA /= 576; meanB /= 576;
+    let va = 0, vb = 0, covariance = 0, absolute = 0, maxLocalDifference = 0;
+    for (let by = 4; by < 28; by += 4) for (let bx = 4; bx < 28; bx += 4) {
+      let local = 0;
+      for (let y = by; y < by + 4; y++) for (let x = bx; x < bx + 4; x++) {
+        const da = sample(a.luma, 32, x - dx / 2, y - dy / 2) - meanA;
+        const db = sample(b.luma, 32, x + dx / 2, y + dy / 2) - meanB;
+        va += da * da; vb += db * db; covariance += da * db;
+        const difference = Math.abs(da - db); absolute += difference; local += difference;
+      }
+      maxLocalDifference = Math.max(maxLocalDifference, local / 16);
+    }
+    const correlation = clamp(covariance / Math.max(1e-9, Math.sqrt(va * vb)));
+    const structure = correlation * 0.6 + clamp(1 - absolute / 576 / 0.15) * 0.4;
+    if (structure > best.structure) best = { structure, correlation, maxLocalDifference, dx, dy };
+  }
+  let colorDifference = 0;
+  for (let y = 2; y < 14; y++) for (let x = 2; x < 14; x++) for (let c = 0; c < 3; c++) {
+    colorDifference += Math.abs(sample(a.color, 16, x - best.dx / 4, y - best.dy / 4, 3, c) -
+      sample(b.color, 16, x + best.dx / 4, y + best.dy / 4, 3, c));
+  }
+  const color = clamp(1 - colorDifference / 432 / 0.18);
+  const score = best.structure * 0.7 + color * 0.2 + base.histogram * 0.1;
+  return { ...base, structure: best.structure, maxLocalDifference: best.maxLocalDifference, color, score,
+    nearDuplicate: false,
+    similarScene: score >= 0.88 && best.structure >= 0.86 && best.correlation >= 0.93 &&
+      best.maxLocalDifference <= 0.1 && color >= 0.85 };
+}

@@ -1,15 +1,15 @@
-// Storage abstrakce pro CRM (projekty + klienti). Aktuální implementace je
-// čistě lokální (localStorage): data nejsou synchronizovaná mezi zařízeními
-// a smazání dat prohlížeče je odstraní — UI i README to musí říkat.
-//
-// Budoucí cloudová synchronizace implementuje stejné rozhraní ProjectStorage
-// a vymění se v ProjectContext — UI ani business logika se nemění.
+// Local projects, editor workspace and immutable photo copies use IndexedDB.
+// The legacy JSON adapter remains for compatibility; the default reads its
+// metadata without deleting the old record. Clearing profile data removes local
+// projects and image copies. There is no cross-device synchronization.
 
-import type { Client, Project } from '../types';
+import type { Client, EditorWorkspace, Project } from '../types';
+import { IndexedDbProjectStorage } from './indexedDbProjectStorage';
 
 export interface StoredData {
   clients: Client[];
   projects: Project[];
+  workspace?: EditorWorkspace | null;
 }
 
 export interface ProjectStorage {
@@ -56,4 +56,4 @@ export class LocalStorageProjectStorage implements ProjectStorage {
   }
 }
 
-export const projectStorage: ProjectStorage = new LocalStorageProjectStorage();
+export const projectStorage: ProjectStorage = new IndexedDbProjectStorage();

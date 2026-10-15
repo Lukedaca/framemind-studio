@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 // Sdílené prvky panelů editoru. Vzhled drží třídy fm-* ve styles.css.
 
@@ -26,11 +26,29 @@ interface RangeProps {
   /** Hodnota po dvojkliku; bez ní 0, u jednostranného posuvníku minimum. */
   defaultValue?: number;
   onChange: (value: number) => void;
+  onChangeStart?: () => void;
+  onChangeEnd?: () => void;
 }
 
 // Posuvník s nulou uprostřed (−100…100) vybarvuje od středu, jednostranný od kraje.
 // Dvojklik na popisek vrací výchozí hodnotu.
-export const Range: React.FC<RangeProps> = ({ label, value, min = -100, max = 100, step = 1, unit = '', defaultValue, onChange }) => {
+export const Range: React.FC<RangeProps> = ({ label, value, min = -100, max = 100, step = 1, unit = '', defaultValue, onChange, onChangeStart, onChangeEnd }) => {
+  const interacting = useRef(false);
+  const endRef = useRef(onChangeEnd);
+  endRef.current = onChangeEnd;
+  const begin = () => { if (!interacting.current) { interacting.current = true; onChangeStart?.(); } };
+  const end = () => { if (interacting.current) { interacting.current = false; endRef.current?.(); } };
+  useEffect(() => {
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    window.addEventListener('blur', end);
+    return () => {
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      window.removeEventListener('blur', end);
+      end();
+    };
+  }, []);
   const origin = min < 0 ? 0 : min;
   const reset = defaultValue ?? origin;
   const pct = (v: number) => ((v - min) / (max - min)) * 100;
@@ -54,6 +72,10 @@ export const Range: React.FC<RangeProps> = ({ label, value, min = -100, max = 10
         max={max}
         step={step}
         value={value}
+        onPointerDown={begin}
+        onBlur={end}
+        onKeyDown={e => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) begin(); }}
+        onKeyUp={end}
         onChange={(e) => onChange(Number(e.target.value))}
         className="fm-range"
         style={{ '--from': `${from}%`, '--to': `${to}%` } as React.CSSProperties}
