@@ -19,8 +19,8 @@ Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v
 je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
 Vite, terminál ani externí prohlížeč.
 
-**Klientské vydání zatím není dostupné.** Balíček 0.1.2 v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.2) je nepodepsaný
+**Klientské vydání zatím není dostupné.** Balíček 0.1.3 v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.3) je nepodepsaný
 vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může zobrazit
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
@@ -33,7 +33,7 @@ varování SmartScreen. [Oficiální vysvětlení Microsoftu](https://learn.micr
 Vydání pro macOS a Linux nebyla sestavena ani ověřena.
 
 Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md).
-Změny aktuální verze: [vydání 0.1.2](docs/releases/0.1.2.md). Přehled dokumentace: [docs/README.md](docs/README.md).
+Změny aktuální verze: [vydání 0.1.3](docs/releases/0.1.3.md). Přehled dokumentace: [docs/README.md](docs/README.md).
 
 ## Vývoj a spuštění ze zdrojů
 
@@ -83,7 +83,7 @@ Instalátor vzniká v `src-tauri/target/release/bundle/nsis/`.
 | Oblast | Současné chování |
 |---|---|
 | Import | JPEG, PNG, WebP; podporované RAW přípony se zpracují přes vložený JPEG náhled |
-| Culling | Technické metriky, podobné záběry, ruční profily, filtry a volby K / R / X |
+| Culling | Technické metriky, podobné záběry, detail 1:1, porovnání až čtyř snímků a volby K / R / X |
 | Úpravy | Automatická úprava z histogramu, posuvníky a ořez |
 | Lokální retuš | Štětec, klikací chytré laso, ONNX modely v lokálním WebView nebo prohlížeči |
 | Export | JPEG / PNG, kvalita, velikost a vodoznak; jednotlivá fotka nebo sada |
@@ -119,6 +119,25 @@ Od lokálního enginu 1.2 se u větších zdrojů měří také až devět výř
 ostrosti, aby zmenšení nezakrylo rozmazání. Výřezy se měří postupně; nejde o
 detekci subjektu a malý ostrý objekt mezi vzorkovanými místy mohou minout.
 
+Studio **0.1.3** používá engine **local-1.3**. Dvojklikem lze otevřít detail jednoho
+snímku nebo tlačítkem `+` vybrat až čtyři snímky k porovnání. Kliknutí do celého
+záběru určí výřez 384 × 384 px z původního obrazového zdroje; jeho pixelová data
+se nezmenšují. Měřítko 1:1 zohledňuje hustotu displeje. Polohy lze spojit nebo
+volit jednotlivě, šipky posouvají výřez a K/R/X mění ruční volbu aktivního snímku.
+Měření vybrané oblasti pomáhá ruční kontrole a nemění automatický verdikt.
+Také karty nyní zobrazují celý záběr bez ořezání.
+
+Postup výběru a klávesové zkratky: [návod k lokálnímu cullingu](docs/culling.md).
+
+Opakovaný běh ve stejné relaci používá hotová měření totožných vstupních
+souborů; po zastavení tedy není potřeba znovu dekódovat dokončené snímky.
+`Přeměřit vše` tuto cache obejde. Nová relace a obnovené soubory vyžadují nové
+měření; shodný název, velikost ani čas souboru se nepovažují za důkaz totožnosti.
+Při relativním porovnání série se výřezy 1:1 používají jen při dostatečné opoře
+a stejných rozměrech zdrojů. Pokud si odporují s náhledem, samotný rozdíl
+ostrosti nezpůsobí návrh vyřazení. Seskupování používá již provedená porovnání
+místo opakovaného výpočtu stejných dvojic.
+
 - Skóre 0–100 má rozpis jednotlivých příspěvků. Není to pravděpodobnost kvality snímku.
 - Podobnost využívá obrazovou strukturu, barvy a hashe. Série navíc používají čas pořízení
   nebo návaznost názvů souborů. Seskupení nemusí najít všechny podobné snímky,
@@ -137,7 +156,8 @@ detekci subjektu a malý ostrý objekt mezi vzorkovanými místy mohou minout.
 
 Náhledové metriky neposuzují oči, výraz, rozhodující moment, kompozici ani zaostření
 na konkrétní subjekt. Směrový indikátor není důkaz pohybového rozmazání.
-Prahy dosud nejsou kalibrované na reprezentativní sadě skutečných fotografií.
+Kalibrace dosud zahrnuje jednu sportovní sadu 114 JPEGů; nejde o reprezentativní
+ověření napříč žánry, fotoaparáty a RAW soubory.
 
 Z RAW se měří vložený JPEG, nikoli RAW senzorová data. Jeho zpracování ve fotoaparátu
 ovlivňuje měření. Starší automatické výsledky vyžadují novou analýzu;
@@ -196,8 +216,10 @@ to u takového projektu zobrazí. Náhled galerie není veřejný hosting fotogr
 
 Desktop má vlastní profil WebView2 pod `%LOCALAPPDATA%\cz.framemind.studio\`.
 Data z původního prohlížeče se do něj automaticky nepřenesou. Nový frontend používá
-stejné místní IndexedDB úložiště; obnova byla ověřena v Chromiu, nikoli v nově
-zabalené instalované aplikaci.
+stejné místní IndexedDB úložiště. Obnova pracovního stavu byla ověřena v odděleném
+Chromiu. Při místní aktualizaci na 0.1.3 zůstalo všech 12 existujících souborů
+IndexedDB a localStorage před prvním spuštěním beze změny a instalované okno se
+otevřelo; tato kontrola sama neověřuje obnovu každého uloženého projektu.
 Při odinstalaci je odstranění dat samostatná volba.
 
 ## Omezení a ověření
@@ -205,8 +227,9 @@ Při odinstalaci je odstranění dat samostatná volba.
 - RAW import extrahuje náhled; nejde o demosaicing ani plné vyvolání RAW.
   Soubor bez použitelného vloženého JPEG nemusí jít importovat.
 - Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
-- Testy cullingu a prohlížečový smoke ověřují technické chování na syntetických datech.
-  Neprokazují fotografickou kvalitu ani rychlost na velké skutečné RAW sadě.
+- Projekt prošel 144 testy a culling syntetickými kontrolami v Chromiu
+  i nativním WebView2. Jedna skutečná sada 114 JPEGů ověřila měření a zachování
+  originálů; neprokazuje obecnou fotografickou přesnost ani rychlost na RAW sadě.
 - Kompletní ověření retuše ve všech prohlížečích a na všech GPU nebylo provedeno.
 
 Historický audit a záznam implementace: [docs/culling-local-audit.md](docs/culling-local-audit.md).

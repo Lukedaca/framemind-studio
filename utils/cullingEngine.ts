@@ -1,10 +1,10 @@
 // Pure local scoring and grouping; browser I/O belongs to cullingSession/worker.
-import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, CullingResult,
+import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, CullingNativeMetrics, CullingResult,
   CullingScoreBreakdown, CullingScorePart, CullingSignature, CullingVerdictSource } from '../types';
 import { clamp01 } from './cullingMetrics';
 import { compareAlignedSignatures, compareSignatures, isValidSignature, type SimilarityComparison } from './cullingSimilarity';
 
-export const CULLING_ENGINE_VERSION = 'local-1.2';
+export const CULLING_ENGINE_VERSION = 'local-1.3';
 export const SIMILARITY_EXACT_LIMIT = 320;
 export const MAX_SERIES_SIZE = 48;
 const PARTS: CullingScorePart[] = ['sharpness', 'exposure', 'clipping', 'noise', 'contrast', 'motion'];
@@ -144,6 +144,7 @@ export interface SimilarityInput {
   finalScore: number;
   sharpness: number;
   detailConfidence?: number;
+  native?: CullingNativeMetrics;
   exif?: CullingExif;
 }
 export interface SimilarityAssignment {
@@ -191,6 +192,7 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
   const sorted = items.filter(item => isValidSignature(item.signature)).sort((a, b) =>
     (a.exif?.captureTimeMs ?? 0) - (b.exif?.captureTimeMs ?? 0) || lexical(a.filename, b.filename) || lexical(a.id, b.id));
   const groups: SimilarityInput[][] = [];
+  const nearDuplicateGroups = new Set<number>();
   const buckets = new Map<string, Set<number>>();
   const keys = (item: SimilarityInput) => Array.from({ length: 8 }, (_, band) => `${band}:${item.signature!.averageHash.slice(band * 32, band * 32 + 32)}`);
   for (const item of sorted) {
@@ -198,13 +200,20 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
     const start = sorted.length <= SIMILARITY_EXACT_LIMIT ? 0 : Math.max(0, groups.length - 64);
     for (let i = start; i < groups.length; i += 1) candidates.add(i);
     for (const key of keys(item)) for (const index of buckets.get(key) ?? []) candidates.add(index);
-    let found = -1;
+    let found = -1, joinsAsNearDuplicate = true;
     for (const index of candidates) {
       const group = groups[index];
       // Complete linkage prevents A~B~C chains from hiding different scenes.
-      if (group.length < MAX_SERIES_SIZE && group.every(member => pair(item, member))) { found = index; break; }
+      if (group.length >= MAX_SERIES_SIZE) continue;
+      let allNearDuplicate = true;
+      if (group.every(member => {
+        const comparison = pair(item, member);
+        if (!comparison?.nearDuplicate) allNearDuplicate = false;
+        return comparison !== null;
+      })) { found = index; joinsAsNearDuplicate = allNearDuplicate; break; }
     }
-    if (found < 0) { found = groups.length; groups.push([]); }
+    if (found < 0) { found = groups.length; groups.push([]); nearDuplicateGroups.add(found); }
+    else if (!joinsAsNearDuplicate) nearDuplicateGroups.delete(found);
     groups[found].push(item);
     for (const key of keys(item)) {
       const bucket = buckets.get(key) ?? new Set<number>();
@@ -214,22 +223,33 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
       buckets.set(key, bucket);
     }
   }
-  for (const group of groups) {
+  for (const [index, group] of groups.entries()) {
     if (group.length < 2) continue;
     group.sort((a, b) => b.finalScore - a.finalScore || lexical(a.filename, b.filename) || lexical(a.id, b.id));
     const best = group[0];
-    let nearDuplicate = true;
-    for (let i = 0; i < group.length; i += 1) for (let j = 0; j < i; j += 1) {
-      if (!pair(group[i], group[j])?.nearDuplicate) nearDuplicate = false;
-    }
+    // Reuse the all-pairs evidence collected on admission instead of measuring
+    // every pair again. Complete linkage and its scene-change veto are unchanged.
+    const nearDuplicate = nearDuplicateGroups.has(index);
     const groupId = `series:${[...group].sort((a, b) => lexical(a.id, b.id))[0].id}`;
-    group.forEach((item, rank) => assignments.set(item.id, {
-      duplicateGroupId: groupId, isBestInGroup: rank === 0, groupRank: rank + 1,
-      groupKind: nearDuplicate ? 'near-duplicate' : 'burst', similarityToBest: pair(item, best)?.score ?? 1,
-      relativeSharpness: Math.max(0, item.sharpness) / Math.max(1, best.sharpness),
-      scoreGap: Math.max(0, best.finalScore - item.finalScore) / Math.max(1, best.finalScore),
-      referenceDetailConfidence: best.detailConfidence ?? 0,
-    }));
+    group.forEach((item, rank) => {
+      // Compare like resolutions. Never divide a 1:1 measurement by a preview.
+      const native = [item, best].every(frame => frame.native && Number.isFinite(frame.native.maxLaplacianVariance) &&
+        frame.native.maxLaplacianVariance >= 0 && frame.native.informativeSamples >= 3) &&
+        item.native!.sourceWidth === best.native!.sourceWidth && item.native!.sourceHeight === best.native!.sourceHeight;
+      const sharpness = native ? item.native!.maxLaplacianVariance : item.sharpness;
+      const reference = native ? best.native!.maxLaplacianVariance : best.sharpness;
+      const previewRatio = Math.max(0, item.sharpness) / Math.max(1, best.sharpness);
+      // A moving subject can fall between fixed samples. Relative rejection needs
+      // agreement at both scales; disagreement remains a manual-review signal.
+      const relativeSharpness = native ? Math.max(previewRatio, Math.max(0, sharpness) / Math.max(1, reference)) : previewRatio;
+      assignments.set(item.id, {
+        duplicateGroupId: groupId, isBestInGroup: rank === 0, groupRank: rank + 1,
+        groupKind: nearDuplicate ? 'near-duplicate' : 'burst', similarityToBest: pair(item, best)?.score ?? 1,
+        relativeSharpness,
+        scoreGap: Math.max(0, best.finalScore - item.finalScore) / Math.max(1, best.finalScore),
+        referenceDetailConfidence: native ? Math.min(1, best.native!.informativeSamples / 5) : best.detailConfidence ?? 0,
+      });
+    });
   }
   return assignments;
 }

@@ -176,3 +176,118 @@ unverified. Native export and retouch were outside this change.
 Reproduce the real-set audit with a local server on port 3100:
 node scripts/culling-batch-audit.mjs "<local photo folder>" calibration
 The script only reads the supplied folder and writes reports to ignored output/.
+
+## Local 1.3 development — region inspection and conservative comparison, 2026-10-20
+
+This change was developed in the canonical checkout at baseline `92ee69c`.
+It uses this repository's source and local synthetic/authorized real images;
+no scraping or reverse engineering was used. The installed Studio process was
+left running. At the start of this work the last published product release was
+0.1.2. The following records development of culling engine `local-1.3` before
+its packaging and publication as Studio 0.1.3.
+
+- Culling cards show the entire import preview without cropping. A double-click
+  opens an original-resolution detail view. Up to four selected frames can be
+  compared with linked or independent normalized crop positions, shared 1:1/2:1
+  zoom, arrow-key movement and K/R/X decisions on the active frame.
+- Each 384px region is decoded and measured sequentially in an owned worker.
+  The displayed PNG preserves decoded crop pixels. Device pixel ratio determines
+  physical 1:1 scale; no full-resolution RGBA buffer is retained. RAW inspection
+  uses the immutable import JPEG preview, not a subsequently edited render.
+- Selected-region metrics are an inspection aid, not subject recognition and
+  not an automatic verdict override. Their position is local to the open view.
+  Worker cancellation and Blob URL cleanup prevent stale results or retained
+  crop resources when the selected position changes or the view closes.
+- Completed full-image measurements are reused across workers only for the
+  exact pixel Blob, original metadata Blob and source kind in this application
+  session. A new Blob with identical file attributes is remeasured. A fresh
+  application session requires new measurement. Explicit remeasurement bypasses
+  the cache. Scores and groups are recomputed and manual decisions are preserved.
+- Relative rejection in a verified series uses native evidence only at matching
+  source dimensions with sufficient informative samples. Native and preview
+  detail must agree on the deficit; a contradiction vetoes relative rejection.
+  Group classification retains the complete-linkage admission evidence, removing
+  the second all-pairs pass without weakening scene-change checks or group limits.
+
+Verification of the final source: 144 tests across 22 files, typecheck, production
+web build, desktop frontend build and a Windows release-profile executable build
+passed. The final 400-image determinism/cap test took 1.9 seconds on this run;
+this is a regression check, not a controlled cross-version performance benchmark.
+The browser culling regression passed reruns, profiles, manual choices, stop and
+confirmed/dismissed removal. The comparison smoke passed four-frame selection,
+the four-frame cap, linked/independent regions, physical pixel scale at DPR 1.5,
+2:1 scale and a manual decision across rerun. Direct worker inspection verified
+pixel equality with the decoded original, unchanged source SHA-256, detection of
+a small detailed region missed by the fixed grid, zero analyze requests on a cache
+hit and one on forced remeasurement. External culling requests and page errors
+were zero. Reports are in ignored output/playwright/culling-{local-smoke,inspection}.json.
+
+The 114-image football gallery was measured again read-only; all original SHA-256
+hashes matched and external requests/page errors were zero. Initial native-only
+relative ranking produced a disputed fourth reject for IMG_9969. The disagreement
+between preview and sample evidence motivated the two-scale veto above. Replaying
+the final pure scoring/grouping code over those measured metrics returned
+94 keep / 17 review / 3 reject and six grouped photos. IMG_9969 remains review;
+the reject suggestions are IMG_9944, IMG_9945 and IMG_9946. The final replay does
+not re-decode photos and is not a fresh timing benchmark. Reports are
+output/playwright/sigma-local13-audit.json and sigma-local13-final-replay.json.
+
+One JPEG gallery does not establish general photographic accuracy or a European
+ranking. Other cameras, real RAW sets, very small subjects and other genres still
+need independent labeled calibration. The existing native-blur rule can miss a
+small sharp subject between fixed sample positions; the manual inspector helps
+review this limitation, but does not turn it into subject-aware automation.
+
+Reproduce comparison verification with node scripts/culling-inspection-smoke.mjs
+against a local server on port 3100. It also supports DESKTOP_SMOKE_CDP for a
+separate native QA executable/profile. Native results are written to
+output/playwright/native-culling-inspection.json. The development native build
+uses identifier cz.framemind.studio.culling-qa-20261020 so it can run alongside
+the user's installed application. The native WebView2 run passed four-frame
+comparison, the selection limit, linked/independent crops, 1:1/2:1 display at
+actual Windows DPR 1.25 and the manual choice across rerun. Native external
+requests and page errors were zero. The owned QA process was closed afterwards;
+the original installed process remained running.
+
+A separate unsigned development installer uses the ignored version-only overlay
+output/playwright/culling-local13-preview-config.json to package version 0.1.3
+with the normal application identifier. This does not change the published
+release, install an update or publish an artifact. Build it from an x64 Visual
+Studio developer command environment:
+node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config output/playwright/culling-local13-preview-config.json
+The overlay contains exactly {"version":"0.1.3"}; recreate it locally if needed.
+
+Packaging completed successfully. The resulting
+src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.3_x64-setup.exe is
+229644389 bytes and both installer/application ProductVersion fields are 0.1.3.
+Installer SHA-256: 17d68a834cf39d3209915d3c704486f5c3d977b93b0344cf787b66b074637d5c.
+At that checkpoint the installer had not been run or published; installation
+is recorded below.
+
+### User-authorized installation follow-up, 2026-10-20
+
+The user then explicitly requested installation. The same verified installer was
+run with /S /UPDATE into the existing current-user installation. Windows uninstall
+registration and executable metadata both report 0.1.3. The installed executable
+was verified against the actual payload of that installer: SHA-256
+e8bc156c6e323e455e6e8f61bff303bd4c596219478c86ed2dc0de8d94842572.
+The loose post-bundle release executable has a different hash, so that file was
+not used as the payload-equivalence reference. All 12 existing IndexedDB and
+localStorage files had unchanged hashes and inventory after installation, before
+first launch. The normal installed application was opened without a QA profile
+or debug arguments and its window was responding. Evidence is in ignored
+output/playwright/studio-install-0.1.3.json and studio-0.1.3-payload-verification.json.
+
+### Documentation and release preparation, 2026-10-20
+
+The user requested alignment of GitHub documentation and framemind.cz.
+Source version manifests were aligned to 0.1.3; the download uses the same
+verified installer recorded above, with its existing SHA-256 unchanged.
+Both READMEs, the documentation index and Windows guide now describe local-1.3,
+with a current culling usage guide and version-specific release notes.
+Nine current-interface screenshots, including two-frame region inspection,
+were captured from the production frontend in an isolated browser profile using
+already-public FrameMind demo images. Capture reported zero page errors.
+Private calibration photographs and local verification reports remain excluded
+from Git. The website copy and its product knowledge record describe the same
+features, data flow, unsigned release status and calibration limits.

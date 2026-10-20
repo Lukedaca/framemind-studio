@@ -1,11 +1,13 @@
 # FrameMind Studio documentation
 
-Current release: **0.1.2**, Windows x64, unsigned development preview.
+Current release: **0.1.3**, Windows x64, unsigned development preview.
 
 - [Český přehled funkcí, dat a omezení](../README.md)
 - [English feature, data and limitation guide](../README.en.md)
 - [Windows installation, updates and native verification](desktop.md)
-- [Release 0.1.2](releases/0.1.2.md)
+- [Local culling: 1:1 detail, comparison and shortcuts (Czech)](culling.md)
+- [Release 0.1.3](releases/0.1.3.md)
+- [Previous release 0.1.2](releases/0.1.2.md)
 - [Contributing and optional synthetic browser checks](../CONTRIBUTING.md)
 
 The source of truth is this repository, `Lukedaca/framemind-studio`.

@@ -1,9 +1,20 @@
 import type { UploadedFile, CullingGenre, CullingResult } from '../types';
 import type { PhotoAnalysis, SimilarityInput, SimilarityAssignment } from '../utils/cullingEngine';
 import type { CullingRequest, CullingResponse } from '../utils/cullingProtocol';
+import type { CullingInspection, InspectionPoint } from '../utils/cullingInspection';
 
 type RequestBody = CullingRequest extends infer R ? R extends { id: number } ? Omit<R, 'id'> : never : never;
 interface Pending { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+
+export function cullingInput(file: UploadedFile) {
+  const source = file.cullingSource ?? 'image';
+  const original = file.originalFile instanceof Blob ? file.originalFile : file.file;
+  return { source, file: source === 'image' ? original : file.baseFile ?? file.file, metadataFile: original };
+}
+
+// Exact Blob identity, never filename/size guesses. No decoded pixels are cached.
+// Rehydrated files in a new application session deliberately need new measurement.
+const measurements = new WeakMap<Blob, { metadata: Blob; source: string; analysis: PhotoAnalysis }>();
 
 // One owned worker per run. Cancellation rejects every waiter immediately.
 export class CullingSession {
@@ -36,10 +47,16 @@ export class CullingSession {
     });
   }
 
-  analyze(file: UploadedFile): Promise<PhotoAnalysis> {
-    const source = file.cullingSource ?? 'image';
-    const original = file.originalFile instanceof Blob ? file.originalFile : file.file;
-    return this.request({ kind: 'analyze', file: source === 'image' ? original : file.file, metadataFile: original, source });
+  async analyze(file: UploadedFile, force = false): Promise<PhotoAnalysis> {
+    if (this.closed) throw this.failure;
+    const input = cullingInput(file), cached = measurements.get(input.file);
+    if (!force && cached?.metadata === input.metadataFile && cached.source === input.source) return cached.analysis;
+    const analysis = await this.request<PhotoAnalysis>({ kind: 'analyze', ...input });
+    measurements.set(input.file, { metadata: input.metadataFile, source: input.source, analysis });
+    return analysis;
+  }
+  inspect(file: UploadedFile, point: InspectionPoint): Promise<CullingInspection> {
+    return this.request({ kind: 'inspect', file: cullingInput(file).file, point });
   }
   score(analysis: PhotoAnalysis, genre: CullingGenre | null): Promise<CullingResult> { return this.request({ kind: 'score', analysis, genre }); }
   async group(items: SimilarityInput[]): Promise<Map<string, SimilarityAssignment>> {

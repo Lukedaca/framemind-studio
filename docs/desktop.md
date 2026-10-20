@@ -7,18 +7,18 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 ## Instalace a aktualizace
 
 Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
-`FrameMind-Studio_0.1.2_x64-setup.exe` je v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.2); není určen klientům.
+`FrameMind-Studio_0.1.3_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.3); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
 
-Instalátor 0.1.2 má přibližně 219 MiB. Obsahuje offline instalační program WebView2,
+Instalátor 0.1.3 má přibližně 219 MiB. Obsahuje offline instalační program WebView2,
 který použije, pokud runtime není nainstalovaný. Připojení není potřeba pro
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.2 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+Instalátor 0.1.3 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
 SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
@@ -42,7 +42,10 @@ Výstupy:
 
 - `dist-desktop/`: zabalený frontend bez PWA a service workeru.
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
-- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.2_x64-setup.exe`: instalátor.
+- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.3_x64-setup.exe`: instalátor.
+
+Název souboru zveřejněného na GitHubu používá `FrameMind-Studio` s pomlčkou;
+obsah je totožný s místním instalátorem se jménem `FrameMind Studio`.
 
 Pro vývoj okna aplikace použijte `npm run desktop:dev`. Tauri spustí Vite na
 `127.0.0.1:3000`; tento port musí být volný. Instalovaný release žádný Vite server
@@ -109,7 +112,9 @@ IndexedDB v místním profilu. Obrazová data jsou oddělená od nastavení; pos
 je znovu nezapisují. Starší JSON v `localStorage` zůstává zachovaný, ale jeho
 chybějící obrazová data je nutné importovat znovu. Původní soubory na disku se
 nemění. Obnova po úplném restartu byla ověřena v odděleném Chromiu na generovaných
-snímcích; nově zabalená instalovaná aplikace tím ověřena není. Originály uchovávejte
+snímcích. Při aktualizaci na 0.1.3 byla ověřena shoda všech 12 existujících souborů
+IndexedDB/localStorage před prvním spuštěním a otevření instalovaného okna; tato
+kontrola sama neověřuje obnovu každého uloženého projektu. Originály uchovávejte
 na disku a výsledky exportujte. GitHub zálohuje kód, nikoli místní fotografie či CRM.
 
 ## Připojení a omezení
@@ -127,8 +132,8 @@ jejich přítomnost sama nedokazuje podporu vícevláknového WASM na každém p
 
 ## Volitelné ověření skutečného okna
 
-Playwright je volitelný nástroj, nikoli závislost aplikace. Nainstalujte jej
-samostatně podle [CONTRIBUTING](../CONTRIBUTING.md#optional-browser-smoke-check).
+Playwright je vývojová závislost; instalovaná aplikace jej nepotřebuje.
+Přípravu prohlížeče popisuje [CONTRIBUTING](../CONTRIBUTING.md#optional-browser-smoke-check).
 Na Windows spusťte testovací aplikaci s diagnostickým portem pouze pro její proces:
 
 ```powershell
@@ -140,12 +145,13 @@ Remove-Item Env:WEBVIEW2_USER_DATA_FOLDER
 $env:DESKTOP_SMOKE_CDP = 'http://127.0.0.1:9225'
 $env:DESKTOP_SMOKE_PID = "$($studioProcess.Id)"
 node scripts/culling-local-smoke.mjs
+node scripts/culling-inspection-smoke.mjs
 node scripts/desktop-export-smoke.mjs
 ```
 
 Před tím zavřete ostatní okna Studia: aplikace používá jedinou instanci.
 Testujte výhradně s odděleným profilem; ověřte, že proces WebView2 používá zadanou
-složku. Culling a export spusťte každý s novým prázdným testovacím profilem,
+složku. Culling, porovnání detailu a export spusťte každý s novým prázdným testovacím profilem,
 protože pracovní sada se nově obnovuje po restartu. Testy nahrají syntetické snímky. Helper pro
 systémové dialogy kontroluje zadaný proces `framemind-studio`, nikoli cizí okna.
 Výsledky a vytvořené fotky patří do ignorovaného `output/playwright/`.
@@ -172,3 +178,16 @@ Testy použily oddělené profily WebView2. Šest souborů původního uživatel
 v GitHub Actions; obsah nainstalovaného EXE se porovnává s distribuovaným artefaktem.
 Tauri do NSIS payloadu mění pouze značku balíčku UNK → NSS; porovnání tuto
 zdokumentovanou změnu zohledňuje a vyžaduje shodu všech ostatních bajtů.
+
+Ověření 2026-10-20: syntetické porovnání detailu enginu `local-1.3` prošlo
+v oddělené QA aplikaci WebView2 při skutečném DPR 1,25. Ověřeny byly až čtyři
+snímky, limit výběru, propojené i samostatné výřezy, 1:1/2:1 a ruční volba
+zachovaná po opakované analýze; 0 externích požadavků a 0 chyb stránky.
+QA aplikace měla vlastní identifikátor i profil a nezasáhla běžnou pracovní sadu.
+
+Následná uživatelem vyžádaná aktualizace na 0.1.3 zachovala všech 12 existujících
+souborů IndexedDB/localStorage před prvním spuštěním. Instalované EXE se shodovalo
+s payloadem ověřeného instalátoru a běžné okno se otevřelo. Kontrolní součet
+instalátoru je `17d68a834cf39d3209915d3c704486f5c3d977b93b0344cf787b66b074637d5c`.
+Nativní export nebyl pro 0.1.3 znovu ověřován; výše uvedený test exportu patří 0.1.2.
+Podrobnosti měření, kalibrace a jejich mezí: [audit cullingu](culling-local-audit.md).

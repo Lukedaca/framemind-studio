@@ -36,7 +36,7 @@ await page.route('**/*', route => {
 });
 page.on('pageerror', error => errors.push(error.message));
 try {
-  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.goto(base, { waitUntil: 'networkidle' });
   await page.evaluate(async () => {
     const { CullingSession } = await import('/services/cullingSession.ts');
     const input = document.createElement('input'); input.type = 'file'; input.id = 'audit-file';
@@ -70,6 +70,7 @@ try {
       id: filename, filename, signature: result.metrics.signature, aspectRatio: result.aspectRatio,
       finalScore: result.finalScore, sharpness: result.metrics.technical.laplacianVariance,
       detailConfidence: result.metrics.technical.detailConfidence, exif: result.exif,
+      native: result.metrics.native,
     })));
     for (const row of rows) row.result = rescoreCullingResult({ ...row.result, ...groups.get(row.filename) }, 'sport');
     const pairs = [];

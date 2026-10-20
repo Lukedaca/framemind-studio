@@ -3,6 +3,7 @@ import type { CullingExif } from '../types';
 import { PREVIEW_MAX_SIDE, nativeSampleRects, readMetrics, summarizeNativeSamples } from '../utils/cullingMetrics';
 import { buildCullingResult, computeSimilarityGroups, type PhotoAnalysis } from '../utils/cullingEngine';
 import type { CullingRequest } from '../utils/cullingProtocol';
+import { inspectionRect, type CullingInspection } from '../utils/cullingInspection';
 
 async function readExif(file: File): Promise<CullingExif | undefined> {
   try {
@@ -48,10 +49,26 @@ async function analyze(request: Extract<CullingRequest, { kind: 'analyze' }>): P
   } finally { bitmap.close(); }
 }
 
-// Caller awaits each request: at most one decoded original is resident.
+async function inspect(request: Extract<CullingRequest, { kind: 'inspect' }>): Promise<CullingInspection> {
+  const bitmap = await createImageBitmap(request.file);
+  try {
+    const region = inspectionRect(bitmap.width, bitmap.height, request.point);
+    const canvas = new OffscreenCanvas(region.width, region.height);
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('Inspection canvas unavailable');
+    context.drawImage(bitmap, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
+    const metrics = readMetrics(context.getImageData(0, 0, region.width, region.height).data, region.width, region.height, false);
+    // PNG preserves the decoded crop exactly; the original is never re-encoded.
+    return { region, sourceWidth: bitmap.width, sourceHeight: bitmap.height, metrics,
+      image: await canvas.convertToBlob({ type: 'image/png' }) };
+  } finally { bitmap.close(); }
+}
+
+// Callers await requests sequentially: at most one decoded original is resident.
 self.onmessage = async ({ data }: MessageEvent<CullingRequest>) => {
   try {
     const value = data.kind === 'analyze' ? await analyze(data)
+      : data.kind === 'inspect' ? await inspect(data)
       : data.kind === 'group' ? [...computeSimilarityGroups(data.items)]
       : buildCullingResult(data.analysis, data.genre);
     self.postMessage({ id: data.id, value });

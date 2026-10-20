@@ -7,6 +7,7 @@ import Aperture from './common/Aperture';
 import Header from './Header';
 import { confirmAction } from '../utils/confirmAction';
 import { useTranslation } from '../contexts/LanguageContext';
+import CullingCompare from './CullingCompare';
 
 interface CullingViewProps {
   files: UploadedFile[];
@@ -48,6 +49,8 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
   const [collapseSeries, setCollapseSeries] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [inspectionIds, setInspectionIds] = useState<string[]>([]);
   const sessionRef = useRef<CullingSession | null>(null);
   const cancelledRef = useRef(false);
   const mountedRef = useRef(true);
@@ -87,6 +90,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
         id: file.id, filename: file.file.name, signature: r.metrics.signature, aspectRatio: r.aspectRatio,
         finalScore: r.finalScore, sharpness: r.metrics.technical?.laplacianVariance ?? 0,
         detailConfidence: r.metrics.technical?.detailConfidence ?? 0, exif: r.exif,
+        native: r.metrics.native,
       }] : [];
     }));
     for (const [id, result] of workMap) {
@@ -96,7 +100,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     }
   };
 
-  const runCulling = async (selectedGenre: CullingGenre = genre, rescoreOnly = false) => {
+  const runCulling = async (selectedGenre: CullingGenre = genre, rescoreOnly = false, force = false) => {
     if (!files.length || sessionRef.current) return;
     let session: CullingSession;
     try { session = new CullingSession(); } catch { addNotification(tr('cull_worker_unavailable'), 'error'); return; }
@@ -110,7 +114,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
           if (cancelledRef.current) break;
           const file = files[index];
           try {
-            const analysis = await session.analyze(file);
+            const analysis = await session.analyze(file, force);
             const result = await session.score(analysis, selectedGenre);
             workMap.set(file.id, { ...result, manualDecision: workMap.get(file.id)?.manualDecision });
           } catch (error) {
@@ -201,11 +205,15 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
 
   const groupMembers = useCallback((groupId: string) =>
     files.filter(f => cullingMap.get(f.id)?.duplicateGroupId === groupId), [files, cullingMap]);
+  const selectedCompareIds = compareIds.filter(id => files.some(file => file.id === id));
+  const inspectionFiles = inspectionIds.flatMap(id => files.find(file => file.id === id) ?? []);
+  const toggleCompare = (id: string) => setCompareIds(previous => previous.includes(id) ? previous.filter(value => value !== id) :
+    previous.filter(value => files.some(file => file.id === value)).length < 4 ? [...previous.filter(value => files.some(file => file.id === value)), id] : previous);
 
   // Klávesy jako v profi cullingu: šipky = fokus, K/R/X = verdikt.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (sessionRef.current) return;
+      if (sessionRef.current || inspectionIds.length) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
@@ -233,7 +241,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [visibleFiles, focusedId]);
+  }, [visibleFiles, focusedId, inspectionIds]);
 
   const phaseLabel = phase === 'analyzing' ? tr('cull_phase_local') : phase === 'grouping' ? tr('cull_phase_grouping') : null;
 
@@ -252,12 +260,13 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
       <div
         key={inStrip ? `strip-${file.id}` : file.id}
         className={`group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200 bg-elevated
-          ${inStrip ? 'aspect-square' : 'aspect-[3/4]'}
+          ${inStrip ? 'aspect-square' : 'aspect-[3/2]'}
           ${isFocused ? `ring-2 ${style?.ring ?? 'ring-fm-blue'} shadow-lg` : 'hover:ring-1 hover:ring-gray-600'}`}
         onClick={() => setFocusedId(file.id)}
+        onDoubleClick={() => { if (!isRunning) setInspectionIds([file.id]); }}
       >
-        <img src={file.previewUrl} className="w-full h-full object-cover" loading="lazy" alt={file.file.name} />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/30 opacity-80" />
+        <img src={file.originalPreviewUrl} className="w-full h-full object-contain" loading="lazy" alt={file.file.name} />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/30 opacity-80 pointer-events-none" />
         {isRunning && !result && <div className="fm-scanline" />}
 
         {/* Verdikt + skóre */}
@@ -273,13 +282,17 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
             </span>
           )}
         </div>
-        {result && (
-          <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
-            <span className="bg-black/60 backdrop-blur text-white text-[11px] font-mono font-bold px-1.5 py-0.5 rounded">
+        <div className="absolute top-2 right-2 flex items-center gap-2">
+          <button disabled={isRunning || (!selectedCompareIds.includes(file.id) && selectedCompareIds.length >= 4)}
+            aria-label={tr('cull_compare_select') + ' ' + file.file.name} aria-pressed={selectedCompareIds.includes(file.id)}
+            onClick={event => { event.stopPropagation(); toggleCompare(file.id); }}
+            className={`w-7 h-7 rounded border font-bold disabled:opacity-40 ${selectedCompareIds.includes(file.id) ? 'bg-fm-blue text-white border-fm-blue' : 'bg-black/70 text-white border-white/30'}`}>
+            {selectedCompareIds.includes(file.id) ? '✓' : '+'}
+          </button>
+          {result && <span className="bg-black/60 backdrop-blur text-white text-[11px] font-mono font-bold px-1.5 py-0.5 rounded">
               {result.engineVersion === CULLING_ENGINE_VERSION ? result.finalScore : '—'}
-            </span>
-          </div>
-        )}
+          </span>}
+        </div>
 
         {/* Rychlé verdikty na hover */}
         <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center justify-center gap-2">
@@ -395,6 +408,11 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
             </div>
           )}
 
+          {!isRunning && scored > 0 && <div className="space-y-2">
+            <button onClick={() => void runCulling(genre, false, true)} className="text-xs text-gray-400 underline hover:text-white">{tr('cull_remeasure')}</button>
+            <p className="text-[11px] text-gray-400">{tr('cull_cache_hint')}</p>
+          </div>}
+
           {/* Statistika */}
           {scored > 0 && (
             <div className="glass-panel rounded-2xl p-4 space-y-2.5">
@@ -477,6 +495,10 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
 
           {/* Akce */}
           <div className="mt-auto space-y-2 pt-2">
+            <button disabled={isRunning || !focusedId} onClick={() => { if (focusedId) setInspectionIds([focusedId]); }}
+              className="w-full py-2.5 rounded-xl bg-elevated border border-border-subtle text-xs font-bold disabled:opacity-40">{tr('cull_inspect')}</button>
+            <button disabled={isRunning || selectedCompareIds.length < 2} onClick={() => setInspectionIds(selectedCompareIds)}
+              className="w-full py-2.5 rounded-xl bg-elevated border border-fm-blue text-xs font-bold disabled:opacity-40">{tr('cull_compare_open')} ({selectedCompareIds.length}/4)</button>
             <p className="text-[11px] text-gray-600 text-center font-mono">{tr('cull_keyboard_hint')}</p>
             {counts.reject > 0 && (
               <button
@@ -522,6 +544,11 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
                         <StackIcon className="w-3.5 h-3.5" /> {tr('cull_series')} ({members.length})
                       </span>
                       <button
+                        disabled={isRunning}
+                        onClick={() => setInspectionIds(members.slice(0, 4).map(file => file.id))}
+                        className="ml-auto mr-4 text-xs text-fm-blue disabled:opacity-40"
+                      >{tr('cull_compare_open')}</button>
+                      <button
                         onClick={() => setExpandedGroups(prev => { const n = new Set(prev); n.delete(groupId); return n; })}
                         className="text-gray-500 hover:text-white text-xs"
                       >
@@ -553,6 +580,8 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
           )}
         </div>
       </div>
+      {inspectionFiles.length > 0 && <CullingCompare key={inspectionIds.join('|')} files={inspectionFiles} results={cullingMap}
+        onDecision={setManualDecision} onClose={() => setInspectionIds([])} />}
     </div>
   );
 };

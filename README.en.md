@@ -19,8 +19,8 @@ The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
 interface runs in a dedicated application window. The installed application
 does not require Vite, a terminal or an external browser.
 
-**A client release is not available yet.** The 0.1.2 package on
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.2) is an unsigned
+**A client release is not available yet.** The 0.1.3 package on
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.3) is an unsigned
 development preview. Do not distribute it to clients. Windows may show SmartScreen
 or block installation; disabling protection is not part of the installation instructions.
 
@@ -33,7 +33,7 @@ file origin and integrity; it does not guarantee immediate SmartScreen reputatio
 macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
-Changes in this version: [release 0.1.2](docs/releases/0.1.2.md). Documentation index: [docs/README.md](docs/README.md).
+Changes in this version: [release 0.1.3](docs/releases/0.1.3.md). Documentation index: [docs/README.md](docs/README.md).
 
 ## Develop and run from source
 
@@ -83,7 +83,7 @@ The installer is written to `src-tauri/target/release/bundle/nsis/`.
 | Area | Current behavior |
 |---|---|
 | Import | JPEG, PNG, WebP; supported RAW extensions use an embedded JPEG preview |
-| Culling | Technical metrics, similar frames, manual profiles, filters and K / R / X decisions |
+| Culling | Technical metrics, similar frames, 1:1 detail, comparison of up to four frames and K / R / X decisions |
 | Adjustments | Histogram-based auto adjustment, sliders and crop |
 | Local retouching | Brush, click-based smart lasso and ONNX models in the local WebView or browser |
 | Export | JPEG / PNG, quality, size and watermark; one photo or the set |
@@ -120,6 +120,25 @@ larger sources. The strongest measured sample detail limits the sharpness score
 so downscaling cannot hide blur. Samples are processed sequentially. This is
 not subject detection; a small sharp object between sample positions can be missed.
 
+Studio **0.1.3**, with engine **local-1.3**, adds a single-image detail view and comparison
+of up to four selected frames. Double-click a frame or select frames with `+`.
+Click in the full frame to inspect an unscaled 384 × 384 px crop from the original
+image source. The 1:1 display accounts for display pixel density. Positions can
+be linked or selected independently; arrows move the crop and K/R/X change the
+active frame's manual choice. Region measurements help manual inspection and
+do not change automatic suggestions. Cards also show the entire uncropped frame.
+
+Step-by-step instructions and shortcuts: [local culling guide (Czech)](docs/culling.md).
+
+Repeated runs in the same application session reuse completed measurements of
+the exact same input Blobs, including after cancellation. `Remeasure all` bypasses
+this cache. Rehydrated files in a new session require new measurement; matching
+names, sizes or timestamps never establish content identity. Relative series
+comparisons use 1:1 evidence only when sufficient and source dimensions match.
+When native detail disagrees with the preview, the relative sharpness deficit
+alone cannot produce a reject suggestion. Grouping reuses pair evidence already
+collected instead of computing all of the same comparisons again.
+
 - The 0–100 score shows its weighted contributions. It is not a probability of photo quality.
 - Similarity uses image structure, colors and hashes. Series also use capture time
   or filename sequence. Grouping may miss similar images, especially in large
@@ -138,7 +157,8 @@ not subject detection; a small sharp object between sample positions can be miss
 
 Preview metrics do not assess eyes, expression, decisive moments, composition or
 focus on a particular subject. The directional indicator does not prove motion blur.
-Thresholds have not been calibrated on a representative set of real photographs.
+Calibration covers one sports set of 114 JPEGs so far; it does not represent
+different genres, cameras or RAW files.
 
 RAW analysis measures the embedded JPEG, not sensor data. Camera processing affects
 those measurements. Older automatic results require fresh analysis; manual choices take precedence.
@@ -197,16 +217,19 @@ Gallery preview is not a public photo-hosting service.
 
 Desktop has a separate WebView2 profile under `%LOCALAPPDATA%\cz.framemind.studio\`.
 Existing browser data is not migrated automatically. The new frontend uses the
-same local IndexedDB storage; recovery was verified in Chromium, not in a newly
-packaged installed application. Deleting application data is a separate uninstall option.
+same local IndexedDB storage. Workspace recovery was verified in isolated Chromium.
+The local update to 0.1.3 preserved all 12 existing IndexedDB/localStorage files
+before first launch, and the installed window opened. This check alone does not
+verify recovery of every stored project. Deleting application data is a separate uninstall option.
 
 ## Limitations and verification
 
 - RAW import extracts a preview; it does not perform demosaicing or full RAW development.
   Files without a usable embedded JPEG may fail to import.
 - There are no user accounts, server storage or synchronization.
-- Culling tests and browser smoke checks exercise technical behavior on synthetic data.
-  They do not establish photographic quality or performance on a large real RAW set.
+- All 144 project tests passed, with synthetic culling checks in Chromium and native
+  WebView2. One real set of 114 JPEGs verified measurement and unchanged originals;
+  it does not establish general photographic accuracy or performance on a RAW set.
 - Retouching has not been comprehensively verified across all browsers and GPUs.
 
 Historical audit and implementation record: [docs/culling-local-audit.md](docs/culling-local-audit.md).

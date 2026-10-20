@@ -193,6 +193,21 @@ describe('local series without hash-only or transitive grouping', () => {
     expect(groups.get('z')!.isBestInGroup).toBe(true);
     expect(groups.get('a')!.isBestInGroup).toBe(false);
   });
+  it('requires preview and original-resolution detail to agree before relative rejection', () => {
+    const m = scene();
+    const native = { sourceWidth: 6000, sourceHeight: 4000, sampleCount: 9, sampleSize: 384, informativeSamples: 5,
+      maxLaplacianVariance: 80, maxSharpnessScore: 0.8, maxEdgeAcutance: 0.02, maxNoiseEstimate: 1 };
+    const first = input('001', m, { finalScore: 90, sharpness: 100, native });
+    const second = input('002', m, { finalScore: 70, sharpness: 100, native: { ...native, maxLaplacianVariance: 8 } });
+    expect(computeSimilarityGroups([first, second]).get('002')!.relativeSharpness).toBe(1);
+    expect(computeSimilarityGroups([first, { ...second, sharpness: 10 }]).get('002')!.relativeSharpness).toBeCloseTo(0.1);
+    // A sharp native patch vetoes an apparent deficit caused by downscaling.
+    expect(computeSimilarityGroups([first, { ...second, sharpness: 10, native }]).get('002')!.relativeSharpness).toBe(1);
+    // Insufficient native evidence falls back to matched preview measurements.
+    expect(computeSimilarityGroups([first, { ...second, native: { ...native, informativeSamples: 1 } }]).get('002')!.relativeSharpness).toBe(1);
+    expect(computeSimilarityGroups([first, { ...second, native: undefined }]).get('002')!.relativeSharpness).toBe(1);
+    expect(computeSimilarityGroups([first, { ...second, native: { ...native, sourceWidth: 3000, sourceHeight: 2000 } }]).get('002')!.relativeSharpness).toBe(1);
+  });
   it('same uniform hash does not group empty images', () => {
     const black = readMetrics(pixels(() => 0), WIDTH, HEIGHT), white = readMetrics(pixels(() => 255), WIDTH, HEIGHT);
     expect(black.hash).toBe(white.hash);

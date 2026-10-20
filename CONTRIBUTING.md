@@ -57,11 +57,12 @@ is offline.
 
 ## Optional browser smoke check
 
-The script is separate from `npm run test:run` and from CI. Playwright is not a
-declared application dependency. For an optional local check:
+The scripts are separate from `npm run test:run` and from CI. Playwright is a
+locked development dependency installed by `npm ci`; it is not needed by users
+of the packaged application. For an optional local check:
 
 ```bash
-npm install --no-save --package-lock=false playwright
+npm ci
 npx playwright install chromium
 node node_modules/vite/bin/vite.js --port 3100 --strictPort
 ```
@@ -70,6 +71,7 @@ In a second terminal:
 
 ```bash
 node scripts/culling-local-smoke.mjs
+node scripts/culling-inspection-smoke.mjs
 ```
 
 The script uses synthetic photos and writes results to ignored
@@ -85,6 +87,11 @@ node scripts/culling-local-smoke.mjs
 The script blocks external requests and checks that culling makes none after
 entering the culling screen. It does not prove that application startup or every
 editor feature is offline. Synthetic tests do not calibrate photographic quality.
+
+The inspection script checks four-frame comparison, linked and independent crop
+positions, physical pixel scaling, manual decisions across reruns, exact decoded
+crop pixels, measurement caching and forced remeasurement. For native mode use
+`DESKTOP_SMOKE_CDP` with a separate QA profile as described in the Windows guide.
 
 For adjustment-preview checks, run the dev server on port 3101 and execute
 `node scripts/editor-preview-smoke.mjs`. Override `EDITOR_SMOKE_URL` for another

@@ -31,3 +31,6 @@ dist-desktop
 
 # Local browser verification artifacts
 /output/playwright/
+
+# Prepared download packages and release checksums
+/output/releases/
