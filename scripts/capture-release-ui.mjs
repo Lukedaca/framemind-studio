@@ -58,11 +58,14 @@ try {
   await comparisonChoices.nth(0).click();
   await comparisonChoices.nth(1).click();
   await page.getByRole('button', { name: 'Porovnat výběr (2/4)', exact: true }).click();
-  const comparison = page.getByRole('dialog', { name: 'Porovnání detailu', exact: true });
+  const comparison = page.getByRole('dialog', { name: 'Fotografie v plném rozlišení', exact: true });
   await comparison.waitFor();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="culling-native-crop"] img').length === 2);
+  await page.waitForFunction(() => {
+    const images = [...document.querySelectorAll('[data-testid="culling-original-image"] img')];
+    return images.length === 2 && images.every(image => image.complete && image.naturalWidth > 0);
+  });
   await capture('compare');
-  await comparison.getByRole('button', { name: 'Zavřít detail', exact: true }).click();
+  await comparison.getByRole('button', { name: 'Zavřít fotografii', exact: true }).click();
   await page.getByRole('button', { name: 'Úpravy 03', exact: true }).click();
   await page.getByRole('slider').first().waitFor();
   await page.getByText('Uloženo lokálně', { exact: true }).waitFor(); await capture('edit');

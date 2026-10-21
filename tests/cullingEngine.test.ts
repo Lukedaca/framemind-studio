@@ -208,6 +208,36 @@ describe('local series without hash-only or transitive grouping', () => {
     expect(computeSimilarityGroups([first, { ...second, native: undefined }]).get('002')!.relativeSharpness).toBe(1);
     expect(computeSimilarityGroups([first, { ...second, native: { ...native, sourceWidth: 3000, sourceHeight: 2000 } }]).get('002')!.relativeSharpness).toBe(1);
   });
+  it('detects weak original detail hidden by an equally sharp downscaled burst preview', () => {
+    const referenceNative = { sourceWidth: 6000, sourceHeight: 4000, sampleCount: 9, sampleSize: 384, informativeSamples: 9,
+      maxLaplacianVariance: 80, maxSharpnessScore: 0.8, maxEdgeAcutance: 0.02, maxNoiseEstimate: 1 };
+    const blurredNative = { ...referenceNative, maxLaplacianVariance: 8, maxSharpnessScore: 0.5, maxEdgeAcutance: 0.03 };
+    const compare = (native: typeof referenceNative, reference = referenceNative) => {
+      const metrics = [{ ...scene(), native: reference }, { ...scene(10), native }];
+      const results = metrics.map(metrics => buildCullingResult({ metrics, source: 'image', aspectRatio: 4 / 3 }, 'sport'));
+      const groups = computeSimilarityGroups(results.map((r, i) => input(String(i + 1), r.metrics,
+        { finalScore: r.finalScore, native: r.metrics.native })));
+      return results.map((r, i) => rescoreCullingResult({ ...r, ...groups.get(String(i + 1)) }, 'sport'));
+    };
+    const [reference, blurred] = compare(blurredNative);
+    expect(blurred.groupKind).toBe('burst');
+    expect(blurred.relativeSharpness).toBeGreaterThan(0.9);
+    expect(blurred.relativeNativeSharpness).toBeCloseTo(0.1);
+    expect(blurred.decision).toBe('reject');
+    expect(blurred.reasons).toContain('cull_reason_soft_alternative');
+    expect(reference.decision).not.toBe('reject');
+    expect(getEffectiveDecision({ ...blurred, manualDecision: 'keep' })).toBe('keep');
+    // Relative texture alone, noisy evidence, weak references and unmatched
+    // resolutions cannot establish that an otherwise sharp photograph is blurred.
+    for (const [candidate, best] of [
+      [{ ...blurredNative, maxSharpnessScore: 0.75 }, referenceNative],
+      [{ ...blurredNative, maxNoiseEstimate: 20 }, referenceNative],
+      [{ ...blurredNative, sourceWidth: 3000 }, referenceNative],
+      [{ ...blurredNative, informativeSamples: 2 }, referenceNative],
+      [blurredNative, { ...referenceNative, maxSharpnessScore: 0.65 }],
+      [blurredNative, { ...referenceNative, maxNoiseEstimate: 20 }],
+    ]) expect(compare(candidate, best)[1].decision).not.toBe('reject');
+  });
   it('same uniform hash does not group empty images', () => {
     const black = readMetrics(pixels(() => 0), WIDTH, HEIGHT), white = readMetrics(pixels(() => 255), WIDTH, HEIGHT);
     expect(black.hash).toBe(white.hash);

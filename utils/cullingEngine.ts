@@ -4,7 +4,7 @@ import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, Cullin
 import { clamp01 } from './cullingMetrics';
 import { compareAlignedSignatures, compareSignatures, isValidSignature, type SimilarityComparison } from './cullingSimilarity';
 
-export const CULLING_ENGINE_VERSION = 'local-1.3';
+export const CULLING_ENGINE_VERSION = 'local-1.4';
 export const SIMILARITY_EXACT_LIMIT = 320;
 export const MAX_SERIES_SIZE = 48;
 const PARTS: CullingScorePart[] = ['sharpness', 'exposure', 'clipping', 'noise', 'contrast', 'motion'];
@@ -44,7 +44,7 @@ export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre |
 }
 
 export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: number,
-  context: Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence'> = {}):
+  context: Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence' | 'relativeNativeSharpness' | 'referenceNativeSharpness'> = {}):
   { decision: CullingDecision; reasons: string[]; risks: string[] } {
   const technical = metrics.technical;
   if (!technical || !Object.values(technical).every(Number.isFinite) ||
@@ -81,7 +81,7 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
   // Low texture, noisy samples and any observed sharp patch veto this suggestion.
   const severelySoftNative = native && native.sampleCount === 9 && native.informativeSamples >= 5 &&
     native.maxSharpnessScore < 0.56 && native.maxLaplacianVariance < 8 &&
-    native.maxEdgeAcutance < 0.0045 && native.maxNoiseEstimate < 3;
+    native.maxEdgeAcutance < 0.012 && native.maxNoiseEstimate < 3;
   const alternative = !!context.duplicateGroupId && context.isBestInGroup === false;
   const redundantCopy = alternative && context.groupKind === 'near-duplicate' &&
     (context.similarityToBest ?? 0) >= 0.965;
@@ -94,11 +94,21 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
     Number.isFinite(context.relativeSharpness) && (context.relativeSharpness ?? 1) >= 0 &&
     (context.relativeSharpness ?? 1) < 0.35 && (context.scoreGap ?? 0) > 0.1 &&
     (context.referenceDetailConfidence ?? 0) >= 0.35 && referenceScore >= 75;
+  // Downscaling can hide defocus or even reverse the preview's ranking. A native
+  // deficit is usable only with matching resolutions, a genuinely sharp reference,
+  // and independently soft, informative, quiet samples in the candidate itself.
+  // A sharp sampled patch still vetoes rejection even when the other frame is sharper.
+  const muchSofterNativeAlternative = alternative && (context.groupKind === 'burst' || context.groupKind === 'near-duplicate') &&
+    (context.similarityToBest ?? 0) >= 0.84 && (context.referenceDetailConfidence ?? 0) >= 0.6 &&
+    Number.isFinite(context.relativeNativeSharpness) && (context.relativeNativeSharpness ?? 1) >= 0 &&
+    (context.relativeNativeSharpness ?? 1) < 0.25 && (context.referenceNativeSharpness ?? 0) >= 0.7 &&
+    Number.isFinite(context.relativeSharpness) && (context.relativeSharpness ?? 2) <= 1.2 &&
+    native && native.informativeSamples >= 5 && native.maxSharpnessScore < 0.6 && native.maxNoiseEstimate < 3;
   const rejectReasons = [
     ...(emptyClippedPreview ? ['cull_reason_empty_clipped'] : []),
     ...(severelySoftNative ? ['cull_reason_native_blur'] : []),
     ...(redundantCopy ? ['cull_reason_redundant_copy'] : []),
-    ...(muchSofterAlternative ? ['cull_reason_soft_alternative'] : []),
+    ...(muchSofterAlternative || muchSofterNativeAlternative ? ['cull_reason_soft_alternative'] : []),
   ];
   const decision = rejectReasons.length ? 'reject' : risks.length || finalScore < 75 ? 'review' : 'keep';
   reasons.unshift(...rejectReasons);
@@ -156,6 +166,8 @@ export interface SimilarityAssignment {
   relativeSharpness?: number;
   scoreGap?: number;
   referenceDetailConfidence?: number;
+  relativeNativeSharpness?: number;
+  referenceNativeSharpness?: number;
 }
 const lexical = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 
@@ -239,8 +251,8 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
       const sharpness = native ? item.native!.maxLaplacianVariance : item.sharpness;
       const reference = native ? best.native!.maxLaplacianVariance : best.sharpness;
       const previewRatio = Math.max(0, item.sharpness) / Math.max(1, best.sharpness);
-      // A moving subject can fall between fixed samples. Relative rejection needs
-      // agreement at both scales; disagreement remains a manual-review signal.
+      // Keep the cross-scale ratio conservative. Original-scale rejection also
+      // requires independently weak native detail, not just a stronger neighbour.
       const relativeSharpness = native ? Math.max(previewRatio, Math.max(0, sharpness) / Math.max(1, reference)) : previewRatio;
       assignments.set(item.id, {
         duplicateGroupId: groupId, isBestInGroup: rank === 0, groupRank: rank + 1,
@@ -248,6 +260,8 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
         relativeSharpness,
         scoreGap: Math.max(0, best.finalScore - item.finalScore) / Math.max(1, best.finalScore),
         referenceDetailConfidence: native ? Math.min(1, best.native!.informativeSamples / 5) : best.detailConfidence ?? 0,
+        relativeNativeSharpness: native ? Math.max(0, sharpness) / Math.max(1, reference) : undefined,
+        referenceNativeSharpness: native && best.native!.informativeSamples >= 5 && best.native!.maxNoiseEstimate < 3 ? best.native!.maxSharpnessScore : undefined,
       });
     });
   }

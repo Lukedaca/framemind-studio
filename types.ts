@@ -144,6 +144,8 @@ export interface CullingResult {
   relativeSharpness?: number;
   scoreGap?: number; // fractional difference from the best technical score
   referenceDetailConfidence?: number; // detail evidence of the technical series representative
+  relativeNativeSharpness?: number; // same-resolution original samples only; not mixed with preview detail
+  referenceNativeSharpness?: number; // absolute detail score of the original-resolution reference
 }
 
 export interface SocialMediaContent {

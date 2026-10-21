@@ -190,4 +190,15 @@ souborů IndexedDB/localStorage před prvním spuštěním. Instalované EXE se 
 s payloadem ověřeného instalátoru a běžné okno se otevřelo. Kontrolní součet
 instalátoru je `17d68a834cf39d3209915d3c704486f5c3d977b93b0344cf787b66b074637d5c`.
 Nativní export nebyl pro 0.1.3 znovu ověřován; výše uvedený test exportu patří 0.1.2.
+
+Ověření 2026-10-21: aktuální zdrojový kód s enginem `local-1.4` prošel 147 testy,
+TypeScriptem, oběma frontendovými buildy a sestavením Windows instalátoru.
+Kontrola celých originálů v odděleném profilu nativního WebView2 při DPR 1,25
+ověřila původní bajty, celý snímek bez ořezu, zoom, tažení, porovnání čtyř
+fotografií a ruční volby po opakovaném běhu. Culling měl 0 externích požadavků
+a 0 chyb stránky. Místní aktualizace zachovala všech 341 tehdy existujících
+souborů IndexedDB/localStorage; instalované EXE se shodovalo s NSIS payloadem.
+Metadata místního balíčku zůstala 0.1.3; nejde o změnu veřejného vydání 0.1.3.
+Rozsah a omezení opravy: [aktuální nezveřejněné změny](releases/unreleased.md).
+
 Podrobnosti měření, kalibrace a jejich mezí: [audit cullingu](culling-local-audit.md).

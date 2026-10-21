@@ -1,9 +1,9 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { CullingDecision, CullingResult, UploadedFile } from '../types';
 import { useTranslation } from '../contexts/LanguageContext';
-import { CullingSession } from '../services/cullingSession';
+import { cullingInput } from '../services/cullingSession';
 import { getEffectiveDecision } from '../utils/cullingEngine';
-import { inspectionDisplaySize, inspectionPoint, type CullingInspection, type InspectionPoint } from '../utils/cullingInspection';
+import { inspectionPoint } from '../utils/cullingInspection';
 
 interface Props {
   files: UploadedFile[];
@@ -11,154 +11,179 @@ interface Props {
   onDecision: (id: string, decision: CullingDecision) => void;
   onClose: () => void;
 }
-const CENTER = { x: 0.5, y: 0.5 };
+type Point = { x: number; y: number };
+type Size = { width: number; height: number };
 const DECISIONS: CullingDecision[] = ['keep', 'review', 'reject'];
 const LETTERS = { keep: 'K', review: 'R', reject: 'X' };
+const ZOOM_STEPS = [0.125, 0.25, 0.5, 1, 2, 4];
 
 export default function CullingCompare({ files, results, onDecision, onClose }: Props) {
   const { t } = useTranslation();
   const tr = (key: string) => (t as unknown as Record<string, string>)[key] ?? key;
-  // Immutable source snapshot for this dialog; manual decisions do not restart decoding.
   const [sources] = useState(() => files.slice(0, 4));
-  const [points, setPoints] = useState<Record<string, InspectionPoint>>({});
-  const [linked, setLinked] = useState(true);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const [sizes, setSizes] = useState<Record<string, Size>>({});
+  const [errors, setErrors] = useState<string[]>([]);
   const [activeId, setActiveId] = useState(sources[0]?.id);
-  const [zoom, setZoom] = useState<1 | 2>(1);
+  const [zoom, setZoom] = useState<number | 'fit'>('fit');
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
-  const [batch, setBatch] = useState<{ points: typeof points; values: Record<string, CullingInspection & { url: string }>; errors: string[] }>(
-    { points, values: {}, errors: [] });
+  const areas = useRef(new Map<string, HTMLDivElement>());
+  const centers = useRef(new Map<string, Point>());
+  const drag = useRef<{ id: string; x: number; y: number; left: number; top: number } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const titleId = useId();
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    dialog.current?.showModal(); closeButton.current?.focus();
-    return () => { dialog.current?.close(); if (previous?.isConnected) previous.focus(); };
+    const element = dialog.current;
+    element?.showModal(); closeButton.current?.focus();
+    return () => { element?.close(); if (previous?.isConnected) previous.focus(); };
   }, []);
+  useEffect(() => {
+    // Display the actual imported bytes. No canvas, resizing, JPEG conversion or worker crop.
+    const next = Object.fromEntries(sources.map(file => [file.id, URL.createObjectURL(cullingInput(file).file)]));
+    setUrls(next);
+    return () => Object.values(next).forEach(url => URL.revokeObjectURL(url));
+  }, [sources]);
   useEffect(() => {
     const update = () => setDpr(window.devicePixelRatio || 1);
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, []);
-  useEffect(() => {
-    let disposed = false;
-    let session: CullingSession | undefined;
-    const urls: string[] = [];
-    setBatch({ points, values: {}, errors: [] });
-    // Coalesce held arrow keys; replacing a request terminates the stale worker.
-    const timer = setTimeout(async () => {
-      try { session = new CullingSession(); }
-      catch { if (!disposed) setBatch({ points, values: {}, errors: sources.map(f => f.id) }); return; }
-      try {
-        for (const file of sources) {
-          try {
-            const inspection = await session.inspect(file, points[file.id] ?? CENTER);
-            if (disposed) return;
-            const url = URL.createObjectURL(inspection.image); urls.push(url);
-            setBatch(previous => ({ ...previous, values: { ...previous.values, [file.id]: { ...inspection, url } } }));
-          } catch {
-            if (disposed) return;
-            setBatch(previous => ({ ...previous, errors: [...previous.errors, file.id] }));
-          }
-        }
-      } finally { session.close(); }
-    }, 80);
-    return () => { disposed = true; clearTimeout(timer); session?.close(); urls.forEach(url => URL.revokeObjectURL(url)); };
-  }, [sources, points]);
 
-  const selectPoint = (id: string, point: InspectionPoint) => {
-    const bounded = { x: Math.max(0, Math.min(1, point.x)), y: Math.max(0, Math.min(1, point.y)) };
-    setActiveId(id);
-    setPoints(previous => linked ? Object.fromEntries(sources.map(file => [file.id, bounded])) : { ...previous, [id]: bounded });
+  const changeZoom = (value: number | 'fit', focusId?: string, point?: Point) => {
+    for (const [id, area] of areas.current) {
+      centers.current.set(id, id === focusId && point ? point : zoom === 'fit' ? { x: 0.5, y: 0.5 } : {
+        x: (area.scrollLeft + area.clientWidth / 2) / area.scrollWidth,
+        y: (area.scrollTop + area.clientHeight / 2) / area.scrollHeight,
+      });
+    }
+    if (focusId) setActiveId(focusId);
+    setZoom(value);
   };
+  useLayoutEffect(() => {
+    for (const [id, point] of centers.current) {
+      const area = areas.current.get(id);
+      if (area) area.scrollTo(area.scrollWidth * point.x - area.clientWidth / 2, area.scrollHeight * point.y - area.clientHeight / 2);
+    }
+    centers.current.clear();
+  }, [zoom, dpr]);
+
+  const imagePoint = (id: string, clientX: number, clientY: number): Point | undefined => {
+    const area = areas.current.get(id), size = sizes[id];
+    if (!area || !size) return;
+    if (zoom === 'fit') {
+      const bounds = area.getBoundingClientRect();
+      return inspectionPoint(clientX - bounds.left, clientY - bounds.top, area.clientWidth, area.clientHeight, size.width, size.height) ?? undefined;
+    }
+    const bounds = area.querySelector('img')?.getBoundingClientRect();
+    if (bounds) return { x: Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width)),
+      y: Math.max(0, Math.min(1, (clientY - bounds.top) / bounds.height)) };
+  };
+  useEffect(() => {
+    const cleanups: (() => void)[] = [];
+    for (const [id, area] of areas.current) {
+      const wheel = (event: WheelEvent) => {
+        const size = sizes[id];
+        if (!size || !event.deltaY) return;
+        event.preventDefault();
+        const current = zoom === 'fit' ? Math.min(area.clientWidth / size.width, area.clientHeight / size.height) * dpr : zoom;
+        const next = event.deltaY < 0 ? ZOOM_STEPS.find(value => value > current + 0.001) ?? 4 :
+          [...ZOOM_STEPS].reverse().find(value => value < current - 0.001) ?? 0.125;
+        changeZoom(next, id, imagePoint(id, event.clientX, event.clientY));
+      };
+      area.addEventListener('wheel', wheel, { passive: false });
+      cleanups.push(() => area.removeEventListener('wheel', wheel));
+    }
+    return () => cleanups.forEach(cleanup => cleanup());
+  }, [zoom, sizes, dpr]);
+
   const onKeyDown = (event: React.KeyboardEvent) => {
     event.stopPropagation();
     if (event.ctrlKey || event.metaKey || event.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test((event.target as HTMLElement).tagName)) return;
     const decision = ({ k: 'keep', r: 'review', x: 'reject' } as const)[event.key.toLowerCase()];
     if (decision && activeId) { event.preventDefault(); onDecision(activeId, decision); return; }
     const move = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
-    const current = batch.points === points ? batch.values[activeId] : undefined;
-    if (move && activeId) {
-      event.preventDefault();
-      const point = points[activeId] ?? CENTER;
-      const width = current?.sourceWidth ?? results.get(activeId)?.metrics.native?.sourceWidth ?? 1920;
-      const height = current?.sourceHeight ?? results.get(activeId)?.metrics.native?.sourceHeight ?? 1280;
-      selectPoint(activeId, { x: point.x + move[0] * 96 / width, y: point.y + move[1] * 96 / height });
-    }
+    const area = areas.current.get(activeId);
+    if (move && area) { event.preventDefault(); area.scrollBy(move[0] * area.clientWidth / 4, move[1] * area.clientHeight / 4); }
+    if (event.key === '0') { event.preventDefault(); changeZoom('fit'); }
+    if (event.key === '1') { event.preventDefault(); changeZoom(1); }
   };
 
   return <dialog ref={dialog} aria-labelledby={titleId} onCancel={event => { event.preventDefault(); onClose(); }}
-    onKeyDown={onKeyDown} className="fixed inset-0 m-auto w-[96vw] max-w-none h-[94vh] max-h-none p-0 rounded-2xl border border-border-subtle bg-void text-white backdrop:bg-black/80 open:flex open:flex-col">
-    <header className="p-4 border-b border-border-subtle flex flex-wrap items-center justify-between gap-3">
-      <div>
+    onKeyDown={onKeyDown} className="fixed inset-0 m-0 w-screen max-w-none h-[100dvh] max-h-none p-0 border-0 bg-void text-white backdrop:bg-black/90 open:flex open:flex-col">
+    <header className="p-3 border-b border-border-subtle flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0">
         <h2 id={titleId} className="font-bold text-base">{tr('cull_compare_title')}</h2>
         <p className="text-xs text-gray-400 mt-1">{tr('cull_compare_hint')}</p>
       </div>
-      <div className="flex flex-wrap items-center gap-3 text-xs">
-        <label className="flex items-center gap-2"><input type="checkbox" checked={linked} onChange={event => {
-          setLinked(event.target.checked);
-          if (event.target.checked) setPoints(Object.fromEntries(sources.map(file => [file.id, points[activeId] ?? CENTER])));
-        }} className="accent-fm-blue" />{tr('cull_compare_link')}</label>
-        {([1, 2] as const).map(value => <button key={value} aria-pressed={zoom === value} onClick={() => setZoom(value)}
-          className={`px-3 py-2 rounded-lg border ${zoom === value ? 'border-fm-blue text-fm-blue' : 'border-border-subtle'}`}>{value === 1 ? '1:1' : '2:1'}</button>)}
-        <button onClick={() => setPoints({})} className="px-3 py-2 rounded-lg bg-elevated">{tr('cull_compare_center')}</button>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <button aria-pressed={zoom === 'fit'} onClick={() => changeZoom('fit')}
+          className={`px-3 py-2 rounded-lg border ${zoom === 'fit' ? 'border-fm-blue text-fm-blue' : 'border-border-subtle'}`}>{tr('cull_compare_fit')}</button>
+        {[1, 2, 4].map(value => <button key={value} aria-pressed={zoom === value} onClick={() => changeZoom(value)}
+          className={`px-3 py-2 rounded-lg border ${zoom === value ? 'border-fm-blue text-fm-blue' : 'border-border-subtle'}`}>{value * 100}%</button>)}
+        {typeof zoom === 'number' && zoom < 1 && <span className="px-2 font-mono">{zoom * 100}%</span>}
         <button ref={closeButton} onClick={onClose} className="px-4 py-2 rounded-lg bg-white text-black font-bold">{tr('cull_compare_close')}</button>
       </div>
     </header>
-    <div className="flex-1 min-h-0 overflow-auto p-4">
-      <div className={`grid gap-4 ${sources.length > 1 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
-        {sources.map(file => {
-          const data = batch.points === points ? batch.values[file.id] : undefined;
-          const error = batch.points === points && batch.errors.includes(file.id);
-          const technical = data?.metrics.technical;
-          const selected = activeId === file.id;
-          const decision = getEffectiveDecision(results.get(file.id));
-          const size = data ? inspectionDisplaySize(data.region, dpr, zoom) : undefined;
-          return <section key={file.id} data-testid="culling-compare-panel" data-file-id={file.id}
-            className={`min-w-0 rounded-xl border overflow-hidden ${selected ? 'border-fm-blue' : 'border-border-subtle'}`}>
-            <button onClick={() => setActiveId(file.id)} aria-pressed={selected}
-              className="w-full p-3 flex items-center justify-between gap-3 text-left bg-elevated">
-              <span className="text-sm font-mono truncate">{file.file.name}</span>
-              <span className="text-xs text-gray-400">{decision ? tr('cull_decision_' + decision) : '—'}</span>
-            </button>
-            <div className="p-3 space-y-3">
-              <button className="relative block w-full h-44 bg-black/40 cursor-crosshair" aria-label={tr('cull_compare_region') + ' ' + file.file.name}
-                aria-disabled={!data} onClick={event => {
-                  if (!data) return;
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  const point = inspectionPoint(event.clientX - bounds.left, event.clientY - bounds.top, bounds.width, bounds.height, data.sourceWidth, data.sourceHeight);
-                  if (point) selectPoint(file.id, point);
-                }}>
-                <img src={file.originalPreviewUrl} alt="" className="w-full h-full object-contain" draggable={false} />
-                {data && <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${data.sourceWidth} ${data.sourceHeight}`}>
-                  <rect {...data.region} fill="none" stroke="#5f9eff" strokeWidth="2" vectorEffect="non-scaling-stroke" />
-                </svg>}
-              </button>
-              <p className="text-xs text-gray-400">{tr(file.cullingSource === 'embedded-jpeg-preview' ? 'cull_source_raw_preview' : 'cull_source_image')}</p>
-              <div className="h-[400px] overflow-auto bg-black/50 rounded-lg grid place-items-center" data-testid="culling-native-crop" aria-busy={!data && !error}>
-                {data ? <img src={data.url} alt={tr('cull_compare_crop') + ' ' + file.file.name} draggable={false}
-                  style={{ width: size!.width, height: size!.height, maxWidth: 'none', imageRendering: zoom === 2 ? 'pixelated' : 'auto' }} />
-                  : <p role={error ? 'alert' : 'status'} className="p-4 text-sm text-gray-400">{tr(error ? 'cull_compare_error' : 'cull_compare_loading')}</p>}
-              </div>
-              {technical && <div className="flex flex-wrap justify-between gap-2 text-xs font-mono" data-testid="culling-region-metrics">
-                <span>{tr('cull_compare_region_detail')}: {technical.laplacianVariance.toFixed(1)}</span>
-                <span>{tr('cull_metric_evidence')}: {Math.round(technical.detailConfidence * 100)} / 100</span>
-                <span>{data.region.width} × {data.region.height} px · x {data.region.x} / y {data.region.y}</span>
-              </div>}
-              {technical && technical.detailConfidence < 0.3 && <p className="text-xs text-fm-blue">{tr('cull_risk_low_detail')}</p>}
-              <div className="flex gap-2">
-                {DECISIONS.map(value => <button key={value} onClick={() => { setActiveId(file.id); onDecision(file.id, value); }}
-                  aria-pressed={results.get(file.id)?.manualDecision === value} disabled={!results.has(file.id)}
-                  className={`flex-1 rounded-lg border py-2 text-xs font-bold disabled:opacity-40 ${decision === value ? 'border-fm-blue text-white bg-fm-blue/20' : 'border-border-subtle text-gray-400'}`}>
-                  {LETTERS[value]} · {tr('cull_decision_' + value)}
-                </button>)}
-              </div>
+    <div className={`flex-1 min-h-0 grid gap-2 p-2 ${sources.length > 1 ? 'grid-cols-1 md:grid-cols-2 auto-rows-fr overflow-auto' : 'grid-cols-1'}`}>
+      {sources.map(file => {
+        const size = sizes[file.id], selected = activeId === file.id, error = errors.includes(file.id);
+        const decision = getEffectiveDecision(results.get(file.id));
+        const pixels = size && zoom !== 'fit' ? { width: size.width * zoom / dpr, height: size.height * zoom / dpr } : undefined;
+        return <section key={file.id} data-testid="culling-compare-panel" data-file-id={file.id}
+          className={`min-w-0 min-h-0 flex flex-col border overflow-hidden ${selected ? 'border-fm-blue' : 'border-border-subtle'} ${sources.length > 1 ? 'min-h-[260px] md:min-h-0' : ''}`}>
+          <button onClick={() => setActiveId(file.id)} aria-pressed={selected}
+            className="w-full p-2 flex items-center justify-between gap-3 text-left bg-elevated">
+            <span className="text-xs font-mono truncate">{file.originalFile?.name ?? file.file.name}</span>
+            <span className="text-xs text-gray-400 shrink-0">{size ? `${size.width} × ${size.height} px` : ''}{decision ? ` · ${tr('cull_decision_' + decision)}` : ''}</span>
+          </button>
+          <div ref={element => { if (element) areas.current.set(file.id, element); else areas.current.delete(file.id); }}
+            data-testid="culling-original-image" tabIndex={0} role="region" aria-label={tr('cull_compare_image') + ' ' + file.file.name}
+            aria-busy={!size && !error} className="relative flex-1 min-h-0 overflow-auto bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-fm-blue"
+            style={{ cursor: zoom === 'fit' ? 'zoom-in' : 'grab', touchAction: zoom === 'fit' ? 'auto' : 'none' }}
+            onFocus={() => setActiveId(file.id)}
+            onClick={event => { setActiveId(file.id); if (zoom === 'fit' && size) changeZoom(1, file.id, imagePoint(file.id, event.clientX, event.clientY)); }}
+            onPointerDown={event => {
+              setActiveId(file.id);
+              if (zoom === 'fit' || event.button !== 0) return;
+              const area = event.currentTarget;
+              drag.current = { id: file.id, x: event.clientX, y: event.clientY, left: area.scrollLeft, top: area.scrollTop };
+              area.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={event => {
+              const start = drag.current;
+              if (!start || start.id !== file.id) return;
+              event.currentTarget.scrollLeft = start.left - (event.clientX - start.x);
+              event.currentTarget.scrollTop = start.top - (event.clientY - start.y);
+            }}
+            onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
+            {urls[file.id] && !error && <div style={{ position: zoom === 'fit' ? 'absolute' : 'relative', inset: zoom === 'fit' ? 0 : undefined,
+              width: pixels?.width ?? '100%', height: pixels?.height ?? '100%', minWidth: '100%', minHeight: '100%', display: 'grid', placeItems: 'center' }}>
+              <img src={urls[file.id]} alt={tr('cull_compare_image') + ' ' + file.file.name} draggable={false}
+                style={{ position: zoom === 'fit' ? 'absolute' : undefined, inset: zoom === 'fit' ? 0 : undefined,
+                  width: pixels?.width ?? '100%', height: pixels?.height ?? '100%', minWidth: 0, minHeight: 0, maxWidth: 'none', maxHeight: 'none', objectFit: 'contain' }}
+                onLoad={event => {
+                  const image = event.currentTarget;
+                  setSizes(previous => ({ ...previous, [file.id]: { width: image.naturalWidth, height: image.naturalHeight } }));
+                }} onError={() => setErrors(previous => [...previous, file.id])} />
+            </div>}
+            {(!size || error) && <p role={error ? 'alert' : 'status'} className="absolute inset-0 grid place-items-center p-4 text-sm text-gray-400 pointer-events-none">{tr(error ? 'cull_compare_error' : 'cull_compare_loading')}</p>}
+          </div>
+          <div className="p-2 bg-elevated flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] text-gray-400">{tr(file.cullingSource === 'embedded-jpeg-preview' ? 'cull_source_raw_preview' : 'cull_source_image')}</span>
+            <div className="flex gap-1">
+              {DECISIONS.map(value => <button key={value} onClick={() => { setActiveId(file.id); onDecision(file.id, value); }}
+                aria-pressed={results.get(file.id)?.manualDecision === value} disabled={!results.has(file.id)}
+                className={`rounded border px-3 py-1.5 text-xs font-bold disabled:opacity-40 ${decision === value ? 'border-fm-blue text-white bg-fm-blue/20' : 'border-border-subtle text-gray-400'}`}>
+                {LETTERS[value]} · {tr('cull_decision_' + value)}
+              </button>)}
             </div>
-          </section>;
-        })}
-      </div>
+          </div>
+        </section>;
+      })}
     </div>
-    <footer className="border-t border-border-subtle p-3 text-xs text-gray-400">{tr('cull_compare_footer')}</footer>
+    <footer className="border-t border-border-subtle p-2 text-[11px] text-gray-400">{tr('cull_compare_footer')}</footer>
   </dialog>;
 }

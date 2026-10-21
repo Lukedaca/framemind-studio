@@ -88,9 +88,11 @@ The script blocks external requests and checks that culling makes none after
 entering the culling screen. It does not prove that application startup or every
 editor feature is offline. Synthetic tests do not calibrate photographic quality.
 
-The inspection script checks four-frame comparison, linked and independent crop
-positions, physical pixel scaling, manual decisions across reruns, exact decoded
-crop pixels, measurement caching and forced remeasurement. For native mode use
+The inspection script checks one-click opening of full originals, exact imported
+bytes, fitting the entire image without clipping, physical pixel scaling, drag
+and wheel zoom, four-frame comparison and manual decisions across reruns.
+Its worker checks also cover exact decoded crop pixels, measurement caching
+and forced remeasurement. For native mode use
 `DESKTOP_SMOKE_CDP` with a separate QA profile as described in the Windows guide.
 
 For adjustment-preview checks, run the dev server on port 3101 and execute

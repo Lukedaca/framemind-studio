@@ -33,7 +33,10 @@ file origin and integrity; it does not guarantee immediate SmartScreen reputatio
 macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
-Changes in this version: [release 0.1.3](docs/releases/0.1.3.md). Documentation index: [docs/README.md](docs/README.md).
+Published release: [0.1.3](docs/releases/0.1.3.md).
+Current changes on `main`: [full originals and local-1.4 culling](docs/releases/unreleased.md).
+These fixes are not yet included in the installer attached to GitHub release 0.1.3.
+Documentation index: [docs/README.md](docs/README.md).
 
 ## Develop and run from source
 
@@ -83,7 +86,7 @@ The installer is written to `src-tauri/target/release/bundle/nsis/`.
 | Area | Current behavior |
 |---|---|
 | Import | JPEG, PNG, WebP; supported RAW extensions use an embedded JPEG preview |
-| Culling | Technical metrics, similar frames, 1:1 detail, comparison of up to four frames and K / R / X decisions |
+| Culling | Technical metrics, similar frames, full originals with zoom, comparison of up to four frames and K / R / X decisions |
 | Adjustments | Histogram-based auto adjustment, sliders and crop |
 | Local retouching | Brush, click-based smart lasso and ONNX models in the local WebView or browser |
 | Export | JPEG / PNG, quality, size and watermark; one photo or the set |
@@ -120,13 +123,13 @@ larger sources. The strongest measured sample detail limits the sharpness score
 so downscaling cannot hide blur. Samples are processed sequentially. This is
 not subject detection; a small sharp object between sample positions can be missed.
 
-Studio **0.1.3**, with engine **local-1.3**, adds a single-image detail view and comparison
-of up to four selected frames. Double-click a frame or select frames with `+`.
-Click in the full frame to inspect an unscaled 384 × 384 px crop from the original
-image source. The 1:1 display accounts for display pixel density. Positions can
-be linked or selected independently; arrows move the crop and K/R/X change the
-active frame's manual choice. Region measurements help manual inspection and
-do not change automatic suggestions. Cards also show the entire uncropped frame.
+The current source uses engine **local-1.4**. Click a photograph to open the whole
+original image file without another conversion or compression. Select up to four
+frames with `+` for comparison. The initial view fits the entire frame; 100%, 200%
+and 400% reveal detail. Scroll to zoom and drag to pan. The 100% scale accounts
+for display pixel density. K/R/X change the active frame's manual choice,
+0 fits the image, 1 sets 100%, and Esc closes the viewer. RAW still displays
+its embedded JPEG rather than developed sensor data.
 
 Step-by-step instructions and shortcuts: [local culling guide (Czech)](docs/culling.md).
 
@@ -135,8 +138,9 @@ the exact same input Blobs, including after cancellation. `Remeasure all` bypass
 this cache. Rehydrated files in a new session require new measurement; matching
 names, sizes or timestamps never establish content identity. Relative series
 comparisons use 1:1 evidence only when sufficient and source dimensions match.
-When native detail disagrees with the preview, the relative sharpness deficit
-alone cannot produce a reject suggestion. Grouping reuses pair evidence already
+Downscaling must not conceal severely soft original detail: rejection additionally
+requires independently weak candidate detail, low noise and a sharp reference.
+A sharp candidate sample vetoes that suggestion. Grouping reuses pair evidence already
 collected instead of computing all of the same comparisons again.
 
 - The 0–100 score shows its weighted contributions. It is not a probability of photo quality.
@@ -227,7 +231,7 @@ verify recovery of every stored project. Deleting application data is a separate
 - RAW import extracts a preview; it does not perform demosaicing or full RAW development.
   Files without a usable embedded JPEG may fail to import.
 - There are no user accounts, server storage or synchronization.
-- All 144 project tests passed, with synthetic culling checks in Chromium and native
+- All 147 tests passed for the current source, with synthetic culling checks in Chromium and native
   WebView2. One real set of 114 JPEGs verified measurement and unchanged originals;
   it does not establish general photographic accuracy or performance on a RAW set.
 - Retouching has not been comprehensively verified across all browsers and GPUs.

@@ -38,6 +38,18 @@ describe('original-resolution detail evidence', () => {
     const r = result({ ...sharp(), native: summarizeNativeSamples(samples, 6000, 4000) });
     expect(r.decision).toBe('keep'); expect(r.reasons).toContain('cull_reason_native_detail');
   });
+  it('measured soft original detail cannot be rescued by small residual edge energy', () => {
+    // Rounded measurements of IMG_9939 from the read-only sports calibration.
+    const native = { sourceWidth: 5616, sourceHeight: 3744, sampleSize: 384, sampleCount: 9,
+      informativeSamples: 8, maxSharpnessScore: 0.483, maxLaplacianVariance: 4.53,
+      maxEdgeAcutance: 0.0095, maxNoiseEstimate: 0.665 };
+    expect(result({ ...sharp(), native }).decision).toBe('reject');
+  });
+  it('sharp low-contrast edges are not rejected as defocus', () => {
+    const lowContrast = fixture((x, y) => (Math.floor(x / 4) + Math.floor(y / 4)) % 2 ? 139 : 117);
+    const native = summarizeNativeSamples(Array.from({ length: 9 }, () => lowContrast), 6000, 4000);
+    expect(result({ ...sharp(), native }).decision).not.toBe('reject');
+  });
   it('low texture and too few samples never justify a native blur rejection', () => {
     for (const samples of [Array.from({ length: 9 }, () => fixture(x => 80 + x / 2)), [soft()]]) {
       expect(result({ ...sharp(), native: summarizeNativeSamples(samples, 6000, 4000) }).decision).not.toBe('reject');

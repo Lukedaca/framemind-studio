@@ -1,4 +1,4 @@
-// Optional local verification. Install Playwright separately; see CONTRIBUTING.md.
+// Optional local verification using the locked Playwright dependency; see CONTRIBUTING.md.
 import { chromium } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -69,10 +69,14 @@ try {
   report.automaticRejectSuggestions = 2;
   await namedCard('IMG_0002.jpg').click({ position: { x: 10, y: 80 } });
   await page.keyboard.press('k');
+  await page.keyboard.press('Escape');
   await namedCard('IMG_0003.jpg').click({ position: { x: 10, y: 80 } });
   await page.keyboard.press('r');
+  await page.keyboard.press('Escape');
   const card = () => page.locator('.fm-grid-photos > div').filter({ has: page.getByText('IMG_0001.jpg', { exact: true }) });
-  await card().click({ position: { x: 10, y: 80 } }); await page.getByTestId('culling-detail').waitFor();
+  await card().click({ position: { x: 10, y: 80 } });
+  await page.keyboard.press('Escape');
+  await page.getByTestId('culling-detail').waitFor();
   assert.match(await page.getByTestId('culling-detail').innerText(), /768 × 512/);
   await page.keyboard.press('x');
   assert.equal(await card().getByText('Ručně', { exact: true }).count(), 1);
@@ -121,7 +125,7 @@ try {
     } finally { session.close(); }
   }, images.image);
   if (!desktopCdp) {
-    assert.equal(report.worker.version, 'local-1.3'); assert.equal(report.worker.originalUnchanged, true);
+    assert.equal(report.worker.version, 'local-1.4'); assert.equal(report.worker.originalUnchanged, true);
     assert.equal(report.worker.aiPresent, false); assert.equal(report.worker.signatureLength, 1024);
   }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
