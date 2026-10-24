@@ -19,8 +19,8 @@ Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v
 je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
 Vite, terminál ani externí prohlížeč.
 
-**Klientské vydání zatím není dostupné.** Balíček 0.1.3 v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.3) je nepodepsaný
+**Klientské vydání zatím není dostupné.** Balíček 0.1.4 v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.4) je nepodepsaný
 vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může zobrazit
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
@@ -33,9 +33,8 @@ varování SmartScreen. [Oficiální vysvětlení Microsoftu](https://learn.micr
 Vydání pro macOS a Linux nebyla sestavena ani ověřena.
 
 Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md).
-Zveřejněné vydání: [0.1.3](docs/releases/0.1.3.md).
-Aktuální změny na `main`: [celé originály a culling local-1.4](docs/releases/unreleased.md).
-Tyto opravy zatím nejsou součástí instalátoru z vydání 0.1.3 na GitHubu.
+Zveřejněné vývojové vydání: [0.1.4 — retuš a culling local-1.6](docs/releases/0.1.4.md).
+Obsahuje adaptivní retuš, klonovací a hojivý štětec, celé originály a označení hlavního motivu.
 Přehled dokumentace: [docs/README.md](docs/README.md).
 
 ## Vývoj a spuštění ze zdrojů
@@ -88,7 +87,7 @@ Instalátor vzniká v `src-tauri/target/release/bundle/nsis/`.
 | Import | JPEG, PNG, WebP; podporované RAW přípony se zpracují přes vložený JPEG náhled |
 | Culling | Technické metriky, podobné záběry, celé originály se zoomem, porovnání až čtyř snímků a volby K / R / X |
 | Úpravy | Automatická úprava z histogramu, posuvníky a ořez |
-| Lokální retuš | Štětec, klikací chytré laso, ONNX modely v lokálním WebView nebo prohlížeči |
+| Lokální retuš | Klonování, hojivý štětec, chytré laso, adaptivní výřezy, porovnání variant a místní ONNX modely |
 | Export | JPEG / PNG, kvalita, velikost a vodoznak; jednotlivá fotka nebo sada |
 | Projekty a klienti | Lokální CRM a náhled galerie v profilu aplikace nebo prohlížeče |
 | Rozhraní | Čeština a angličtina; Windows desktop, PWA konfigurace pouze pro webový build |
@@ -117,18 +116,26 @@ nejvýše 768 px: rozložení jasu, přepaly, stíny, kontrast, indikátory deta
 šumu a směrového rozmazání. EXIF se podle dostupnosti čte z původního souboru.
 Profil vyberete ručně; mění váhy technického skóre, nikoli obsahovou analýzu.
 
-Od lokálního enginu 1.2 se u větších zdrojů měří také až devět výřezů
-384 × 384 px bez zmenšení. Jejich nejsilnější naměřený detail omezuje skóre
-ostrosti, aby zmenšení nezakrylo rozmazání. Výřezy se měří postupně; nejde o
-detekci subjektu a malý ostrý objekt mezi vzorkovanými místy mohou minout.
+U větších zdrojů se měří až devět pevných výřezů 384 × 384 px bez zmenšení.
+Engine 1.5 přidává nejvýše čtyři další výřezy podle struktury náhledu, včetně
+oblastí mimo původní mřížku. Skóre a reference série vycházejí z pevných míst;
+doplňkový ostrý detail může zabránit vyřazení a poslat snímek ke kontrole.
+Výřezy se měří postupně. Nejde o detekci subjektu a důležitý detail lze stále minout.
 
-Aktuální zdrojový kód používá engine **local-1.4**. Kliknutí na fotografii otevře
+Aktuální zdrojový kód používá engine **local-1.6**. Kliknutí na fotografii otevře
 celý původní obrazový soubor bez dalšího převodu nebo komprese. Tlačítkem `+`
 lze vybrat až čtyři snímky k porovnání. Výchozí pohled ukáže celý záběr;
 100 %, 200 % a 400 % umožňují kontrolu detailu, kolečko mění zoom a tažení posouvá
 fotografii. Měřítko 100 % zohledňuje hustotu displeje. K/R/X mění ruční volbu
 aktivního snímku, 0 ukáže celý záběr, 1 nastaví 100 % a Esc náhled zavře.
 U RAW se stále zobrazuje vložený JPEG, nikoli vyvolaná senzorová data.
+
+V porovnání lze ručně **Označit hlavní motiv** a kliknutím určit oblast
+128 / 256 / 384 px. Její ostrost v původním rozlišení pak vstupuje do skóre;
+nejistý nebo měkký motiv vyžaduje kontrolu. Automatika sama subjekt nerozpoznává.
+Nadbytečná kopie vyžaduje shodu všech dekódovaných pixelů JPEG/PNG nebo SHA-256
+původních RAW dat; podobný náhled nestačí. Rozpor měření detailu ve dvou měřítkách
+přidá důvod ke kontrole, sám nezpůsobí vyřazení.
 
 Postup výběru a klávesové zkratky: [návod k lokálnímu cullingu](docs/culling.md).
 
@@ -170,7 +177,12 @@ ruční rozhodnutí mají přednost.
 
 ## Lokální retuš
 
-Štětcová retuš a klikací laso běží přes ONNX Runtime Web ve workerech.
+**Klonování** kopíruje skutečnou texturu ze vzorku vybraného pomocí Alt + kliknutí.
+**Hojivý štětec** přenese jemnou texturu a přizpůsobí její barevnost cílovému místu.
+Oba nástroje pracují bez modelu, zachovávají sílu masky a společnou historii.
+U modelové retuše lze vypnout konzervativní sjednocení barvy na hladkém okraji masky.
+
+Modelová štětcová retuš a klikací laso běží přes ONNX Runtime Web ve workerech.
 Tyto cesty fotku neposílají do cloudového modelu a nevyžadují API klíč.
 
 | Model | Úloha | Velikost podle souborů v konfiguraci |
@@ -179,14 +191,29 @@ Tyto cesty fotku neposílají do cloudového modelu a nevyžadují API klíč.
 | LaMa | Detailní retuš | přibližně 208 MB |
 | SAM 2.1 tiny int8 | Masky pro klikací laso | přibližně 62 MB |
 
-Volba **Automaticky** používá MI-GAN pro plochu masky do 14 400 pixelů
-v rozměrech původní fotky a LaMa pro větší plochu. Neprovádí rozpoznávání lidí.
+Volba **Automaticky** používá MI-GAN pro retušovanou oblast do 14 400 pixelů
+v rozměrech původní fotky a LaMa pro větší oblast. Model se volí pro každou
+zpracovávanou oblast zvlášť; neprovádí rozpoznávání lidí.
 Rychlý model se připravuje při otevření retuše; další modely se načítají podle potřeby.
 
-Retuš zpracuje okolí masky na vstupu 512 × 512 a výsledek prolne zpět do fotky.
-Výřez zachovává proporce; zbývající plochu vstupu vyplní zrcadlené okraje.
-Rozměry plátna zůstávají zachované, detail doplněné velké oblasti je ale omezený
-rozlišením modelu. Pracovní kopie retuše se ukládá bezeztrátově do PNG, takže
+Vzdálené části masky dostanou vlastní výřezy místo společného zmenšení celé oblasti.
+Blízké části s překrývajícím se okolím se slučují; počet zpracovávaných oblastí je
+omezen na 16. Souvislý objekt se nerozděluje na dlaždice. **Okolí retuše** nabízí
+vyvážený výřez, jemný detail s těsnějším výřezem nebo širší okolní scénu.
+Volba **Porovnat varianty před použitím** nejprve připraví až tři odlišné výřezy
+stejné masky. Do fotky se vloží až vybraný výsledek jako jeden krok historie;
+zrušení ani Escape fotografii nemění. Shodné výřezy se zobrazí jen jednou.
+
+Výchozí vstup modelu zůstává 512 × 512. U explicitní volby **Detailní** lze zapnout
+**Vyšší detail** až 1024 × 1024; malé výřezy zůstávají na 512 × 512. Používají se
+stejné váhy LaMa: v paměti se upraví pouze metadata rozměrů vstupu, stažený soubor
+ani jeho cache se nemění. Vyšší rozlišení potřebuje více paměti a času a nemusí
+vytvořit lepší výsledek. Automatický a rychlý režim používají 512 × 512.
+
+Výřez zachovává proporce; zbývající plochu vstupu vyplní zrcadlené okraje a výsledek
+se prolne zpět do fotky. Rozměry plátna zůstávají zachované; detail doplněné velké
+oblasti je stále omezený vstupem modelu. Pracovní kopie retuše se ukládá
+bezeztrátově do PNG, takže
 opakované tahy nepřidávají JPEG kompresi. JPEG lze zvolit při konečném exportu.
 Pracovní PNG může zabírat více místa než původní JPEG.
 Laso poskytuje kandidátní masky; přesný obrys ani kvalita doplnění nejsou zaručené.
@@ -232,9 +259,9 @@ Při odinstalaci je odstranění dat samostatná volba.
 - RAW import extrahuje náhled; nejde o demosaicing ani plné vyvolání RAW.
   Soubor bez použitelného vloženého JPEG nemusí jít importovat.
 - Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
-- Aktuální zdrojový kód prošel 147 testy a culling syntetickými kontrolami v Chromiu
-  i nativním WebView2. Jedna skutečná sada 114 JPEGů ověřila měření a zachování
-  originálů; neprokazuje obecnou fotografickou přesnost ani rychlost na RAW sadě.
+- Rozsah aktuálního i historického ověření popisují [poznámky k 0.1.4](docs/releases/0.1.4.md).
+  Syntetické kontroly a místní fotografické sady neprokazují obecnou přesnost
+  napříč žánry, fotoaparáty a RAW soubory.
 - Kompletní ověření retuše ve všech prohlížečích a na všech GPU nebylo provedeno.
 
 Historický audit a záznam implementace: [docs/culling-local-audit.md](docs/culling-local-audit.md).

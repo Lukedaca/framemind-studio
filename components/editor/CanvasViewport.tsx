@@ -5,7 +5,8 @@ import React, { useRef, useEffect, useCallback, useState, forwardRef, useImperat
 // MAX_MASK_SIDE) — u 24MP fotky by maska v plném rozlišení zbytečně žrala
 // paměť; do plného rozlišení ji převádí až services/localInpaint.ts.
 
-export type RetouchTool = 'none' | 'brush' | 'lasso';
+import type { SampleStroke } from '../../services/sampleRetouch';
+export type RetouchTool = 'none' | 'brush' | 'lasso' | 'clone' | 'heal';
 
 export interface CanvasViewportHandle {
   fitToScreen: () => void;
@@ -39,7 +40,7 @@ interface CanvasViewportProps {
   brushSize: number;
   /** 0 = zcela měkký okraj, 1 = tvrdý. Alfa masky pak nese váhu retuše. */
   brushHardness?: number;
-  onStrokeEnd?: () => void;
+  onStrokeEnd?: (sample?: SampleStroke) => void;
   /** Klik chytrým lasem v souřadnicích fotky; `subtract` = s Alt. */
   onLassoClick?: (point: { x: number; y: number }, subtract: boolean) => void;
   /** Maska zůstane vidět a pulzuje, dokud model počítá. */
@@ -77,6 +78,8 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
     const drawingRef = useRef<{ pointerId: number; last: { x: number; y: number } } | null>(null);
     const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
     const spaceHeldRef = useRef(false);
+    const sampleSourceRef = useRef<{ x: number; y: number } | null>(null);
+    const sampleStrokeRef = useRef<SampleStroke | undefined>(undefined);
 
     const maskScale = () => {
       const img = imageRef.current;
@@ -116,6 +119,13 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       ctx.shadowColor = 'transparent';
       ctx.shadowBlur = 0;
       ctx.drawImage(img, 0, 0);
+      if ((activeTool === 'clone' || activeTool === 'heal') && sampleSourceRef.current) {
+        const point = sampleSourceRef.current, radius = 9 / t.scale;
+        ctx.strokeStyle = '#35df95'; ctx.lineWidth = 1.5 / t.scale;
+        ctx.beginPath(); ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.moveTo(point.x - radius * 1.5, point.y); ctx.lineTo(point.x + radius * 1.5, point.y);
+        ctx.moveTo(point.x, point.y - radius * 1.5); ctx.lineTo(point.x, point.y + radius * 1.5); ctx.stroke();
+      }
 
       const mask = maskCanvasRef.current;
       const stroke = drawingRef.current ? softStrokeRef.current ?? strokeCanvasRef.current : null;
@@ -126,7 +136,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
         ctx.globalAlpha = 1;
       }
       ctx.restore();
-    }, [processing, pulse]);
+    }, [processing, pulse, activeTool]);
 
     // Pulzování masky během výpočtu.
     useEffect(() => {
@@ -174,6 +184,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
         const prev = imageRef.current;
         const sameSize = prev && widthOf(prev) === widthOf(img) && heightOf(prev) === heightOf(img);
         imageRef.current = img;
+        sampleSourceRef.current = null;
         const s = maskScale();
         const mask = document.createElement('canvas');
         mask.width = Math.max(1, Math.round(widthOf(img) * s));
@@ -281,9 +292,16 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       // Měkký štětec má tvrdé jádro menší, zbytek poloměru dělá rozmazání.
       ctx.lineWidth = (brushSize / transformRef.current.scale) * s * (0.55 + 0.45 * h);
       ctx.beginPath();
-      ctx.moveTo(from.x * s, from.y * s);
-      ctx.lineTo(to.x * s, to.y * s);
-      ctx.stroke();
+      if (from.x === to.x && from.y === to.y) {
+        // A zero-length line is not painted consistently by native WebView2.
+        ctx.fillStyle = MASK_COLOR;
+        ctx.arc(from.x * s, from.y * s, ctx.lineWidth / 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.moveTo(from.x * s, from.y * s);
+        ctx.lineTo(to.x * s, to.y * s);
+        ctx.stroke();
+      }
       const soft = softStrokeRef.current;
       if (soft) {
         const sctx = soft.getContext('2d')!;
@@ -315,6 +333,13 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       }
       if (e.button !== 0) return;
       const ip = screenToImage(p.x, p.y);
+      if (activeTool === 'clone' || activeTool === 'heal') {
+        const image = imageRef.current;
+        if (!image || ip.x < 0 || ip.y < 0 || ip.x >= widthOf(image) || ip.y >= heightOf(image)) return;
+        if (e.altKey) { sampleSourceRef.current = ip; render(); return; }
+        if (!sampleSourceRef.current) return;
+        sampleStrokeRef.current = { source: sampleSourceRef.current, target: ip };
+      } else sampleStrokeRef.current = undefined;
       if (activeTool === 'lasso') {
         const img = imageRef.current;
         if (img && ip.x >= 0 && ip.y >= 0 && ip.x < widthOf(img) && ip.y < heightOf(img)) onLassoClick?.(ip, e.altKey);
@@ -328,7 +353,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
 
     const onPointerMove = (e: React.PointerEvent) => {
       const p = localPoint(e);
-      if (activeTool === 'brush') setCursor(p);
+      if (activeTool === 'brush' || activeTool === 'clone' || activeTool === 'heal') setCursor(p);
       if (panRef.current?.pointerId === e.pointerId) {
         transformRef.current.offsetX += p.x - panRef.current.x;
         transformRef.current.offsetY += p.y - panRef.current.y;
@@ -354,7 +379,8 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
         drawingRef.current = null;
         commitStroke();
         render();
-        onStrokeEnd?.();
+        onStrokeEnd?.(sampleStrokeRef.current);
+        sampleStrokeRef.current = undefined;
       }
     };
 
@@ -410,7 +436,8 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       },
     }), [fitToScreen, render]);
 
-    const cursorStyle = processing ? 'progress' : activeTool === 'brush' ? 'none' : activeTool === 'lasso' ? 'crosshair' : 'grab';
+    const isBrush = activeTool === 'brush' || activeTool === 'clone' || activeTool === 'heal';
+    const cursorStyle = processing ? 'progress' : isBrush ? 'none' : activeTool === 'lasso' ? 'crosshair' : 'grab';
 
     return (
       <div ref={containerRef} className={`relative w-full h-full overflow-hidden touch-none select-none ${className || ''}`}>
@@ -426,7 +453,7 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
           onDoubleClick={() => activeTool === 'none' && fitToScreen()}
         />
 
-        {activeTool === 'brush' && cursor && !processing && (
+        {isBrush && cursor && !processing && (
           <div
             className="pointer-events-none absolute rounded-full border border-white/80 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
             style={{ width: brushSize, height: brushSize, left: cursor.x, top: cursor.y, transform: 'translate(-50%, -50%)' }}

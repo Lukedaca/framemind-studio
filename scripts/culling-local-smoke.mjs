@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const desktopCdp = process.env.DESKTOP_SMOKE_CDP;
+const started = Date.now();
+const mark = stage => { if (process.env.CULLING_SMOKE_PROGRESS) console.log(JSON.stringify({ stage, elapsedMs: Date.now() - started })); };
 const replyNativeDialog = (action) => promisify(execFile)('pwsh', [
   '-NoProfile', '-File', fileURLToPath(new URL('windows-dialog-smoke.ps1', import.meta.url)),
   '-AppProcessId', process.env.DESKTOP_SMOKE_PID, '-Action', action,
@@ -14,9 +16,11 @@ if (desktopCdp) assert.ok(process.env.DESKTOP_SMOKE_PID, 'Set DESKTOP_SMOKE_PID 
 const base = desktopCdp ? 'https://tauri.localhost' : (process.env.CULLING_SMOKE_URL ?? 'http://127.0.0.1:3100');
 const output = new URL('../output/playwright/', import.meta.url);
 await mkdir(output, { recursive: true });
-const browser = desktopCdp ? await chromium.connectOverCDP(desktopCdp) : await chromium.launch({ headless: true,
+mark('connecting');
+const browser = desktopCdp ? await chromium.connectOverCDP(desktopCdp, { timeout: 15000 }) : await chromium.launch({ headless: true,
   ...(process.env.CULLING_SMOKE_BROWSER ? { executablePath: process.env.CULLING_SMOKE_BROWSER } : {}) });
 const context = desktopCdp ? browser.contexts()[0] : await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+mark('connected');
 const external = [], errors = [], report = {};
 await context.route('**/*', route => {
   const url = route.request().url();
@@ -31,6 +35,7 @@ const ready = () => page.waitForFunction(() => {
 });
 try {
   await page.goto(base, { waitUntil: 'networkidle' });
+  mark('page-loaded');
   if (desktopCdp) {
     report.desktop = await page.evaluate(() => ({
       tauri: !!window.__TAURI_INTERNALS__, origin: location.origin,
@@ -51,22 +56,45 @@ try {
     ctx.fillStyle = '#d09851'; ctx.fillRect(700, 350, 420, 650);
     const image = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 1920, 1280);
-    return { image, black: canvas.toDataURL('image/jpeg').split(',')[1] };
+    const black = canvas.toDataURL('image/jpeg').split(',')[1];
+    canvas.width = 2400; canvas.height = 1600;
+    const pixels = ctx.createImageData(canvas.width, canvas.height);
+    for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+      const value = 128 + 45 * Math.sin(x / 6) + 45 * Math.cos(y / 7);
+      pixels.data.set([value, value, value, 255], (y * canvas.width + x) * 4);
+    }
+    ctx.putImageData(pixels, 0, 0);
+    const soft = canvas.toDataURL('image/png').split(',')[1];
+    // A small sharp patch in the gap between the original fixed sampling columns.
+    for (let y = 522; y < 618; y += 4) for (let x = 792; x < 888; x += 4) {
+      ctx.fillStyle = ((x - 792 + y - 522) / 4 % 2) ? '#dcdddc' : '#282928'; ctx.fillRect(x, y, 4, 4);
+    }
+    return { image, black, soft, offgrid: canvas.toDataURL('image/png').split(',')[1] };
   });
   const file = (name, data = images.image) => ({ name, mimeType: 'image/jpeg', buffer: Buffer.from(data, 'base64') });
-  await page.locator('input[type=file]').setInputFiles([file('IMG_0001.jpg'), file('IMG_0002.jpg'), file('IMG_0003.jpg', images.black)]);
+  const png = (name, data) => ({ ...file(name, data), mimeType: 'image/png' });
+  await page.locator('input[type=file]').setInputFiles([file('IMG_0001.jpg'), file('IMG_0002.jpg'), file('IMG_0003.jpg', images.black),
+    png('SAMPLE_SOFT.png', images.soft), png('SAMPLE_DETAIL.png', images.offgrid)]);
   await page.getByRole('heading', { name: 'Lokální culling', exact: true }).waitFor();
+  mark('imported');
   assert.equal(await page.getByRole('button', { name: /Gemini API/ }).count(), 0);
   external.length = 0;
   await page.getByRole('button', { name: 'Spustit lokální culling', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor({ timeout: 30000 });
+  mark('measured');
   assert.equal(await page.getByText('Chyba čtení / obnov import', { exact: true }).count(), 0);
   await page.getByRole('checkbox', { name: 'Sbalit série (jeden reprezentant)' }).uncheck();
-  assert.equal(await page.locator('.fm-grid-photos > div').count(), 3);
+  assert.equal(await page.locator('.fm-grid-photos > div').count(), 5);
   const namedCard = name => page.locator('.fm-grid-photos > div').filter({ has: page.getByText(name, { exact: true }) });
   assert.match(await namedCard('IMG_0002.jpg').innerText(), /Nadbytečný téměř totožný záběr/);
   assert.match(await namedCard('IMG_0003.jpg').innerText(), /Téměř celý náhled bez jasových dat/);
-  report.automaticRejectSuggestions = 2;
+  assert.match(await namedCard('SAMPLE_SOFT.jpeg').innerText(), /Výrazně měkké detaily ve výřezech 1:1/);
+  assert.equal(await namedCard('SAMPLE_SOFT.jpeg').locator('span').filter({ hasText: /^X$/ }).count(), 1);
+  assert.equal(await namedCard('SAMPLE_DETAIL.jpeg').locator('span').filter({ hasText: /^X$/ }).count(), 0,
+    'A sharp original patch between fixed samples must protect its frame');
+  assert.match(await namedCard('SAMPLE_DETAIL.jpeg').innerText(), /Ostrost se mezi oblastmi liší/);
+  report.detailGuidedSampling = true;
+  report.automaticRejectSuggestions = 3;
   await namedCard('IMG_0002.jpg').click({ position: { x: 10, y: 80 } });
   await page.keyboard.press('k');
   await page.keyboard.press('Escape');
@@ -87,7 +115,8 @@ try {
   assert.equal(await namedCard('IMG_0003.jpg').getByText('Ručně', { exact: true }).count(), 1, 'Manual review override lost on rerun');
   await page.locator('#culling-genre').selectOption('product'); await ready();
   assert.equal(await card().getByText('Ručně', { exact: true }).count(), 1, 'Manual choice lost on profile change');
-  const remove = page.getByRole('button', { name: 'Odebrat vyřazené ze sady (1)', exact: true });
+  const remove = page.getByRole('button', { name: 'Odebrat vyřazené ze sady (2)', exact: true });
+  mark('confirm-removal');
   const dismiss = desktopCdp ? replyNativeDialog('dismiss') : null;
   if (!desktopCdp) page.once('dialog', dialog => dialog.dismiss());
   await remove.click();
@@ -98,8 +127,9 @@ try {
   await remove.click();
   if (accept) await accept;
   await page.getByText('IMG_0001.jpg', { exact: true }).waitFor({ state: 'detached' });
-  assert.equal(await page.locator('.fm-grid-photos > div').count(), 2);
+  assert.equal(await page.locator('.fm-grid-photos > div').count(), 3);
   report.importAndMeasurements = true; report.manualRerunAndProfile = true; report.confirmedRemoval = true;
+  mark('removed');
   await page.screenshot({ path: fileURLToPath(new URL('culling-local-desktop.png', output)), fullPage: true });
   await writeFile(new URL('culling-local-snapshot.txt', output), await page.locator('body').ariaSnapshot());
   await page.getByRole('button', { name: 'Import 01', exact: true }).click();
@@ -110,6 +140,7 @@ try {
   await ready();
   await page.getByText('Běh zastaven. Dokončená měření zůstávají.', { exact: true }).waitFor();
   report.cancelledUiRun = true;
+  mark('stopped');
   if (!desktopCdp) report.worker = await page.evaluate(async data => {
     const { CullingSession } = await import('/services/cullingSession.ts');
     const bytes = Uint8Array.from(atob(data), char => char.charCodeAt(0));
@@ -125,7 +156,7 @@ try {
     } finally { session.close(); }
   }, images.image);
   if (!desktopCdp) {
-    assert.equal(report.worker.version, 'local-1.4'); assert.equal(report.worker.originalUnchanged, true);
+    assert.equal(report.worker.version, 'local-1.6'); assert.equal(report.worker.originalUnchanged, true);
     assert.equal(report.worker.aiPresent, false); assert.equal(report.worker.signatureLength, 1024);
   }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);

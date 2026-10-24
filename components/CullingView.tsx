@@ -93,11 +93,22 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
         native: r.metrics.native,
       }] : [];
     }));
+    const byId = new Map(files.map(file => [file.id, file]));
+    const representatives = new Map([...assignments].filter(([, a]) => a.isBestInGroup && a.duplicateGroupId).map(([id, a]) => [a.duplicateGroupId!, id]));
     for (const [id, result] of workMap) {
       if (result.engineVersion !== CULLING_ENGINE_VERSION || result.analysisStatus !== 'done') continue;
       const { duplicateGroupId, isBestInGroup, groupRank, groupKind, similarityToBest, relativeSharpness, scoreGap,
-        referenceDetailConfidence, relativeNativeSharpness, referenceNativeSharpness, ...base } = result;
-      workMap.set(id, rescoreCullingResult({ ...base, ...assignments.get(id) }, selectedGenre));
+        referenceDetailConfidence, relativeNativeSharpness, referenceNativeSharpness, duplicateVerified, ...base } = result;
+      const assignment = assignments.get(id);
+      let verified = false;
+      if (assignment?.groupKind === 'near-duplicate' && assignment.isBestInGroup === false && (assignment.similarityToBest ?? 0) >= 0.965) {
+        const candidate = byId.get(id), reference = byId.get(representatives.get(assignment.duplicateGroupId!) ?? '');
+        if (candidate && reference) {
+          try { verified = await session.verifyDuplicate(candidate, reference); }
+          catch (error) { if ((error as Error).name === 'AbortError' || cancelledRef.current) throw error; }
+        }
+      }
+      workMap.set(id, rescoreCullingResult({ ...base, ...assignment, duplicateVerified: verified }, selectedGenre));
     }
   };
 
@@ -115,7 +126,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
           if (cancelledRef.current) break;
           const file = files[index];
           try {
-            const analysis = await session.analyze(file, force);
+            const analysis = await session.analyze(file, force, workMap.get(file.id)?.focusRegion);
             const result = await session.score(analysis, selectedGenre);
             workMap.set(file.id, { ...result, manualDecision: workMap.get(file.id)?.manualDecision });
           } catch (error) {
@@ -149,6 +160,33 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     }
   };
   const stopCulling = () => { cancelledRef.current = true; sessionRef.current?.close(); };
+  const setFocusRegion = async (id: string, region: CullingResult['focusRegion'] | null) => {
+    if (sessionRef.current) return;
+    const file = files.find(item => item.id === id);
+    if (!file) return;
+    let session: CullingSession;
+    try { session = new CullingSession(); } catch { addNotification(tr('cull_worker_unavailable'), 'error'); return; }
+    sessionRef.current = session; cancelledRef.current = false;
+    setPhase('analyzing'); setProgress({ current: 0, total: 1 });
+    const next = new Map(mapRef.current);
+    try {
+      const analysis = await session.analyze(file, true, region);
+      const result = await session.score(analysis, genre);
+      next.set(id, { ...result, manualDecision: next.get(id)?.manualDecision });
+      setProgress({ current: 1, total: 1 });
+      await applySimilarity(next, session, genre);
+      if (mountedRef.current && sessionRef.current === session) {
+        sessionRef.current = null;
+        setCullingMap(next); commitToFiles(next, tr('cull_focus_history'));
+      }
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') addNotification(tr('cull_focus_failed'), 'error');
+    } finally {
+      session.close();
+      if (sessionRef.current === session) sessionRef.current = null;
+      if (mountedRef.current) setPhase('done');
+    }
+  };
   const setManualDecision = (id: string, decision: CullingDecision) => {
     if (sessionRef.current) return;
     const next = new Map(mapRef.current), current = next.get(id);
@@ -586,7 +624,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
         </div>
       </div>
       {inspectionFiles.length > 0 && <CullingCompare key={inspectionIds.join('|')} files={inspectionFiles} results={cullingMap}
-        onDecision={setManualDecision} onClose={() => setInspectionIds([])} />}
+        onDecision={setManualDecision} onFocusRegion={setFocusRegion} busy={isRunning} onClose={() => setInspectionIds([])} />}
     </div>
   );
 };

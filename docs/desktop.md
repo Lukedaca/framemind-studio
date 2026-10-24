@@ -7,18 +7,18 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 ## Instalace a aktualizace
 
 Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
-`FrameMind-Studio_0.1.3_x64-setup.exe` je v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.3); není určen klientům.
+`FrameMind-Studio_0.1.4_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.4); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
 
-Instalátor 0.1.3 má přibližně 219 MiB. Obsahuje offline instalační program WebView2,
+Instalátor 0.1.4 má přibližně 219 MiB. Obsahuje offline instalační program WebView2,
 který použije, pokud runtime není nainstalovaný. Připojení není potřeba pro
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.3 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+Instalátor 0.1.4 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
 SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
@@ -42,7 +42,7 @@ Výstupy:
 
 - `dist-desktop/`: zabalený frontend bez PWA a service workeru.
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
-- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.3_x64-setup.exe`: instalátor.
+- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.4_x64-setup.exe`: instalátor.
 
 Název souboru zveřejněného na GitHubu používá `FrameMind-Studio` s pomlčkou;
 obsah je totožný s místním instalátorem se jménem `FrameMind Studio`.
@@ -199,6 +199,31 @@ fotografií a ruční volby po opakovaném běhu. Culling měl 0 externích pož
 a 0 chyb stránky. Místní aktualizace zachovala všech 341 tehdy existujících
 souborů IndexedDB/localStorage; instalované EXE se shodovalo s NSIS payloadem.
 Metadata místního balíčku zůstala 0.1.3; nejde o změnu veřejného vydání 0.1.3.
-Rozsah a omezení opravy: [aktuální nezveřejněné změny](releases/unreleased.md).
+Rozsah a omezení opravy: [změny zahrnuté do 0.1.4](releases/0.1.4.md).
+
+Následná místní oprava `local-1.5` přidala nejvýše čtyři doplňkové výřezy
+vedené strukturou náhledu. Původní mřížka určuje skóre a reference série;
+doplňkový detail může zabránit vyřazení a vyžádat kontrolu. Prošlo 155 testů,
+TypeScript, webový i desktopový frontend a Windows NSIS build. Stejný culling
+smoke prošel v sestaveném EXE i nainstalované aplikaci s oddělenými profily:
+ověřil detail mezi pevnými výřezy, plošnou neostrost, ruční volby, přepočet profilu,
+potvrzené odebrání a zastavení běhu. Síťové požadavky cullingu i chyby stránky
+byly nulové. Místní instalace zachovala všechny kontrolní součty 341 existujících
+souborů IndexedDB/localStorage a shodovala se s ověřeným NSIS payloadem.
+Veřejné vydání 0.1.3 se tímto nemění. Podrobnosti kalibrace jsou v
+[návodu k cullingu](culling.md#ověření-enginu-local-15).
 
 Podrobnosti měření, kalibrace a jejich mezí: [audit cullingu](culling-local-audit.md).
+
+## Vývojové vydání 0.1.4 — 24. října 2026
+
+Instalátor obsahuje adaptivní retuš, klonování, hojivý štětec a culling local-1.6.
+Rozsah ověření, rozdíl mezi nativními a prohlížečovými kontrolami a historické
+výsledky popisují [poznámky k 0.1.4](releases/0.1.4.md).
+Krátká nativní kontrola bez modelové inference:
+
+```powershell
+powershell.exe -NoProfile -File scripts/windows-retouch-smoke.ps1 -Quick
+```
+
+Kontrola používá oddělený profil. Běžná data aplikace se nemají otevírat v QA profilu.

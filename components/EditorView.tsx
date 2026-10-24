@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import CanvasViewport, { type CanvasViewportHandle } from './editor/CanvasViewport';
+import CanvasViewport, { type CanvasViewportHandle, type RetouchTool } from './editor/CanvasViewport';
+import { sampleRetouch, type SampleStroke, type SamplePatch } from '../services/sampleRetouch';
 import AdjustPanel from './editor/AdjustPanel';
 import RetouchPanel, { type ModelStatus } from './editor/RetouchPanel';
+import RetouchVariants, { type RetouchVariant } from './editor/RetouchVariants';
 import ExportPanel, { type ExportOptions } from './editor/ExportPanel';
 import { Segmented } from './editor/ui';
 import type { UploadedFile, EditorAction, History, ManualEdits, View } from '../types';
 import * as geminiService from '../services/geminiService';
 import { describeAiError } from '../services/aiErrors';
-import { encodeCanvas, inpaintRegion, outputType, preloadInpaintModel, type InpaintChoice } from '../services/localInpaint';
+import { encodeCanvas, inpaintRegion, outputType, preloadInpaintModel, type InpaintChoice, type InpaintPatch } from '../services/localInpaint';
+import type { InpaintContext } from '../utils/inpaintMath';
 import { encodeForSegment, loadSegmentModel, renderSegmentMask, segmentAt, segmentBoxes, type SegmentCandidate } from '../services/localSegment';
 import { SEGMENT_TOTAL_BYTES } from '../utils/segmentModel';
 import type { LassoStatus } from './editor/RetouchPanel';
@@ -60,6 +63,32 @@ const modeFromAction = (action: EditorAction): Mode => {
 
 const MODEL_KEY = 'fm_inpaint_model';
 const BRUSH_KEY = 'fm_retouch_brush';
+const CONTEXT_KEY = 'fm_retouch_context';
+const RESOLUTION_KEY = 'fm_inpaint_resolution';
+const HD_RETOUCH_ENABLED = true;
+
+const releaseRetouchLayer = (patch: Pick<InpaintPatch, 'layer'>) => {
+  patch.layer.width = patch.layer.height = 1;
+};
+
+const releaseRetouchVariants = (variants: RetouchVariant[]) => {
+  for (const { patch } of variants) releaseRetouchLayer(patch);
+};
+
+interface RetouchAttempt {
+  request: number;
+  scope: string;
+  source: HTMLCanvasElement;
+  version: number;
+  fileId: string;
+  name: string;
+  type: string;
+}
+
+interface PendingRetouch {
+  attempt: RetouchAttempt;
+  variants: RetouchVariant[];
+}
 
 // Nastavení štětce si studio pamatuje mezi spuštěními (jen preference v prohlížeči).
 const loadBrush = () => {
@@ -116,9 +145,37 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const [modelStatus, setModelStatus] = useState<ModelStatus>({ state: 'idle' });
   const [retouching, setRetouching] = useState(false);
   const [lastRunMs, setLastRunMs] = useState<number | null>(null);
+  const [retouchContext, setRetouchContext] = useState<InpaintContext>(() => {
+    try {
+      const saved = localStorage.getItem(CONTEXT_KEY);
+      return saved === 'detail' || saved === 'wide' ? saved : 'auto';
+    } catch { return 'auto'; }
+  });
+  const [compareVariants, setCompareVariants] = useState(false);
+  const [harmonize, setHarmonize] = useState(() => { try { return localStorage.getItem('fm_retouch_harmonize') !== '0'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem('fm_retouch_harmonize', harmonize ? '1' : '0'); } catch {} }, [harmonize]);
+  const [retouchResolution, setRetouchResolution] = useState<512 | 1024>(() => {
+    try { return localStorage.getItem(RESOLUTION_KEY) === '1024' ? 1024 : 512; } catch { return 512; }
+  });
+  const effectiveResolution = HD_RETOUCH_ENABLED && model === 'quality' ? retouchResolution : 512;
+  const [variantProgress, setVariantProgress] = useState<number | null>(null);
+  const [pendingRetouch, setPendingRetouch] = useState<PendingRetouch | null>(null);
+  const pendingRetouchRef = useRef<PendingRetouch | null>(null);
+  const retouchRequestRef = useRef(0);
+  const retouchScopeRef = useRef('');
+  const retouchBusy = retouching || pendingRetouch !== null;
+  useEffect(() => {
+    try { localStorage.setItem(CONTEXT_KEY, retouchContext); } catch { /* preference only */ }
+  }, [retouchContext]);
+  useEffect(() => {
+    try { localStorage.setItem(RESOLUTION_KEY, String(retouchResolution)); } catch { /* preference only */ }
+  }, [retouchResolution]);
 
   // --- Chytré laso ---
-  const [retouchTool, setRetouchTool] = useState<'brush' | 'lasso'>('brush');
+  const [retouchTool, setRetouchTool] = useState<Exclude<RetouchTool, 'none'>>(() => {
+    try { const value = localStorage.getItem('fm_retouch_tool'); return value === 'clone' || value === 'heal' || value === 'lasso' ? value : 'brush'; } catch { return 'brush'; }
+  });
+  useEffect(() => { try { localStorage.setItem('fm_retouch_tool', retouchTool); } catch {} }, [retouchTool]);
   const [lassoObjects, setLassoObjects] = useState<LassoObject[]>([]);
   const [lassoStatus, setLassoStatus] = useState<LassoStatus>({ state: 'idle' });
   const [lassoBusy, setLassoBusy] = useState(false);
@@ -144,6 +201,22 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   const activeIndex = files.findIndex((f) => f.id === activeFileId);
   const previewSourceKey = activeFile ? `${activeFile.id}:${activeFile.previewUrl}` : null;
   const editedPreviewUrl = editedPreview?.sourceKey === previewSourceKey ? editedPreview.url : null;
+  retouchScopeRef.current = `${previewSourceKey}|${mode}`;
+
+  useEffect(() => {
+    // Navigation, undo or another image replacement invalidates unfinished previews.
+    retouchRequestRef.current += 1;
+    if (pendingRetouchRef.current) releaseRetouchVariants(pendingRetouchRef.current.variants);
+    pendingRetouchRef.current = null;
+    setPendingRetouch(null);
+    setRetouching(false);
+    setVariantProgress(null);
+    return () => {
+      retouchRequestRef.current += 1;
+      if (pendingRetouchRef.current) releaseRetouchVariants(pendingRetouchRef.current.variants);
+      pendingRetouchRef.current = null;
+    };
+  }, [previewSourceKey, mode]);
 
   useEffect(() => {
     const renderer = new EditorPreviewRenderer();
@@ -248,10 +321,10 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   // Rychlý model se připravuje hned při otevření retuše; velký až na vyžádání
   // (208 MB se nemá stahovat bez tahu štětcem).
   useEffect(() => {
-    if (mode !== 'retouch') return;
+    if (mode !== 'retouch' || retouchTool === 'clone' || retouchTool === 'heal') return;
     if (model === 'fast' || model === 'auto') loadModel('fast');
     else setModelStatus({ state: 'idle' });
-  }, [mode, model, loadModel]);
+  }, [mode, model, loadModel, retouchTool]);
 
   const changeModel = (next: InpaintChoice) => {
     setModel(next);
@@ -303,40 +376,112 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     }
   }, [onSetFiles, addNotification, t]);
 
-  const runRetouch = useCallback(async (fromLasso = false) => {
+  const isRetouchCurrent = useCallback((attempt: RetouchAttempt) => {
+    const viewport = viewportRef.current;
+    // The imperative handle is recreated on render; source pixels and version identify the work.
+    return !!viewport && attempt.request === retouchRequestRef.current &&
+      attempt.scope === retouchScopeRef.current &&
+      viewport.getContentVersion() === attempt.version &&
+      viewport.getSourceCanvas() === attempt.source;
+  }, []);
+
+  const applyRetouchPatch = useCallback((attempt: RetouchAttempt, patch: InpaintPatch | SamplePatch) => {
+    try {
+      const viewport = viewportRef.current;
+      if (!viewport || !isRetouchCurrent(attempt)) return;
+      const version = viewport.applyPatch(attempt.source, patch.layer, patch.x, patch.y);
+      if (version < 0) return;
+      if ('backend' in patch) setModelStatus({ state: 'ready', backend: patch.backend });
+      setLastRunMs(patch.ms);
+      currentVersionRef.current = version;
+      workingCanvasRef.current = attempt.source;
+      saveRetouched(attempt.fileId, attempt.name, attempt.type);
+    } finally {
+      // applyPatch copies synchronously; release only after its drawImage completes.
+      releaseRetouchLayer(patch);
+    }
+  }, [isRetouchCurrent, saveRetouched]);
+
+  const cancelRetouchPreview = useCallback(() => {
+    retouchRequestRef.current += 1;
+    if (pendingRetouchRef.current) releaseRetouchVariants(pendingRetouchRef.current.variants);
+    pendingRetouchRef.current = null;
+    setPendingRetouch(null);
+    viewportRef.current?.clearMask();
+    setLassoObjects([]);
+  }, []);
+
+  const runRetouch = useCallback(async (fromLasso = false, sample?: SampleStroke) => {
     const vp = viewportRef.current;
     const mask = vp?.getMaskCanvas();
-    if (!activeFile || !vp || !mask || !vp.hasMask() || retouching) return;
+    if (!activeFile || !vp || !mask || !vp.hasMask() || retouchBusy || savingRef.current) return;
     const source = vp.getSourceCanvas();
     if (!source) return;
+    const attempt: RetouchAttempt = {
+      request: ++retouchRequestRef.current,
+      scope: retouchScopeRef.current,
+      source,
+      version: vp.getContentVersion(),
+      fileId: activeFile.id,
+      name: activeFile.file.name,
+      type: outputType(activeFile.file),
+    };
     setRetouching(true);
-    if (!saveRef.current.running) baseUrlRef.current = activeFile.previewUrl;
+    baseUrlRef.current = activeFile.previewUrl;
+    const variants: RetouchVariant[] = [];
+    let previewOwnsLayers = false;
     try {
-      const patch = await inpaintRegion(source, mask, model, (p) => {
-        if (p.phase === 'init') setModelStatus({ state: 'preparing' });
-        else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
-        // Výběr z lasa má ostrý obrys — tvrdá díra s okrajem, jinak by po objektu zůstal obrys.
-      }, { hardness: fromLasso ? 1 : brushHardness / 100, strength: retouchStrength / 100 });
-      // Výsledek je vidět hned; soubor se uloží potom.
-      setModelStatus({ state: 'ready', backend: patch.backend });
-      setLastRunMs(patch.ms);
-      const version = vp.applyPatch(source, patch.layer, patch.x, patch.y);
-      if (version < 0) return; // mezitím jiná fotka
-      currentVersionRef.current = version;
-      workingCanvasRef.current = source;
-      saveRetouched(activeFile.id, activeFile.file.name, outputType(activeFile.file));
+      if (retouchTool === 'clone' || retouchTool === 'heal') {
+        if (!sample) return;
+        const patch = sampleRetouch(source, mask, sample, retouchTool === 'heal', retouchStrength / 100);
+        if (patch) applyRetouchPatch(attempt, patch);
+        else { vp.clearMask(); addNotification(t.retouch_clone_outside, 'info'); }
+        return;
+      }
+      const contexts: InpaintContext[] = compareVariants ? ['auto', 'detail', 'wide'] : [retouchContext];
+      const cropKeys = new Set<string>();
+      for (const [index, context] of contexts.entries()) {
+        if (!isRetouchCurrent(attempt)) return;
+        if (compareVariants) setVariantProgress(index + 1);
+        const patch = await inpaintRegion(source, mask, model, (p) => {
+          if (!isRetouchCurrent(attempt)) return;
+          if (p.phase === 'init') setModelStatus({ state: 'preparing' });
+          else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
+          else if (p.phase === 'compute' && p.backend) setModelStatus({ state: 'ready', backend: p.backend });
+        }, { hardness: fromLasso ? 1 : brushHardness / 100, strength: retouchStrength / 100, context, harmonize, resolution: effectiveResolution, isCancelled: () => !isRetouchCurrent(attempt) });
+        if (!isRetouchCurrent(attempt)) { releaseRetouchLayer(patch); return; }
+        // Equal crops are one variant; random grain does not make a new context.
+        const cropKey = JSON.stringify(patch.regions.map(region => [region.crop, region.model, region.inputSize]));
+        if (!cropKeys.has(cropKey)) {
+          cropKeys.add(cropKey);
+          variants.push({ context, patch });
+        } else releaseRetouchLayer(patch);
+      }
+      if (compareVariants) {
+        setModelStatus({ state: 'ready', backend: variants[0].patch.backend });
+        const pending = { attempt, variants };
+        pendingRetouchRef.current = pending;
+        setPendingRetouch(pending);
+        previewOwnsLayers = true;
+      } else applyRetouchPatch(attempt, variants[0].patch);
     } catch (e) {
+      if (!isRetouchCurrent(attempt)) return;
       vp.clearMask();
       const message = e instanceof Error ? e.message : String(e);
+      if (message === 'INPAINT_CANCELLED') return;
       if (message !== 'EMPTY_MASK') {
         console.error('Local retouch failed:', e);
         setModelStatus({ state: 'error', message: `${t.retouch_model_error} (${message})` });
         addNotification(t.retouch_failed, 'error');
       }
     } finally {
-      setRetouching(false);
+      if (!previewOwnsLayers) releaseRetouchVariants(variants);
+      if (attempt.request === retouchRequestRef.current) {
+        setRetouching(false);
+        setVariantProgress(null);
+      }
     }
-  }, [activeFile, model, retouching, addNotification, t, saveRetouched, brushHardness, retouchStrength]);
+  }, [activeFile, model, retouchTool, retouchBusy, compareVariants, retouchContext, harmonize, effectiveResolution, isRetouchCurrent, applyRetouchPatch, addNotification, t, brushHardness, retouchStrength]);
 
   // Laso: model se stáhne jednou, fotka se „přečte" jednou na každou verzi obsahu.
   const ensureEncoded = useCallback(async () => {
@@ -406,7 +551,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   }, [lassoObjects, retouchTool]);
 
   const onLassoClick = useCallback(async (point: { x: number; y: number }, subtract: boolean) => {
-    if (lassoBusyRef.current || retouching) return;
+    if (lassoBusyRef.current || retouchBusy) return;
     lassoBusyRef.current = true;
     setLassoBusy(true);
     try {
@@ -421,7 +566,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       lassoBusyRef.current = false;
       setLassoBusy(false);
     }
-  }, [ensureEncoded, lassoError, retouching]);
+  }, [ensureEncoded, lassoError, retouchBusy]);
 
   const changeLassoLevel = (level: number) =>
     setLassoObjects((prev) => prev.map((obj, i) => (i === prev.length - 1 ? { ...obj, level } : obj)));
@@ -433,7 +578,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
 
   // Výběr textem: Gemini najde obdélníky, masky z nich udělá lokální SAM.
   const findByText = async (query: string) => {
-    if (!query.trim() || lassoBusyRef.current || retouching) return;
+    if (!query.trim() || lassoBusyRef.current || retouchBusy) return;
     lassoBusyRef.current = true;
     setLassoBusy(true);
     try {
@@ -468,15 +613,16 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     }
   };
 
-  const changeRetouchTool = (tool: 'brush' | 'lasso') => {
+  const changeRetouchTool = (tool: Exclude<RetouchTool, 'none'>) => {
     // Výběr z lasa zůstane v masce — štětcem se dá doladit a puštěním tahu odstranit.
     setLassoObjects([]);
+    if (tool === 'clone' || tool === 'heal') viewportRef.current?.clearMask();
     setRetouchTool(tool);
   };
 
   // Úprava textem přes Gemini — volitelná, potřebuje vlastní API klíč.
   const runPromptRetouch = async (prompt: string, batch: boolean) => {
-    if (!activeFile) return;
+    if (!activeFile || retouchBusy) return;
     const targets = batch ? files : [activeFile];
     setRetouching(true);
     let ok = 0;
@@ -586,15 +732,16 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   // --- Navigace mezi fotkami a klávesy ---
   const goTo = useCallback((index: number) => {
     const target = files[index];
-    if (!target || target.id === activeFileId) return;
+    if (!target || target.id === activeFileId || retouchBusy) return;
     finishEdit();
     viewportRef.current?.clearMask();
     onSetActiveFileId(target.id);
-  }, [files, activeFileId, onSetActiveFileId, finishEdit]);
+  }, [files, activeFileId, onSetActiveFileId, finishEdit, retouchBusy]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
+      if (retouchBusy || target.closest('dialog')) return;
       const textInput = target.tagName === 'TEXTAREA' || target.isContentEditable || (target.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'range');
       if (textInput) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -625,7 +772,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activeIndex, goTo, mode, undo, redo]);
+  }, [activeIndex, goTo, mode, undo, redo, retouchBusy]);
 
   if (!activeFile) {
     return (
@@ -667,7 +814,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
           <Segmented<Mode>
             value={mode}
             // Přes navigaci, ať s režimem drží krok i zvýraznění v postranním panelu.
-            onChange={(m) => props.onNavigate({ view: 'editor', action: m === 'adjust' ? 'base-edit' : m })}
+            onChange={(m) => { if (!retouchBusy) props.onNavigate({ view: 'editor', action: m === 'adjust' ? 'base-edit' : m }); }}
             options={[
               { value: 'adjust', label: t.editor_mode_adjust },
               { value: 'retouch', label: t.editor_mode_retouch },
@@ -676,13 +823,14 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
           />
         </div>
         <div className="flex flex-1 items-center justify-end gap-1">
-          <button onClick={undo} disabled={history.past.length === 0 || retouching || savingRetouch} className="fm-icon-btn" title={`${t.retouch_undo} (Ctrl+Z)`}>
+          <button onClick={undo} disabled={history.past.length === 0 || retouchBusy || savingRetouch} className="fm-icon-btn" title={`${t.retouch_undo} (Ctrl+Z)`}>
             <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M7.5 5 3.5 9l4 4M4 9h8a4.5 4.5 0 0 1 0 9h-2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
-          <button onClick={redo} disabled={history.future.length === 0 || retouching || savingRetouch} className="fm-icon-btn" title="Ctrl+Shift+Z">
+          <button onClick={redo} disabled={history.future.length === 0 || retouchBusy || savingRetouch} className="fm-icon-btn" title="Ctrl+Shift+Z">
             <svg viewBox="0 0 20 20" className="h-[18px] w-[18px] -scale-x-100" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M7.5 5 3.5 9l4 4M4 9h8a4.5 4.5 0 0 1 0 9h-2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
           <button
+            disabled={retouchBusy}
             onPointerDown={() => setIsComparing(true)}
             onPointerUp={() => setIsComparing(false)}
             onPointerLeave={() => setIsComparing(false)}
@@ -691,7 +839,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
           >
             {t.editor_compare}
           </button>
-          <button onClick={restoreOriginal} disabled={retouching || savingRetouch || autoRunning} className="fm-icon-btn ml-1" title={t.editor_restore_original} aria-label={t.editor_restore_original}>
+          <button onClick={restoreOriginal} disabled={retouchBusy || savingRetouch || autoRunning} className="fm-icon-btn ml-1" title={t.editor_restore_original} aria-label={t.editor_restore_original}>
             <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden><path d="M4 8a6 6 0 1 1 0 5M4 3v5h5" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         </div>
@@ -706,20 +854,20 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
             activeTool={mode === 'retouch' && !isComparing ? retouchTool : 'none'}
             brushSize={brushSize}
             brushHardness={brushHardness / 100}
-            onStrokeEnd={() => runRetouch()}
+            onStrokeEnd={sample => runRetouch(false, sample)}
             onLassoClick={onLassoClick}
-            processing={retouching}
+            processing={retouchBusy || savingRetouch}
           />
           {isComparing && <span className="fm-chip is-active pointer-events-none absolute left-1/2 top-4 -translate-x-1/2">{t.editor_original}</span>}
-          {mode === 'retouch' && !retouching && !isComparing && (
+          {mode === 'retouch' && !retouchBusy && !isComparing && (
             <p className="pointer-events-none absolute left-1/2 top-4 hidden -translate-x-1/2 rounded-full border border-hairline bg-ink-950/70 px-4 py-1.5 text-[12px] text-ink-200 backdrop-blur-md sm:block">
-              {t.retouch_hint}
+              {retouchTool === 'clone' || retouchTool === 'heal' ? t.retouch_sample_hint : t.retouch_hint}
             </p>
           )}
           {(retouching || busyLabel) && (
             <div className="pointer-events-none absolute left-1/2 top-4 flex -translate-x-1/2 items-center gap-2.5 rounded-full border border-hairline bg-ink-950/80 px-4 py-1.5 text-[12px] text-ink-100 backdrop-blur-md">
               <span className="fm-spinner" />
-              {busyLabel || (modelStatus.state === 'downloading' ? t.retouch_downloading : modelStatus.state === 'preparing' ? t.retouch_preparing : t.retouch_running)}
+              {busyLabel || (modelStatus.state === 'downloading' ? t.retouch_downloading : modelStatus.state === 'preparing' ? t.retouch_preparing : variantProgress !== null ? t.retouch_variants_progress.replace('{current}', String(variantProgress)).replace('{total}', '3') : t.retouch_running)}
             </div>
           )}
         </main>
@@ -739,9 +887,19 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
             />
           )}
           {mode === 'retouch' && (
+            <fieldset disabled={retouchBusy || savingRetouch} className="min-w-0">
             <RetouchPanel
               model={model}
               onModelChange={changeModel}
+              context={retouchContext}
+              onContextChange={setRetouchContext}
+              compareVariants={compareVariants}
+              harmonize={harmonize}
+              onHarmonizeChange={setHarmonize}
+              onCompareVariantsChange={setCompareVariants}
+              resolution={effectiveResolution}
+              onResolutionChange={setRetouchResolution}
+              hdAvailable={HD_RETOUCH_ENABLED}
               modelStatus={modelStatus}
               brushSize={brushSize}
               onBrushSizeChange={setBrushSize}
@@ -749,7 +907,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               onBrushHardnessChange={setBrushHardness}
               strength={retouchStrength}
               onStrengthChange={setRetouchStrength}
-              isProcessing={retouching}
+              isProcessing={retouchBusy || savingRetouch}
               lastRunMs={lastRunMs}
               canUndo={history.past.length > 0 && !savingRetouch}
               onUndo={undo}
@@ -771,6 +929,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
                 onFindByText: findByText,
               }}
             />
+            </fieldset>
           )}
           {mode === 'export' && (
             <ExportPanel
@@ -796,12 +955,30 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
         </aside>
       </div>
 
+      {pendingRetouch && (
+        <RetouchVariants
+          source={pendingRetouch.attempt.source}
+          variants={pendingRetouch.variants}
+          onApply={patch => {
+            try {
+              applyRetouchPatch(pendingRetouch.attempt, patch);
+            } finally {
+              releaseRetouchVariants(pendingRetouch.variants);
+              pendingRetouchRef.current = null;
+              setPendingRetouch(null);
+            }
+          }}
+          onCancel={cancelRetouchPreview}
+        />
+      )}
+
       {/* Filmový pás */}
       {files.length > 1 && (
         <nav className="flex h-[76px] flex-shrink-0 items-center gap-2 overflow-x-auto border-t border-hairline bg-ink-950 px-4 custom-scrollbar" aria-label={t.editor_filmstrip}>
           {files.map((f, i) => (
             <button
               key={f.id}
+              disabled={retouchBusy}
               onClick={() => goTo(i)}
               className={`fm-thumb ${f.id === activeFileId ? 'is-active' : ''}`}
               title={f.file.name}

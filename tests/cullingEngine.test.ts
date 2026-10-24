@@ -106,7 +106,8 @@ describe('local keep, review and reject suggestions', () => {
   });
   it('an unchanged informative copy is rejected while its representative stays available', () => {
     const m = readMetrics(detailedScene(), WIDTH, HEIGHT);
-    const [representative, copy] = rankedPair(m, m);
+    const [representative, candidate] = rankedPair(m, m);
+    const copy = rescoreCullingResult({ ...candidate, duplicateVerified: true }, candidate.genre ?? 'other');
     expect(representative.isBestInGroup).toBe(true); expect(representative.decision).not.toBe('reject');
     expect(copy.decision).toBe('reject'); expect(copy.reasons).toContain('cull_reason_redundant_copy');
     expect(getEffectiveDecision({ ...copy, manualDecision: 'keep' })).toBe('keep');
@@ -242,6 +243,16 @@ describe('local series without hash-only or transitive grouping', () => {
     const black = readMetrics(pixels(() => 0), WIDTH, HEIGHT), white = readMetrics(pixels(() => 255), WIDTH, HEIGHT);
     expect(black.hash).toBe(white.hash);
     expect(computeSimilarityGroups([input('001', black), input('002', white)]).get('001')!.duplicateGroupId).toBeUndefined();
+  });
+  it('extra detail cannot turn a weak fixed grid into a strong rejection reference', () => {
+    const m = scene();
+    const native = { sourceWidth: 6000, sourceHeight: 4000, sampleCount: 13, sampleSize: 384, informativeSamples: 9,
+      maxLaplacianVariance: 200, maxSharpnessScore: 0.95, maxEdgeAcutance: 0.02, maxNoiseEstimate: 1,
+      fixedSampleCount: 9, fixedInformativeSamples: 5, fixedMaxLaplacianVariance: 20, fixedMaxSharpnessScore: 0.5 };
+    const groups = computeSimilarityGroups([input('001', m, { finalScore: 90, native }),
+      input('002', m, { finalScore: 70, native: { ...native, maxLaplacianVariance: 10, fixedMaxLaplacianVariance: 10 } })]);
+    expect(groups.get('002')!.relativeNativeSharpness).toBe(0.5);
+    expect(groups.get('002')!.referenceNativeSharpness).toBe(0.5);
   });
   it('a changed local area prevents calling a photo a near duplicate', () => {
     const a = scene();

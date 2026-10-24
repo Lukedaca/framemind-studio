@@ -38,6 +38,26 @@ describe('original-resolution detail evidence', () => {
     const r = result({ ...sharp(), native: summarizeNativeSamples(samples, 6000, 4000) });
     expect(r.decision).toBe('keep'); expect(r.reasons).toContain('cull_reason_native_detail');
   });
+  it('additional samples do not disable evidence of pervasive blur', () => {
+    const r = result({ ...sharp(), native: summarizeNativeSamples(Array.from({ length: 13 }, soft), 6000, 4000, 9) });
+    expect(r.decision).toBe('reject'); expect(r.reasons).toContain('cull_reason_native_blur');
+  });
+  it('extra sharp detail prevents rejection without promoting a soft fixed grid to keep', () => {
+    const fixed = Array.from({ length: 9 }, soft);
+    const original = { ...sharp(), native: summarizeNativeSamples(fixed, 6000, 4000) };
+    const guided = { ...sharp(), native: summarizeNativeSamples([...fixed, sharp()], 6000, 4000, fixed.length) };
+    expect(computeFinalScore(guided, 'sport')).toBe(computeFinalScore(original, 'sport'));
+    const r = result(guided);
+    expect(r.decision).toBe('review'); expect(r.risks).toContain('cull_risk_detail_outside_grid');
+    expect(r.reasons).not.toContain('cull_reason_native_blur');
+  });
+  it('extra samples cannot manufacture sufficient fixed coverage for rejection', () => {
+    for (const fixed of [Array.from({ length: 6 }, soft),
+      [...Array.from({ length: 4 }, soft), ...Array.from({ length: 5 }, () => fixture(() => 128))]]) {
+      const native = summarizeNativeSamples([...fixed, ...Array.from({ length: 4 }, soft)], 6000, 4000, fixed.length);
+      expect(result({ ...sharp(), native }).decision).toBe('review');
+    }
+  });
   it('measured soft original detail cannot be rescued by small residual edge energy', () => {
     // Rounded measurements of IMG_9939 from the read-only sports calibration.
     const native = { sourceWidth: 5616, sourceHeight: 3744, sampleSize: 384, sampleCount: 9,

@@ -3,20 +3,23 @@
 // nedotčená. Pracovní verze je bezeztrátové PNG; JPEG vzniká až při exportu.
 
 import {
-  CONTEXT_FACTOR,
   MASK_DILATION_PX,
   MODEL_SIZE,
   computeInpaintCrop,
   dilateMask,
   fitInpaintViewport,
   grainSigma,
+  inpaintContextFactor,
   maskBoundingBox,
   missingGrain,
   pickAutoModel,
   planarToRgba,
   rgbaToPlanar,
+  type InpaintContext,
   type Rect,
 } from '../utils/inpaintMath';
+import { planInpaintRegions } from '../utils/inpaintRegions';
+import { harmonizeInpaintBoundary } from '../utils/inpaintBlend';
 import { drawInpaintInput } from '../utils/inpaintCanvas';
 import type { InpaintModelId } from '../utils/inpaintModels';
 
@@ -31,6 +34,7 @@ export interface InpaintProgress {
   loaded?: number;
   total?: number;
   cached?: boolean;
+  backend?: InpaintBackend;
 }
 
 interface PendingJob {
@@ -45,10 +49,13 @@ interface PendingJob {
 // se do limitu neozve, runtime visí: worker se zahodí a zkusí se to znovu na
 // jednom vlákně, které nepotřebuje pomocné workery ani SharedArrayBuffer.
 const INIT_TIMEOUT_MS = 150_000;
+const COMPUTE_TIMEOUT_MS = 300_000;
 const INIT_TIMEOUT = 'INPAINT_INIT_TIMEOUT';
+const GPU_TIMEOUT = 'INPAINT_GPU_TIMEOUT';
 
 let worker: Worker | null = null;
 let singleThread = false;
+let disableGpu = false;
 let seq = 0;
 const jobs = new Map<number, PendingJob>();
 
@@ -75,8 +82,13 @@ const getWorker = () => {
         clearTimeout(job.initTimer);
         job.initTimer = setTimeout(() => {
           singleThread = true;
+          disableGpu = true;
           resetWorker(new Error(INIT_TIMEOUT));
         }, INIT_TIMEOUT_MS);
+      } else if (msg.phase === 'compute') {
+        clearTimeout(job.initTimer);
+        job.initTimer = setTimeout(() => resetWorker(new Error('INPAINT_COMPUTE_TIMEOUT')), COMPUTE_TIMEOUT_MS);
+        job.onProgress?.({ phase: 'compute', backend: msg.backend });
       } else {
         job.onProgress?.({ phase: 'download', loaded: msg.loaded, total: msg.total, cached: msg.cached });
       }
@@ -92,11 +104,11 @@ const getWorker = () => {
     // rozběhnuté a příště začít s čistým workerem.
     resetWorker(new Error(`INPAINT_WORKER_CRASHED: ${event.message || 'unknown'}`));
   };
-  if (singleThread) {
+  if (singleThread || disableGpu) {
     // Worker zprávy zpracuje v pořadí, config tedy proběhne dřív než load.
     const id = ++seq;
     jobs.set(id, { resolve: () => {}, reject: () => {} });
-    worker.postMessage({ type: 'config', numThreads: 1, id });
+    worker.postMessage({ type: 'config', numThreads: singleThread ? 1 : undefined, disableGpu, id });
   }
   return worker;
 };
@@ -115,7 +127,11 @@ const send = async <T>(message: Record<string, unknown>, onProgress?: PendingJob
   try {
     return await sendOnce<T>(message, onProgress, transfer);
   } catch (error) {
-    if (!(error instanceof Error) || error.message !== INIT_TIMEOUT) throw error;
+    if (!(error instanceof Error) || (error.message !== INIT_TIMEOUT && error.message !== GPU_TIMEOUT)) throw error;
+    if (error.message === GPU_TIMEOUT && !disableGpu) {
+      disableGpu = true;
+      resetWorker(error);
+    }
     return sendOnce<T>(retryCopy, onProgress);
   }
 };
@@ -142,12 +158,21 @@ export interface InpaintPatch {
   ms: number;
   backend: InpaintBackend;
   model: InpaintModelId;
+  regions: InpaintRegionInfo[];
+}
+
+export interface InpaintRegionInfo {
+  crop: Rect;
+  model: InpaintModelId;
+  backend: InpaintBackend;
+  inputSize: number;
+  ms: number;
 }
 
 // Doplněná plocha z modelu je hladší než fotka kolem (model počítá na 512 px
 // a výsledek se zvětšuje). Přidá se jí zrno změřené v prstenci kolem díry —
 // bez toho retuš prozradí „plastová" skvrna, i když tvary sedí.
-const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole: Uint8Array, viewport: Rect) => {
+const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole: Uint8Array, viewport: Rect, size: number) => {
   const w = layer.width;
   const h = layer.height;
   const pixels = w * h;
@@ -163,11 +188,11 @@ const matchGrain = (layer: HTMLCanvasElement, original: HTMLCanvasElement, hole:
   const orig = original.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, w, h).data;
 
   // Díra a prstenec kolem ní v souřadnicích modelu (512×512) → pixely výřezu.
-  const ring = dilateMask(hole, MODEL_SIZE, MODEL_SIZE, 20);
+  const ring = dilateMask(hole, size, size, Math.ceil(20 * size / MODEL_SIZE));
   const toModel = (i: number) => {
     const mx = viewport.x + Math.min(viewport.width - 1, Math.floor(((i % w) * viewport.width) / w));
     const my = viewport.y + Math.min(viewport.height - 1, Math.floor((Math.floor(i / w) * viewport.height) / h));
-    return my * MODEL_SIZE + mx;
+    return my * size + mx;
   };
   const step = Math.max(1, Math.floor(pixels / 400_000));
   const around = grainSigma(orig, blurOf(original), (i) => {
@@ -207,6 +232,13 @@ export interface BlendOptions {
   hardness: number;
   /** 0–1: kolik doplnění se použije. */
   strength: number;
+  /** More detail uses a tighter crop; wide context gives the model more of the scene. */
+  context?: InpaintContext;
+  harmonize?: boolean;
+  /** LaMa can use up to 1024px; small source crops keep their native 512px pass. */
+  resolution?: 512 | 1024;
+  /** Stop before starting another region when the editor has moved to another image. */
+  isCancelled?: () => boolean;
 }
 
 // Alfa masky pod touto hodnotou do díry nepatří — jen dozvuk měkkého okraje;
@@ -220,6 +252,7 @@ export const inpaintRegion = async (
   onProgress?: PendingJob['onProgress'],
   blend: BlendOptions = { hardness: 1, strength: 1 },
 ): Promise<InpaintPatch> => {
+  if (blend.isCancelled?.()) throw new Error('INPAINT_CANCELLED');
   const mw = maskCanvas.width;
   const mh = maskCanvas.height;
   const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
@@ -232,51 +265,117 @@ export const inpaintRegion = async (
 
   const W = source.width;
   const H = source.height;
+  if (!W || !H) throw new Error('INPAINT_EMPTY_SOURCE');
   const sx = W / mw;
   const sy = H / mh;
-  const fullBox = {
-    x: Math.floor(maskBox.x * sx),
-    y: Math.floor(maskBox.y * sy),
-    width: Math.ceil(maskBox.width * sx),
-    height: Math.ceil(maskBox.height * sy),
-  };
-  let holeArea = 0;
-  for (let i = 0; i < alpha.length; i++) if (alpha[i] > HOLE_ALPHA_THRESHOLD) holeArea++;
-  const model: InpaintModelId = choice === 'auto' ? pickAutoModel(holeArea * sx * sy) : choice;
-  const crop = computeInpaintCrop(fullBox, W, H, CONTEXT_FACTOR[model]);
-  const viewport = fitInpaintViewport(crop.width, crop.height);
+  // Include a conservative bound for dilation + feathering at the largest possible
+  // source crop. Neighbouring holes sharing that halo stay in one model pass.
+  const padding = Math.ceil((MASK_DILATION_PX + 6) * Math.max(W, H) / (MODEL_SIZE * Math.min(sx, sy))) + 2;
+  const { labels, regions } = planInpaintRegions(alpha, mw, mh, HOLE_ALPHA_THRESHOLD, { padding });
+  if (!regions.length) throw new Error('EMPTY_MASK');
+  const plans = regions.map(region => {
+    const box = region.box;
+    const x = Math.floor(box.x * sx);
+    const y = Math.floor(box.y * sy);
+    const fullBox = { x, y, width: Math.min(W, Math.ceil((box.x + box.width) * sx)) - x, height: Math.min(H, Math.ceil((box.y + box.height) * sy)) - y };
+    const model: InpaintModelId = choice === 'auto' ? pickAutoModel(region.area * sx * sy) : choice;
+    const crop = computeInpaintCrop(fullBox, W, H, inpaintContextFactor(model, blend.context));
+    return { region, model, crop };
+  });
+  const left = Math.min(...plans.map(p => p.crop.x));
+  const top = Math.min(...plans.map(p => p.crop.y));
+  const right = Math.max(...plans.map(p => p.crop.x + p.crop.width));
+  const bottom = Math.max(...plans.map(p => p.crop.y + p.crop.height));
+  const combined = plans.length > 1 ? canvas(right - left, bottom - top) : null;
+  const combinedCtx = combined?.getContext('2d');
+  const regionMask = canvas(mw, mh);
+  const regionCtx = regionMask.getContext('2d')!;
+  const measurements: InpaintRegionInfo[] = [];
+  try {
+    for (const { region, model, crop } of plans) {
+      if (blend.isCancelled?.()) throw new Error('INPAINT_CANCELLED');
+      const box = region.box;
+      regionCtx.clearRect(0, 0, mw, mh);
+      const isolated = regionCtx.createImageData(box.width, box.height);
+      for (let y = 0; y < box.height; y++) for (let x = 0; x < box.width; x++) {
+        const index = (box.y + y) * mw + box.x + x;
+        if (labels[index] === region.id) isolated.data[(y * box.width + x) * 4 + 3] = alpha[index];
+      }
+      regionCtx.putImageData(isolated, box.x, box.y);
+      const patch = await inpaintCrop(source, regionMask, crop, model, onProgress, blend);
+      if (blend.isCancelled?.()) {
+        patch.layer.width = patch.layer.height = 1;
+        throw new Error('INPAINT_CANCELLED');
+      }
+      measurements.push(...patch.regions);
+      if (!combined) return patch;
+      combinedCtx!.drawImage(patch.layer, crop.x - left, crop.y - top);
+      patch.layer.width = patch.layer.height = 1;
+    }
+    const last = measurements[measurements.length - 1];
+    return {
+      layer: combined!, x: left, y: top,
+      ms: measurements.reduce((sum, region) => sum + region.ms, 0),
+      model: measurements.some(region => region.model === 'quality') ? 'quality' : 'fast',
+      backend: last.backend,
+      regions: measurements,
+    };
+  } catch (error) {
+    if (combined) combined.width = combined.height = 1;
+    throw error;
+  } finally {
+    regionMask.width = regionMask.height = 1;
+  }
+};
+
+/** One coherent hole per crop; disconnected regions never share the 512px budget. */
+const inpaintCrop = async (
+  source: HTMLCanvasElement,
+  maskCanvas: HTMLCanvasElement,
+  crop: Rect,
+  model: InpaintModelId,
+  onProgress: PendingJob['onProgress'],
+  blend: BlendOptions,
+): Promise<InpaintPatch> => {
+  const sx = source.width / maskCanvas.width;
+  const sy = source.height / maskCanvas.height;
+  const size = model === 'quality' && blend.resolution === 1024 && Math.max(crop.width, crop.height) > MODEL_SIZE ? 1024 : MODEL_SIZE;
+  const pixels = size * size;
+  const viewport = fitInpaintViewport(crop.width, crop.height, size);
 
   // Preserve crop proportions; image and mask use the same reflected padding.
-  const imgSmall = drawInpaintInput(source, crop, viewport);
+  const imgSmall = drawInpaintInput(source, crop, viewport, size);
   const imgCtx = imgSmall.getContext('2d', { willReadFrequently: true })!;
-  const image = rgbaToPlanar(imgCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data, MODEL_SIZE * MODEL_SIZE);
+  const originalPixels = imgCtx.getImageData(0, 0, size, size).data;
+  const image = rgbaToPlanar(originalPixels, pixels);
 
   // Odpovídající výřez masky → 512×512, binárně (alfa > 0) a s okrajem.
-  const maskSmall = drawInpaintInput(maskCanvas, { x: crop.x / sx, y: crop.y / sy, width: crop.width / sx, height: crop.height / sy }, viewport);
+  const maskSmall = drawInpaintInput(maskCanvas, { x: crop.x / sx, y: crop.y / sy, width: crop.width / sx, height: crop.height / sy }, viewport, size);
   const msCtx = maskSmall.getContext('2d', { willReadFrequently: true })!;
-  const msData = msCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data;
-  const binary = new Uint8Array(MODEL_SIZE * MODEL_SIZE);
+  const msData = msCtx.getImageData(0, 0, size, size).data;
+  const binary = new Uint8Array(pixels);
   for (let i = 0; i < binary.length; i++) binary[i] = msData[i * 4 + 3] > HOLE_ALPHA_THRESHOLD ? 1 : 0;
-  const hole = dilateMask(binary, MODEL_SIZE, MODEL_SIZE, MASK_DILATION_PX);
+  const hole = dilateMask(binary, size, size, MASK_DILATION_PX * size / MODEL_SIZE);
 
-  onProgress?.({ phase: 'compute' });
   const { result, ms, backend } = await send<{ result: Uint8Array; ms: number; backend: InpaintBackend }>(
-    { type: 'run', model, image, mask: hole },
+    { type: 'run', model, size, image, mask: hole },
     onProgress,
     [image.buffer], // `hole` se ještě použije na ořez výsledku, nepřenášet
   );
 
   // Výsledek modelu → vrstva ve velikosti výřezu, oříznutá změkčenou maskou.
-  const resultSmall = canvas(MODEL_SIZE, MODEL_SIZE);
+  const resultSmall = canvas(size, size);
+  const filledPixels = planarToRgba(result, pixels);
+  if (blend.harmonize !== false) harmonizeInpaintBoundary(filledPixels, originalPixels, hole, size, size);
   resultSmall.getContext('2d')!.putImageData(
-    new ImageData(planarToRgba(result, MODEL_SIZE * MODEL_SIZE), MODEL_SIZE, MODEL_SIZE),
+    new ImageData(filledPixels, size, size),
     0,
     0,
   );
-  const holeRgba = new Uint8ClampedArray(MODEL_SIZE * MODEL_SIZE * 4);
+  const holeRgba = new Uint8ClampedArray(pixels * 4);
   for (let i = 0; i < hole.length; i++) holeRgba[i * 4 + 3] = hole[i] ? 255 : 0;
-  const holeCanvas = canvas(MODEL_SIZE, MODEL_SIZE);
-  holeCanvas.getContext('2d')!.putImageData(new ImageData(holeRgba, MODEL_SIZE, MODEL_SIZE), 0, 0);
+  const holeCanvas = canvas(size, size);
+  holeCanvas.getContext('2d')!.putImageData(new ImageData(holeRgba, size, size), 0, 0);
 
   const layer = canvas(crop.width, crop.height);
   const layerCtx = layer.getContext('2d')!;
@@ -288,7 +387,7 @@ export const inpaintRegion = async (
   // takže se retuš k okraji plynule vytrácí. Síla váhu celou násobí.
   layerCtx.globalAlpha = Math.min(1, Math.max(0, blend.strength));
   if (blend.hardness >= 0.99) {
-    layerCtx.filter = `blur(${Math.max(1, Math.max(crop.width / viewport.width, crop.height / viewport.height) * 1.5)}px)`;
+    layerCtx.filter = `blur(${Math.max(1, Math.max(crop.width / viewport.width, crop.height / viewport.height) * 1.5 * size / MODEL_SIZE)}px)`;
     layerCtx.drawImage(holeCanvas, viewport.x, viewport.y, viewport.width, viewport.height, 0, 0, crop.width, crop.height);
   } else {
     layerCtx.drawImage(maskCanvas, crop.x / sx, crop.y / sy, crop.width / sx, crop.height / sy, 0, 0, crop.width, crop.height);
@@ -300,13 +399,13 @@ export const inpaintRegion = async (
   const originalCrop = canvas(crop.width, crop.height);
   originalCrop.getContext('2d')!.drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
   try {
-    matchGrain(layer, originalCrop, hole, viewport);
+    matchGrain(layer, originalCrop, hole, viewport, size);
   } catch (error) {
     // Zrno je doladění — když selže (např. paměť), výsledek platí i bez něj.
     console.warn('Grain matching skipped:', error);
   }
 
-  return { layer, x: crop.x, y: crop.y, ms, backend, model };
+  return { layer, x: crop.x, y: crop.y, ms, backend, model, regions: [{ crop, ms, backend, model, inputSize: size }] };
 };
 
 /** Uloží plátno do souboru. Běží až po zobrazení výsledku, uživatel na něj nečeká. */

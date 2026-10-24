@@ -1,6 +1,6 @@
 // Čistá matika lokální retuše (bez DOM), aby šla testovat v Node.
 //
-// Inpainting modely pracují na malém čtverci (LaMa pevně 512×512). Kdybychom
+// Inpainting používá 512×512, volitelně LaMa 1024×1024. Kdybychom
 // do nich poslali celou 24MP fotku zmenšenou na 512, výsledek by byl rozmazaný.
 // Proto se z fotky vyřízne jen okolí masky, model doplní ten výřez a zpátky se
 // vloží POUZE pixely pod maskou — zbytek fotky zůstane bajtově původní.
@@ -13,6 +13,15 @@ export interface Rect {
   width: number;
   height: number;
 }
+
+export type InpaintContext = 'auto' | 'detail' | 'wide';
+
+/** Context changes the source crop, never the photo's aspect ratio or output size. */
+export const inpaintContextFactor = (model: 'fast' | 'quality', context: InpaintContext = 'auto'): number => {
+  if (context === 'detail') return model === 'fast' ? 1.5 : 2;
+  if (context === 'wide') return model === 'fast' ? 4 : 6;
+  return CONTEXT_FACTOR[model];
+};
 
 /** Content rectangle inside the fixed model square; never stretch the photo. */
 export const fitInpaintViewport = (width: number, height: number, size = MODEL_SIZE): Rect => {

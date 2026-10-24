@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MODEL_SIZE,
+  inpaintContextFactor,
   fitInpaintViewport,
   computeInpaintCrop,
   grainSigma,
@@ -11,6 +12,26 @@ import {
   planarToRgba,
   rgbaToPlanar,
 } from '../utils/inpaintMath';
+
+describe('retouch context crops', () => {
+  it('offers tighter detail and wider scene context without changing the default', () => {
+    const box = { x: 1800, y: 1200, width: 360, height: 240 };
+    for (const model of ['fast', 'quality'] as const) {
+      const detail = computeInpaintCrop(box, 6000, 4000, inpaintContextFactor(model, 'detail'));
+      const automatic = computeInpaintCrop(box, 6000, 4000, inpaintContextFactor(model));
+      const wide = computeInpaintCrop(box, 6000, 4000, inpaintContextFactor(model, 'wide'));
+      expect(detail.width).toBeLessThan(automatic.width);
+      expect(automatic.width).toBeLessThan(wide.width);
+      expect(automatic).toEqual(computeInpaintCrop(box, 6000, 4000, model === 'fast' ? 2 : 4));
+      for (const crop of [detail, automatic, wide]) {
+        expect(crop.x).toBeLessThanOrEqual(box.x);
+        expect(crop.y).toBeLessThanOrEqual(box.y);
+        expect(crop.x + crop.width).toBeGreaterThanOrEqual(box.x + box.width);
+        expect(crop.y + crop.height).toBeGreaterThanOrEqual(box.y + box.height);
+      }
+    }
+  });
+});
 
 describe('fitInpaintViewport', () => {
   it('preserves square inputs and letterboxes landscape and portrait without stretching', () => {

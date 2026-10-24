@@ -3,6 +3,8 @@ import { useTranslation } from '../../contexts/LanguageContext';
 import { INPAINT_MODELS } from '../../utils/inpaintModels';
 import { SEGMENT_TOTAL_BYTES } from '../../utils/segmentModel';
 import type { InpaintChoice } from '../../services/localInpaint';
+import type { InpaintContext } from '../../utils/inpaintMath';
+import type { RetouchTool } from './CanvasViewport';
 import RetouchPrompt from './RetouchPrompt';
 import { PanelSection, Range, Segmented } from './ui';
 
@@ -35,11 +37,20 @@ interface LassoProps {
 }
 
 interface RetouchPanelProps {
-  tool: 'brush' | 'lasso';
-  onToolChange: (tool: 'brush' | 'lasso') => void;
+  tool: Exclude<RetouchTool, 'none'>;
+  onToolChange: (tool: Exclude<RetouchTool, 'none'>) => void;
   lasso: LassoProps;
   model: InpaintChoice;
   onModelChange: (model: InpaintChoice) => void;
+  context: InpaintContext;
+  onContextChange: (context: InpaintContext) => void;
+  compareVariants: boolean;
+  harmonize: boolean;
+  onHarmonizeChange: (enabled: boolean) => void;
+  onCompareVariantsChange: (enabled: boolean) => void;
+  resolution: 512 | 1024;
+  onResolutionChange: (resolution: 512 | 1024) => void;
+  hdAvailable: boolean;
   modelStatus: ModelStatus;
   brushSize: number;
   onBrushSizeChange: (size: number) => void;
@@ -208,20 +219,24 @@ const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
           options={[
             { value: 'brush', label: t.retouch_tool_brush },
             { value: 'lasso', label: t.retouch_tool_lasso },
+            { value: 'clone', label: t.retouch_tool_clone },
+            { value: 'heal', label: t.retouch_tool_heal },
           ]}
         />
         {props.tool === 'lasso' && <LassoControls {...props.lasso} strength={props.strength} onStrengthChange={props.onStrengthChange} />}
       </PanelSection>
 
-      {props.tool === 'brush' && (
+      {props.tool !== 'lasso' && (
       <PanelSection title={t.retouch_brush}>
         <Range label={t.retouch_brush_size} value={props.brushSize} min={8} max={240} unit=" px" onChange={props.onBrushSizeChange} />
         <Range label={t.retouch_brush_hardness} value={props.brushHardness} min={0} max={100} unit=" %" defaultValue={85} onChange={props.onBrushHardnessChange} />
         <Range label={t.retouch_strength} value={props.strength} min={10} max={100} unit=" %" defaultValue={100} onChange={props.onStrengthChange} />
         <p className="text-[11px] text-ink-500">{t.retouch_shortcuts}</p>
+        {(props.tool === 'clone' || props.tool === 'heal') && <p className="text-[12px] leading-relaxed text-ink-300">{props.tool === 'heal' ? t.retouch_heal_desc : t.retouch_sample_hint}</p>}
       </PanelSection>
       )}
 
+      {(props.tool === 'brush' || props.tool === 'lasso') && <>
       <PanelSection title={t.retouch_quality}>
         <Segmented
           value={props.model}
@@ -238,6 +253,42 @@ const RetouchPanel: React.FC<RetouchPanelProps> = (props) => {
         {status}
       </PanelSection>
 
+      {props.hdAvailable && props.model === 'quality' && (
+        <PanelSection title={t.retouch_resolution}>
+          <Segmented<512 | 1024>
+            value={props.resolution}
+            onChange={props.onResolutionChange}
+            options={[
+              { value: 512, label: t.retouch_resolution_standard, hint: '512 × 512 px' },
+              { value: 1024, label: t.retouch_resolution_hd, hint: '1024 × 1024 px' },
+            ]}
+          />
+          <p className="text-[11px] leading-relaxed text-ink-400">{t.retouch_resolution_desc}</p>
+        </PanelSection>
+      )}
+
+      <PanelSection title={t.retouch_context}>
+        <Segmented<InpaintContext>
+          value={props.context}
+          onChange={props.onContextChange}
+          options={[
+            { value: 'auto', label: t.retouch_context_auto },
+            { value: 'detail', label: t.retouch_context_detail },
+            { value: 'wide', label: t.retouch_context_wide },
+          ]}
+        />
+        <p className="text-[11px] leading-relaxed text-ink-400">
+          {props.context === 'detail' ? t.retouch_context_detail_desc : props.context === 'wide' ? t.retouch_context_wide_desc : t.retouch_context_auto_desc}
+        </p>
+        <label className="flex cursor-pointer items-center gap-3 text-[13px] text-ink-200">
+          <input type="checkbox" checked={props.compareVariants} onChange={event => props.onCompareVariantsChange(event.target.checked)} className="h-4 w-4 accent-fm-green" />
+          {t.retouch_compare_variants}
+        </label>
+        <p className="text-[11px] leading-relaxed text-ink-500">{t.retouch_compare_variants_desc}</p>
+        <label className="flex items-center gap-3 text-[13px] text-ink-200"><input type="checkbox" checked={props.harmonize} onChange={event => props.onHarmonizeChange(event.target.checked)} className="h-4 w-4 accent-fm-green" />{t.retouch_harmonize}</label>
+      </PanelSection>
+
+      </>}
       <PanelSection title={t.retouch_history}>
         <button onClick={props.onUndo} disabled={!props.canUndo || props.isProcessing} className="fm-btn-ghost w-full">
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>

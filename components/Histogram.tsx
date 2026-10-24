@@ -11,15 +11,18 @@ const Histogram: React.FC<HistogramProps> = ({ imageUrl }) => {
 
     useEffect(() => {
         if (!imageUrl || !canvasRef.current) return;
+        let cancelled = false;
 
         const render = async () => {
             try {
                 const { r, g, b, l } = await calculateHistogram(imageUrl);
-                const ctx = canvasRef.current!.getContext('2d');
+                const canvas = canvasRef.current;
+                if (cancelled || !canvas) return;
+                const ctx = canvas.getContext('2d');
                 if (!ctx) return;
 
-                const w = canvasRef.current!.width;
-                const h = canvasRef.current!.height;
+                const w = canvas.width;
+                const h = canvas.height;
                 ctx.clearRect(0, 0, w, h);
 
                 // Find max value to normalize height
@@ -57,13 +60,13 @@ const Histogram: React.FC<HistogramProps> = ({ imageUrl }) => {
                 ctx.globalCompositeOperation = 'source-over';
                 drawChannel(l, 'rgba(255, 255, 255, 0.8)', false); // Luma (Line only)
             } catch (e) {
-                console.error("Histogram error", e);
+                if (!cancelled) console.error("Histogram error", e);
             }
         };
 
         // Simple debounce to prevent crashing on rapid slider moves
         const t = setTimeout(render, 100);
-        return () => clearTimeout(t);
+        return () => { cancelled = true; clearTimeout(t); };
 
     }, [imageUrl]);
 

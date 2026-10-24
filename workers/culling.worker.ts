@@ -35,18 +35,58 @@ async function analyze(request: Extract<CullingRequest, { kind: 'analyze' }>): P
     if (!context) throw new Error('Culling canvas unavailable');
     context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
     context.drawImage(bitmap, 0, 0, width, height);
-    const metrics = readMetrics(context.getImageData(0, 0, width, height).data, width, height);
+    const preview = context.getImageData(0, 0, width, height);
+    const metrics = readMetrics(preview.data, width, height);
     if (Math.max(bitmap.width, bitmap.height) > PREVIEW_MAX_SIDE) {
-      const samples = nativeSampleRects(bitmap.width, bitmap.height).map(rect => {
+      const samples = nativeSampleRects(bitmap.width, bitmap.height, preview).map(rect => {
         // Reuse the canvas and original bitmap; no full-resolution pixel buffer or model.
         canvas.width = rect.width; canvas.height = rect.height;
         context.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
-        return readMetrics(context.getImageData(0, 0, rect.width, rect.height).data, rect.width, rect.height, false);
+        return readMetrics(context.getImageData(0, 0, rect.width, rect.height).data, rect.width, rect.height, false, false);
       });
-      metrics.native = summarizeNativeSamples(samples, bitmap.width, bitmap.height);
+      metrics.native = summarizeNativeSamples(samples, bitmap.width, bitmap.height, nativeSampleRects(bitmap.width, bitmap.height).length);
     }
-    return { metrics, aspectRatio: bitmap.width / bitmap.height, source: request.source, exif: await readExif(request.metadataFile) };
+    if (request.focusRegion) {
+      const region = request.focusRegion;
+      if (![region.x, region.y, region.width, region.height].every(Number.isFinite) || region.width <= 0 || region.height <= 0) throw new Error('Invalid focus region');
+      const w = Math.max(1, Math.min(384, bitmap.width, Math.round(region.width * bitmap.width)));
+      const h = Math.max(1, Math.min(384, bitmap.height, Math.round(region.height * bitmap.height)));
+      const x = Math.max(0, Math.min(bitmap.width - w, Math.round(region.x * bitmap.width)));
+      const y = Math.max(0, Math.min(bitmap.height - h, Math.round(region.y * bitmap.height)));
+      canvas.width = w; canvas.height = h;
+      context.drawImage(bitmap, x, y, w, h, 0, 0, w, h);
+      const focus = readMetrics(context.getImageData(0, 0, w, h).data, w, h, false);
+      metrics.focus = { region: { x: x / bitmap.width, y: y / bitmap.height, width: w / bitmap.width, height: h / bitmap.height }, technical: focus.technical!, sharpnessScore: focus.sharpnessScore };
+    }
+    return { metrics, focusRegion: metrics.focus?.region, aspectRatio: bitmap.width / bitmap.height, source: request.source, exif: await readExif(request.metadataFile) };
   } finally { bitmap.close(); }
+}
+
+/** Inspect every decoded source pixel in bounded tiles; tiny changed moments veto duplication. */
+async function verifyDuplicate(file: File, reference: File, bytesOnly = false): Promise<boolean> {
+  if (bytesOnly) {
+    if (file.size !== reference.size || !self.crypto?.subtle) return false;
+    const a = new Uint8Array(await self.crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
+    const b = new Uint8Array(await self.crypto.subtle.digest('SHA-256', await reference.arrayBuffer()));
+    return a.every((value, index) => value === b[index]);
+  }
+  const a = await createImageBitmap(file);
+  let b: ImageBitmap | undefined;
+  try {
+    if (a.width * a.height > 64_000_000) return false;
+    b = await createImageBitmap(reference);
+    if (a.width !== b.width || a.height !== b.height) return false;
+    const first = new OffscreenCanvas(512, 128), second = new OffscreenCanvas(512, 128);
+    const ac = first.getContext('2d', { willReadFrequently: true })!, bc = second.getContext('2d', { willReadFrequently: true })!;
+    for (let y = 0; y < a.height; y += 128) for (let x = 0; x < a.width; x += 512) {
+      const w = Math.min(512, a.width - x), h = Math.min(128, a.height - y);
+      ac.clearRect(0, 0, 512, 128); bc.clearRect(0, 0, 512, 128);
+      ac.drawImage(a, x, y, w, h, 0, 0, w, h); bc.drawImage(b, x, y, w, h, 0, 0, w, h);
+      const av = ac.getImageData(0, 0, w, h).data, bv = bc.getImageData(0, 0, w, h).data;
+      for (let i = 0; i < av.length; i++) if (av[i] !== bv[i]) return false;
+    }
+    return true;
+  } finally { a.close(); b?.close(); }
 }
 
 async function inspect(request: Extract<CullingRequest, { kind: 'inspect' }>): Promise<CullingInspection> {
@@ -64,11 +104,12 @@ async function inspect(request: Extract<CullingRequest, { kind: 'inspect' }>): P
   } finally { bitmap.close(); }
 }
 
-// Callers await requests sequentially: at most one decoded original is resident.
+// Requests are awaited sequentially; duplicate verification owns at most two bitmaps.
 self.onmessage = async ({ data }: MessageEvent<CullingRequest>) => {
   try {
     const value = data.kind === 'analyze' ? await analyze(data)
       : data.kind === 'inspect' ? await inspect(data)
+      : data.kind === 'verify-duplicate' ? await verifyDuplicate(data.file, data.reference, data.bytesOnly)
       : data.kind === 'group' ? [...computeSimilarityGroups(data.items)]
       : buildCullingResult(data.analysis, data.genre);
     self.postMessage({ id: data.id, value });

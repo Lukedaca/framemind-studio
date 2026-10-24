@@ -19,8 +19,8 @@ The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
 interface runs in a dedicated application window. The installed application
 does not require Vite, a terminal or an external browser.
 
-**A client release is not available yet.** The 0.1.3 package on
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.3) is an unsigned
+**A client release is not available yet.** The 0.1.4 package on
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.4) is an unsigned
 development preview. Do not distribute it to clients. Windows may show SmartScreen
 or block installation; disabling protection is not part of the installation instructions.
 
@@ -33,9 +33,8 @@ file origin and integrity; it does not guarantee immediate SmartScreen reputatio
 macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
-Published release: [0.1.3](docs/releases/0.1.3.md).
-Current changes on `main`: [full originals and local-1.4 culling](docs/releases/unreleased.md).
-These fixes are not yet included in the installer attached to GitHub release 0.1.3.
+Published development release: [0.1.4 — retouch and local-1.6 culling](docs/releases/0.1.4.md).
+Includes adaptive retouching, clone and heal brushes, full originals and manual subject selection.
 Documentation index: [docs/README.md](docs/README.md).
 
 ## Develop and run from source
@@ -88,7 +87,7 @@ The installer is written to `src-tauri/target/release/bundle/nsis/`.
 | Import | JPEG, PNG, WebP; supported RAW extensions use an embedded JPEG preview |
 | Culling | Technical metrics, similar frames, full originals with zoom, comparison of up to four frames and K / R / X decisions |
 | Adjustments | Histogram-based auto adjustment, sliders and crop |
-| Local retouching | Brush, click-based smart lasso and ONNX models in the local WebView or browser |
+| Local retouching | Clone, heal, smart lasso, adaptive crops, variant comparison and local ONNX models |
 | Export | JPEG / PNG, quality, size and watermark; one photo or the set |
 | Projects and clients | Local CRM and gallery preview in the application or browser profile |
 | Interface | Czech and English; Windows desktop, PWA configuration for web builds only |
@@ -118,18 +117,26 @@ shadows, contrast, and detail, noise and directional blur indicators.
 EXIF is read from the original input when available. You select a profile manually;
 it changes technical score weights rather than analyzing image content.
 
-Local engine 1.2 also measures up to nine unscaled 384 × 384 px samples from
-larger sources. The strongest measured sample detail limits the sharpness score
-so downscaling cannot hide blur. Samples are processed sequentially. This is
-not subject detection; a small sharp object between sample positions can be missed.
+Larger sources use up to nine fixed, unscaled 384 × 384 px samples. Engine 1.5
+adds up to four detail-guided samples, including areas outside the original grid.
+Scores and series references use fixed positions; extra sharp detail can veto
+rejection and require review. Samples are processed sequentially. This does not
+detect subjects, and important detail can still be missed.
 
-The current source uses engine **local-1.4**. Click a photograph to open the whole
+The current source uses engine **local-1.6**. Click a photograph to open the whole
 original image file without another conversion or compression. Select up to four
 frames with `+` for comparison. The initial view fits the entire frame; 100%, 200%
 and 400% reveal detail. Scroll to zoom and drag to pan. The 100% scale accounts
 for display pixel density. K/R/X change the active frame's manual choice,
 0 fits the image, 1 sets 100%, and Esc closes the viewer. RAW still displays
 its embedded JPEG rather than developed sensor data.
+
+In comparison, **Mark the main subject** lets you select a 128 / 256 / 384 px
+region. Its original-scale sharpness contributes to the score; weak or uncertain
+subject detail requires review. The application does not detect the subject itself.
+A redundant copy requires identical decoded JPEG/PNG pixels or a SHA-256 match
+of original RAW bytes; a similar preview is insufficient. Conflicting detail
+measurements at two scales add a review reason, never a sole rejection reason.
 
 Step-by-step instructions and shortcuts: [local culling guide (Czech)](docs/culling.md).
 
@@ -169,7 +176,12 @@ those measurements. Older automatic results require fresh analysis; manual choic
 
 ## Local retouching
 
-Brush retouching and click-based lasso run through ONNX Runtime Web in workers.
+**Clone** copies actual texture from a source selected with Alt + click.
+**Heal** transfers fine texture while adapting its color to the destination.
+Both work without a model and retain mask strength and shared history.
+Model-based repair offers optional conservative color matching at smooth mask edges.
+
+Model-based brush retouching and click-based lasso run through ONNX Runtime Web in workers.
 These paths do not send the photo to a cloud model or require an API key.
 
 | Model | Task | Size from configured files |
@@ -178,15 +190,32 @@ These paths do not send the photo to a cloud model or require an API key.
 | LaMa | Detailed retouching | about 208 MB |
 | SAM 2.1 tiny int8 | Click-based lasso masks | about 62 MB |
 
-**Automatic** chooses MI-GAN for mask areas up to 14,400 pixels in original-image
-dimensions and LaMa for larger areas. It does not recognize people.
+**Automatic** chooses MI-GAN for repair regions up to 14,400 pixels in original-image
+dimensions and LaMa for larger regions. Each processed region chooses its own
+model; this does not recognize people.
 The fast model is prepared when retouching opens; other models load as needed.
 
-Retouching processes the mask's neighborhood at 512 × 512 and blends the result
-back into the photo. The crop keeps its aspect ratio; reflected edges fill the
-remaining model input. Canvas dimensions remain unchanged, but detail in large
-filled areas is limited by model resolution. Retouch working copies use lossless
-PNG, so repeated strokes do not add JPEG compression. JPEG remains available for
+Distant parts of a mask receive separate crops instead of sharing one downscaled
+region. Nearby parts with overlapping surroundings are merged; processing is
+bounded to 16 regions. A connected object is never split into tiles. **Retouch
+context** offers a balanced crop, a tighter crop for fine detail or a wider view
+of the surrounding scene. **Compare variants before applying** prepares up to
+three distinct crops of the same mask. Only the selected result changes the
+photo, as one history step; Cancel and Escape leave it unchanged. Identical crops
+appear only once.
+
+The default model input remains 512 × 512. Explicitly selecting **Detailed** enables
+**Higher detail** at up to 1024 × 1024; small crops stay at 512 × 512. This uses
+the same LaMa weights: only input dimension metadata is changed in memory; the
+downloaded model and its cache remain unchanged. Higher resolution needs more
+memory and time and does not guarantee a better result. Automatic and Fast modes
+use 512 × 512.
+
+The crop keeps its aspect ratio; reflected edges fill the remaining model input
+and the result is blended back into the photo. Canvas dimensions remain unchanged,
+but detail in large filled areas is still limited by the model input. Retouch
+working copies use lossless PNG, so repeated strokes do not add JPEG compression.
+JPEG remains available for
 the final export. Working PNGs can take more space than the original JPEG.
 The lasso offers candidate masks; exact outlines and fill quality are not guaranteed.
 Performance depends on the device, browser and execution path.
@@ -231,9 +260,9 @@ verify recovery of every stored project. Deleting application data is a separate
 - RAW import extracts a preview; it does not perform demosaicing or full RAW development.
   Files without a usable embedded JPEG may fail to import.
 - There are no user accounts, server storage or synchronization.
-- All 147 tests passed for the current source, with synthetic culling checks in Chromium and native
-  WebView2. One real set of 114 JPEGs verified measurement and unchanged originals;
-  it does not establish general photographic accuracy or performance on a RAW set.
+- [Release 0.1.4 notes](docs/releases/0.1.4.md) distinguish current checks from historical evidence.
+  Synthetic checks and local photo sets do not establish general accuracy across
+  genres, cameras and RAW files.
 - Retouching has not been comprehensively verified across all browsers and GPUs.
 
 Historical audit and implementation record: [docs/culling-local-audit.md](docs/culling-local-audit.md).

@@ -5,6 +5,13 @@ import { createSignature } from './cullingSimilarity';
 export const PREVIEW_MAX_SIDE = 768;
 export const clamp01 = (value: number): number => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
 
+function validatePreview(data: Uint8ClampedArray, width: number, height: number): void {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
+      width > PREVIEW_MAX_SIDE || height > PREVIEW_MAX_SIDE || data.length !== width * height * 4) {
+    throw new Error('Invalid or unbounded culling preview');
+  }
+}
+
 function percentile(histogram: Uint32Array, count: number, fraction: number): number {
   let sum = 0;
   for (let i = 0; i < histogram.length; i += 1) {
@@ -21,11 +28,8 @@ function median(values: number[]): number {
   return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
 }
 
-export function readMetrics(data: Uint8ClampedArray, width: number, height: number, withSignature = true): CullingMetrics {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
-      width > PREVIEW_MAX_SIDE || height > PREVIEW_MAX_SIDE || data.length !== width * height * 4) {
-    throw new Error('Invalid or unbounded culling preview');
-  }
+export function readMetrics(data: Uint8ClampedArray, width: number, height: number, withSignature = true, multiScale = true): CullingMetrics {
+  validatePreview(data, width, height);
   const count = width * height;
   const gray = new Float32Array(count);
   const histogram = new Uint32Array(256);
@@ -33,16 +37,20 @@ export function readMetrics(data: Uint8ClampedArray, width: number, height: numb
   let sum = 0, sumSquared = 0, highlights = 0, shadows = 0;
   for (let p = 0; p < count; p += 1) {
     const alpha = data[p * 4 + 3] / 255;
-    const rgb = [0, 1, 2].map(c => data[p * 4 + c] * alpha + 128 * (1 - alpha));
-    const luma = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    const matte = 128 * (1 - alpha);
+    const red = data[p * 4] * alpha + matte, green = data[p * 4 + 1] * alpha + matte,
+      blue = data[p * 4 + 2] * alpha + matte;
+    const luma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
     gray[p] = luma; histogram[Math.round(luma)] += 1;
     sum += luma; sumSquared += luma * luma;
     if (luma >= 250) highlights += 1;
     if (luma <= 5) shadows += 1;
-    for (let c = 0; c < 3; c += 1) {
-      if (rgb[c] >= 250) channelHighlights[c] += 1;
-      if (rgb[c] <= 5) channelShadows[c] += 1;
-    }
+    if (red >= 250) channelHighlights[0] += 1;
+    if (green >= 250) channelHighlights[1] += 1;
+    if (blue >= 250) channelHighlights[2] += 1;
+    if (red <= 5) channelShadows[0] += 1;
+    if (green <= 5) channelShadows[1] += 1;
+    if (blue <= 5) channelShadows[2] += 1;
   }
   const meanLuma = sum / count;
   const standardDeviation = Math.sqrt(Math.max(0, sumSquared / count - meanLuma * meanLuma));
@@ -107,6 +115,25 @@ export function readMetrics(data: Uint8ClampedArray, width: number, height: numb
     laplacianVariance, tenengrad, edgeDensity, detailConfidence, noiseEstimate, noiseConfidence,
     gradientAnisotropy, motionBlurEstimate, motionConfidence,
   };
+  if (multiScale) {
+    const coarse = filtered.slice();
+    for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) {
+      const p = y * width + x;
+      coarse[p] = (filtered[p] * 4 + 2 * (filtered[p - 1] + filtered[p + 1] + filtered[p - width] + filtered[p + width]) +
+        filtered[p - width - 1] + filtered[p - width + 1] + filtered[p + width - 1] + filtered[p + width + 1]) / 16;
+    }
+    let fine = 0, broad = 0, measuredEdges = 0;
+    for (let y = 3; y < height - 3; y++) for (let x = 3; x < width - 3; x++) {
+      const p = y * width + x;
+      fine += (filtered[p + 1] - filtered[p - 1]) ** 2 + (filtered[p + width] - filtered[p - width]) ** 2;
+      broad += (coarse[p + 1] - coarse[p - 1]) ** 2 + (coarse[p + width] - coarse[p - width]) ** 2;
+      measuredEdges++;
+    }
+    const floor = noiseEstimate ** 2 * noiseConfidence;
+    technical.fineEdgeEnergy = Math.max(0, fine / Math.max(1, measuredEdges) - floor * 0.46875);
+    technical.coarseEdgeEnergy = Math.max(0, broad / Math.max(1, measuredEdges) - floor * 0.179443359375);
+    technical.scaleConsistency = clamp01(technical.coarseEdgeEnergy / Math.max(1, technical.fineEdgeEnergy));
+  }
   const signature = withSignature ? createSignature(gray, data, width, height, histogram, standardDeviation) : undefined;
   return {
     hash: signature?.averageHash ?? '', meanLuma,
@@ -120,22 +147,70 @@ export function readMetrics(data: Uint8ClampedArray, width: number, height: numb
 }
 
 export const NATIVE_SAMPLE_SIZE = 384;
-export function nativeSampleRects(width: number, height: number): { x: number; y: number; width: number; height: number }[] {
+interface SamplingPreview { data: Uint8ClampedArray; width: number; height: number }
+
+// A small preview only proposes extra locations. All evidence used for a verdict
+// still comes from measured original-resolution pixels, including the noise veto.
+function detailLocations(preview: SamplingPreview): { x: number; y: number; strength: number }[] {
+  const { data, width, height } = preview;
+  validatePreview(data, width, height);
+  const gray = new Float32Array(width * height);
+  for (let p = 0; p < gray.length; p++) {
+    const alpha = data[p * 4 + 3] / 255;
+    gray[p] = (data[p * 4] * 0.2126 + data[p * 4 + 1] * 0.7152 + data[p * 4 + 2] * 0.0722) * alpha + 128 * (1 - alpha);
+  }
+  const cellSize = 16, columns = Math.ceil(width / cellSize), cells = columns * Math.ceil(height / cellSize);
+  const energy = new Float64Array(cells), weightedX = new Float64Array(cells), weightedY = new Float64Array(cells);
+  for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) {
+    const p = y * width + x;
+    const lap = -4 * gray[p] + gray[p - 1] + gray[p + 1] + gray[p - width] + gray[p + width];
+    const value = lap * lap;
+    if (value <= 4) continue;
+    const cell = Math.floor(y / cellSize) * columns + Math.floor(x / cellSize);
+    energy[cell] += value; weightedX[cell] += x * value; weightedY[cell] += y * value;
+  }
+  return Array.from(energy, (value, i) => ({
+    x: value ? weightedX[i] / value / width : 0,
+    y: value ? weightedY[i] / value / height : 0,
+    strength: value / (cellSize * cellSize),
+  })).filter(point => point.strength > 4).sort((a, b) => b.strength - a.strength || a.y - b.y || a.x - b.x);
+}
+
+export function nativeSampleRects(width: number, height: number, preview?: SamplingPreview): { x: number; y: number; width: number; height: number }[] {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new Error('Invalid source dimensions');
+  const points = preview ? detailLocations(preview) : [];
   const w = Math.min(width, NATIVE_SAMPLE_SIZE), h = Math.min(height, NATIVE_SAMPLE_SIZE);
   const rects = new Map<string, { x: number; y: number; width: number; height: number }>();
-  for (const fy of [0.25, 0.5, 0.75]) for (const fx of [0.25, 0.5, 0.75]) {
-    const x = Math.max(0, Math.min(width - w, Math.round(width * fx - w / 2)));
-    const y = Math.max(0, Math.min(height - h, Math.round(height * fy - h / 2)));
+  const add = (cx: number, cy: number) => {
+    const x = Math.max(0, Math.min(width - w, Math.round(cx - w / 2)));
+    const y = Math.max(0, Math.min(height - h, Math.round(cy - h / 2)));
     rects.set(`${x}:${y}`, { x, y, width: w, height: h });
+  };
+  for (const fy of [0.25, 0.5, 0.75]) for (const fx of [0.25, 0.5, 0.75]) {
+    add(width * fx, height * fy);
+  }
+  const limit = rects.size + 4;
+  for (const point of points) {
+    const x = point.x * width, y = point.y * height;
+    // Retain the fixed coverage and spend the extra budget outside measured areas.
+    if ([...rects.values()].some(r => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)) continue;
+    add(x, y);
+    if (rects.size >= limit) break;
   }
   return [...rects.values()];
 }
 
-export function summarizeNativeSamples(samples: CullingMetrics[], sourceWidth: number, sourceHeight: number): CullingNativeMetrics {
-  const informative = samples.filter(m => m.technical && m.technical.detailConfidence >= 0.3 &&
-    m.technical.tenengrad >= 100 && m.technical.standardDeviation >= 10);
+export function summarizeNativeSamples(samples: CullingMetrics[], sourceWidth: number, sourceHeight: number,
+  fixedSampleCount = samples.length): CullingNativeMetrics {
+  if (!Number.isInteger(fixedSampleCount) || fixedSampleCount < 0 || fixedSampleCount > samples.length) throw new Error('Invalid fixed sample count');
+  const isInformative = (m: CullingMetrics) => m.technical && m.technical.detailConfidence >= 0.3 &&
+    m.technical.tenengrad >= 100 && m.technical.standardDeviation >= 10;
+  const informative = samples.filter(isInformative), fixed = samples.slice(0, fixedSampleCount), fixedInformative = fixed.filter(isInformative);
   return {
     sourceWidth, sourceHeight, sampleSize: NATIVE_SAMPLE_SIZE, sampleCount: samples.length,
+    fixedSampleCount, fixedInformativeSamples: fixedInformative.length,
+    fixedMaxSharpnessScore: Math.max(0, ...fixedInformative.map(m => m.sharpnessScore)),
+    fixedMaxLaplacianVariance: Math.max(0, ...fixed.map(m => m.technical?.laplacianVariance ?? 0)),
     informativeSamples: informative.length,
     maxSharpnessScore: Math.max(0, ...informative.map(m => m.sharpnessScore)),
     // The strongest observed detail protects shallow depth of field from a majority of blurred background samples.

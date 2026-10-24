@@ -87,6 +87,23 @@ node scripts/culling-local-smoke.mjs
 The script blocks external requests and checks that culling makes none after
 entering the culling screen. It does not prove that application startup or every
 editor feature is offline. Synthetic tests do not calibrate photographic quality.
+The culling check also compares pervasive native softness with an otherwise
+identical frame containing a small sharp patch between the fixed sampling locations.
+
+For a read-only comparison of a local sports shoot with one photographer's exports:
+
+```powershell
+node scripts/culling-selection-audit.mjs 'D:\Photos\Match\RAW' 'D:\Photos\Match\JPEG' match-check
+```
+
+This script uses the `sport` profile and matches source/export basenames,
+including `edited_` and `autopilot_` prefixes. RAWs use the application's embedded
+JPEG preview path. Optional source filenames after the label restrict a diagnostic
+run to those originals and also save their analysis sources in ignored output.
+Subset runs do not reproduce full-set grouping. Unmatched exports are reported.
+Exported frames are examples of one person's choice; unexported frames are not
+bad-photo labels. Keep all private files and reports out of commits. Original
+hashes, blocked requests and page errors are checked before a successful report.
 
 The inspection script checks one-click opening of full originals, exact imported
 bytes, fitting the entire image without clipping, physical pixel scaling, drag
@@ -119,6 +136,28 @@ copies, and blocks external requests. It exercises both real models on synthetic
 images, crop proportions, lossless saves and preservation outside the patch.
 Metrics and before/after PNGs are written beside the test models. This is not
 an assessment of retouch quality on real photographs or native WebView2 evidence.
+
+Run `node scripts/retouch-adaptive-smoke.mjs --hd` for the adaptive retouch path,
+using the same local `fast.onnx` and `quality.onnx` files and `EDITOR_SMOKE_URL`.
+The browser path checks separated repair regions, unchanged source pixels and
+pixels outside the patch. The editor checks distinct context variants, Cancel
+and Escape, one history step on Apply, exact Undo/Redo and an actual 1024-pixel
+LaMa worker request. It uses synthetic photographs, not a representative quality
+benchmark. Reports and screenshots go to ignored `output/playwright/retouch-adaptive/`.
+The script launches an isolated Chromium context by default. For native UI checks,
+set `DESKTOP_SMOKE_CDP` to a Tauri/WebView2 instance started with a separate test
+profile; the script attaches to that instance. A Chromium run alone does not
+establish native application behavior.
+
+For a short native clone-brush check without model inference, run
+`powershell.exe -NoProfile -File scripts/windows-retouch-smoke.ps1 -Quick`.
+It checks a real source sample, a lossless working copy and unchanged originals.
+
+After a desktop build, run
+`powershell.exe -NoProfile -File scripts/windows-retouch-smoke.ps1 -Hd` for the
+native check. It refuses an already running Studio, creates a separate WebView2
+profile, seeds models directly into its cache without changing CSP, and compares
+the normal workspace's IndexedDB/localStorage file hashes before and after.
 
 ## License
 

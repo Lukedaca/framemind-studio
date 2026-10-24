@@ -49,6 +49,9 @@ export interface CullingSignature {
 }
 
 export interface CullingTechnicalMetrics {
+  scaleConsistency?: number; // noise-corrected edge persistence across two spatial scales
+  fineEdgeEnergy?: number;
+  coarseEdgeEnergy?: number;
   width: number;
   height: number;
   medianLuma: number;
@@ -86,6 +89,11 @@ export interface CullingNativeMetrics {
   maxLaplacianVariance: number;
   maxEdgeAcutance: number; // Laplacian/Sobel energy at 1:1, texture-normalized
   maxNoiseEstimate: number;
+  // Fixed-grid evidence determines scores/references; extra detail can only veto rejection.
+  fixedSampleCount?: number;
+  fixedInformativeSamples?: number;
+  fixedMaxSharpnessScore?: number;
+  fixedMaxLaplacianVariance?: number;
 }
 
 export type CullingScorePart = 'sharpness' | 'exposure' | 'clipping' | 'noise' | 'contrast' | 'motion';
@@ -103,6 +111,7 @@ export type CullingGenre =
   | 'other';
 
 export interface CullingMetrics {
+  focus?: { region: CullingFocusRegion; technical: CullingTechnicalMetrics; sharpnessScore: number };
   hash: string;
   meanLuma: number;
   sharpnessScore: number; // 0-1
@@ -122,7 +131,11 @@ export interface CullingMetrics {
   native?: CullingNativeMetrics; // bounded 1:1 samples; no subject detection
 }
 
+export interface CullingFocusRegion { x: number; y: number; width: number; height: number }
+
 export interface CullingResult {
+  focusRegion?: CullingFocusRegion;
+  duplicateVerified?: boolean;
   metrics: CullingMetrics;
   finalScore: number; // 0-100 (žánrově vážený)
   decision: CullingDecision;

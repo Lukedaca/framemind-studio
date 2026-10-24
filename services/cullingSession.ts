@@ -14,7 +14,8 @@ export function cullingInput(file: UploadedFile) {
 
 // Exact Blob identity, never filename/size guesses. No decoded pixels are cached.
 // Rehydrated files in a new application session deliberately need new measurement.
-const measurements = new WeakMap<Blob, { metadata: Blob; source: string; analysis: PhotoAnalysis }>();
+const measurements = new WeakMap<Blob, { metadata: Blob; source: string; focus: string; analysis: PhotoAnalysis }>();
+const duplicateProofs = new WeakMap<Blob, WeakMap<Blob, boolean>>();
 
 // One owned worker per run. Cancellation rejects every waiter immediately.
 export class CullingSession {
@@ -47,16 +48,31 @@ export class CullingSession {
     });
   }
 
-  async analyze(file: UploadedFile, force = false): Promise<PhotoAnalysis> {
+  async analyze(file: UploadedFile, force = false, focusRegion: CullingResult['focusRegion'] | null = file.culling?.focusRegion): Promise<PhotoAnalysis> {
     if (this.closed) throw this.failure;
     const input = cullingInput(file), cached = measurements.get(input.file);
-    if (!force && cached?.metadata === input.metadataFile && cached.source === input.source) return cached.analysis;
-    const analysis = await this.request<PhotoAnalysis>({ kind: 'analyze', ...input });
-    measurements.set(input.file, { metadata: input.metadataFile, source: input.source, analysis });
+    const focus = JSON.stringify(focusRegion ?? null);
+    if (!force && cached?.metadata === input.metadataFile && cached.source === input.source && cached.focus === focus) return cached.analysis;
+    const analysis = await this.request<PhotoAnalysis>({ kind: 'analyze', ...input, focusRegion: focusRegion ?? undefined });
+    measurements.set(input.file, { metadata: input.metadataFile, source: input.source, focus, analysis });
     return analysis;
   }
   inspect(file: UploadedFile, point: InspectionPoint): Promise<CullingInspection> {
     return this.request({ kind: 'inspect', file: cullingInput(file).file, point });
+  }
+  async verifyDuplicate(file: UploadedFile, reference: UploadedFile): Promise<boolean> {
+    const input = cullingInput(file), ref = cullingInput(reference);
+    const bytesOnly = input.source !== 'image' || ref.source !== 'image';
+    const a = bytesOnly ? input.metadataFile : input.file, b = bytesOnly ? ref.metadataFile : ref.file;
+    if (a === b) return true;
+    const cached = duplicateProofs.get(a)?.get(b);
+    if (cached !== undefined) return cached;
+    const identical = await this.request<boolean>({ kind: 'verify-duplicate', file: a, reference: b, bytesOnly });
+    const map = duplicateProofs.get(a) ?? new WeakMap<Blob, boolean>();
+    map.set(b, identical); duplicateProofs.set(a, map);
+    const reverse = duplicateProofs.get(b) ?? new WeakMap<Blob, boolean>();
+    reverse.set(a, identical); duplicateProofs.set(b, reverse);
+    return identical;
   }
   score(analysis: PhotoAnalysis, genre: CullingGenre | null): Promise<CullingResult> { return this.request({ kind: 'score', analysis, genre }); }
   async group(items: SimilarityInput[]): Promise<Map<string, SimilarityAssignment>> {

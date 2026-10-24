@@ -10,6 +10,8 @@ interface Props {
   results: Map<string, CullingResult>;
   onDecision: (id: string, decision: CullingDecision) => void;
   onClose: () => void;
+  onFocusRegion?: (id: string, region: CullingResult['focusRegion'] | null) => void;
+  busy?: boolean;
 }
 type Point = { x: number; y: number };
 type Size = { width: number; height: number };
@@ -17,7 +19,7 @@ const DECISIONS: CullingDecision[] = ['keep', 'review', 'reject'];
 const LETTERS = { keep: 'K', review: 'R', reject: 'X' };
 const ZOOM_STEPS = [0.125, 0.25, 0.5, 1, 2, 4];
 
-export default function CullingCompare({ files, results, onDecision, onClose }: Props) {
+export default function CullingCompare({ files, results, onDecision, onClose, onFocusRegion, busy = false }: Props) {
   const { t } = useTranslation();
   const tr = (key: string) => (t as unknown as Record<string, string>)[key] ?? key;
   const [sources] = useState(() => files.slice(0, 4));
@@ -26,6 +28,8 @@ export default function CullingCompare({ files, results, onDecision, onClose }: 
   const [errors, setErrors] = useState<string[]>([]);
   const [activeId, setActiveId] = useState(sources[0]?.id);
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusSize, setFocusSize] = useState(256);
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
   const areas = useRef(new Map<string, HTMLDivElement>());
   const centers = useRef(new Map<string, Point>());
@@ -125,11 +129,15 @@ export default function CullingCompare({ files, results, onDecision, onClose }: 
           className={`px-3 py-2 rounded-lg border ${zoom === value ? 'border-fm-blue text-fm-blue' : 'border-border-subtle'}`}>{value * 100}%</button>)}
         {typeof zoom === 'number' && zoom < 1 && <span className="px-2 font-mono">{zoom * 100}%</span>}
         <button ref={closeButton} onClick={onClose} className="px-4 py-2 rounded-lg bg-white text-black font-bold">{tr('cull_compare_close')}</button>
+        {onFocusRegion && <button disabled={busy} aria-pressed={focusMode} onClick={() => setFocusMode(value => !value)} className={`px-3 py-2 rounded-lg border ${focusMode ? 'border-fm-green text-fm-green' : 'border-border-subtle'}`}>{tr('cull_focus_select')}</button>}
+        {focusMode && [128, 256, 384].map(value => <button key={value} disabled={busy} aria-pressed={focusSize === value} onClick={() => setFocusSize(value)} className="px-2 py-1 border border-border-subtle rounded">{value} px</button>)}
+        {onFocusRegion && results.get(activeId)?.focusRegion && <button disabled={busy} onClick={() => onFocusRegion(activeId, null)} className="px-3 py-2 border border-border-subtle rounded-lg">{tr('cull_focus_clear')}</button>}
       </div>
     </header>
     <div className={`flex-1 min-h-0 grid gap-2 p-2 ${sources.length > 1 ? 'grid-cols-1 md:grid-cols-2 auto-rows-fr overflow-auto' : 'grid-cols-1'}`}>
       {sources.map(file => {
         const size = sizes[file.id], selected = activeId === file.id, error = errors.includes(file.id);
+        const focus = results.get(file.id)?.focusRegion;
         const decision = getEffectiveDecision(results.get(file.id));
         const pixels = size && zoom !== 'fit' ? { width: size.width * zoom / dpr, height: size.height * zoom / dpr } : undefined;
         return <section key={file.id} data-testid="culling-compare-panel" data-file-id={file.id}
@@ -144,10 +152,19 @@ export default function CullingCompare({ files, results, onDecision, onClose }: 
             aria-busy={!size && !error} className="relative flex-1 min-h-0 overflow-auto bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-fm-blue"
             style={{ cursor: zoom === 'fit' ? 'zoom-in' : 'grab', touchAction: zoom === 'fit' ? 'auto' : 'none' }}
             onFocus={() => setActiveId(file.id)}
-            onClick={event => { setActiveId(file.id); if (zoom === 'fit' && size) changeZoom(1, file.id, imagePoint(file.id, event.clientX, event.clientY)); }}
+            onClick={event => {
+              setActiveId(file.id);
+              if (focusMode && size && !busy && onFocusRegion) {
+                const point = imagePoint(file.id, event.clientX, event.clientY);
+                if (point) {
+                  const width = Math.min(focusSize, size.width) / size.width, height = Math.min(focusSize, size.height) / size.height;
+                  onFocusRegion(file.id, { x: Math.max(0, Math.min(1 - width, point.x - width / 2)), y: Math.max(0, Math.min(1 - height, point.y - height / 2)), width, height });
+                }
+              } else if (!focusMode && zoom === 'fit' && size) changeZoom(1, file.id, imagePoint(file.id, event.clientX, event.clientY));
+            }}
             onPointerDown={event => {
               setActiveId(file.id);
-              if (zoom === 'fit' || event.button !== 0) return;
+              if (focusMode || zoom === 'fit' || event.button !== 0) return;
               const area = event.currentTarget;
               drag.current = { id: file.id, x: event.clientX, y: event.clientY, left: area.scrollLeft, top: area.scrollTop };
               area.setPointerCapture(event.pointerId);
@@ -168,6 +185,9 @@ export default function CullingCompare({ files, results, onDecision, onClose }: 
                   const image = event.currentTarget;
                   setSizes(previous => ({ ...previous, [file.id]: { width: image.naturalWidth, height: image.naturalHeight } }));
                 }} onError={() => setErrors(previous => [...previous, file.id])} />
+              {focus && size && <svg viewBox={`0 0 ${size.width} ${size.height}`} preserveAspectRatio="xMidYMid meet" className="pointer-events-none absolute" style={{ width: pixels?.width ?? '100%', height: pixels?.height ?? '100%', left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }} aria-hidden>
+                <rect x={focus.x * size.width} y={focus.y * size.height} width={focus.width * size.width} height={focus.height * size.height} fill="#35df9515" stroke="#35df95" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+              </svg>}
             </div>}
             {(!size || error) && <p role={error ? 'alert' : 'status'} className="absolute inset-0 grid place-items-center p-4 text-sm text-gray-400 pointer-events-none">{tr(error ? 'cull_compare_error' : 'cull_compare_loading')}</p>}
           </div>
@@ -175,7 +195,7 @@ export default function CullingCompare({ files, results, onDecision, onClose }: 
             <span className="text-[11px] text-gray-400">{tr(file.cullingSource === 'embedded-jpeg-preview' ? 'cull_source_raw_preview' : 'cull_source_image')}</span>
             <div className="flex gap-1">
               {DECISIONS.map(value => <button key={value} onClick={() => { setActiveId(file.id); onDecision(file.id, value); }}
-                aria-pressed={results.get(file.id)?.manualDecision === value} disabled={!results.has(file.id)}
+                aria-pressed={results.get(file.id)?.manualDecision === value} disabled={busy || !results.has(file.id)}
                 className={`rounded border px-3 py-1.5 text-xs font-bold disabled:opacity-40 ${decision === value ? 'border-fm-blue text-white bg-fm-blue/20' : 'border-border-subtle text-gray-400'}`}>
                 {LETTERS[value]} · {tr('cull_decision_' + value)}
               </button>)}
@@ -184,6 +204,6 @@ export default function CullingCompare({ files, results, onDecision, onClose }: 
         </section>;
       })}
     </div>
-    <footer className="border-t border-border-subtle p-2 text-[11px] text-gray-400">{tr('cull_compare_footer')}</footer>
+    <footer className="border-t border-border-subtle p-2 text-[11px] text-gray-400">{focusMode ? tr('cull_focus_hint') : tr('cull_compare_footer')}{busy ? ' · ' + tr('cull_focus_measuring') : ''}</footer>
   </dialog>;
 }

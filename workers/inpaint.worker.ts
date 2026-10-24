@@ -1,7 +1,7 @@
 // Lokální inpainting mimo main thread. Model se stáhne jednou, uloží do Cache
 // Storage a další spuštění appky ho čte z disku — bez API, bez klíče, offline.
 //
-// Vstup i výstup je čtverec MODEL_SIZE×MODEL_SIZE; výřez, zmenšení a vložení
+// Vstup i výstup je čtverec 512×512 nebo LaMa 1024×1024; výřez a vložení
 // zpátky do plného rozlišení řeší services/localInpaint.ts.
 
 import * as ort from 'onnxruntime-web/webgpu';
@@ -9,16 +9,18 @@ import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url
 import ortWasmModuleUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 import { INPAINT_MODELS, type InpaintModelId } from '../utils/inpaintModels';
 import { MODEL_SIZE } from '../utils/inpaintMath';
+import { resizeLamaInput } from '../utils/inpaintModelShape';
 import { fetchCachedModel } from './modelFetch';
 
 type Request =
-  | { type: 'config'; id: number; numThreads: number }
+  | { type: 'config'; id: number; numThreads?: number; disableGpu?: boolean }
   | { type: 'load'; id: number; model: InpaintModelId }
-  | { type: 'run'; id: number; model: InpaintModelId; image: Uint8Array; mask: Uint8Array };
+  | { type: 'run'; id: number; model: InpaintModelId; size?: 512 | 1024; image: Uint8Array; mask: Uint8Array };
 
 const CACHE_NAME = 'fm-inpaint-models-v1';
-const sessions = new Map<InpaintModelId, Promise<ort.InferenceSession>>();
-const backends = new Map<InpaintModelId, string>();
+const sessions = new Map<string, Promise<ort.InferenceSession>>();
+const backends = new Map<string, string>();
+const sessionKey = (model: InpaintModelId, size: number) => `${model}:${size}`;
 
 // Explicit URLs keep the WebGPU entry and both runtime assets on the same
 // installed version/variant. WASM threads start the standalone runtime module,
@@ -33,13 +35,31 @@ ort.env.wasm.numThreads = self.crossOriginIsolated
   : 1;
 
 const WEBGPU_INIT_TIMEOUT_MS = 30_000;
+let gpuDisabled = false;
 
-const withTimeout = <T>(promise: Promise<T>, ms: number, code: string) =>
+const rethrowGpuTimeout = (error: unknown) => {
+  if (error instanceof Error && /WEBGPU_(INIT|WARMUP)_TIMEOUT/.test(error.message)) {
+    // A timed-out call is still inside the shared runtime. CPU fallback must
+    // start in a fresh worker, never initialize/run that same module concurrently.
+    throw new Error('INPAINT_GPU_TIMEOUT');
+  }
+};
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, code: string, onLateResolve?: (value: T) => void | Promise<void>) =>
   new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(code)), ms);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error(code));
+    }, ms);
     promise.then(
       (value) => {
         clearTimeout(timer);
+        if (timedOut) {
+          // A late GPU session still owns model/device buffers after CPU fallback.
+          if (onLateResolve) void Promise.resolve().then(() => onLateResolve(value)).catch(() => {});
+          return;
+        }
         resolve(value);
       },
       (error) => {
@@ -48,6 +68,12 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, code: string) =>
       },
     );
   });
+
+const releaseWhenSettled = (session: ort.InferenceSession, running: Promise<unknown>) => {
+  // A timeout does not stop inference. Never release buffers underneath that run.
+  const release = () => session.release();
+  void running.then(release, release).catch(() => {});
+};
 
 const post = (message: unknown, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer);
@@ -59,87 +85,116 @@ const fetchModel = (model: InpaintModelId, id: number): Promise<Uint8Array> => {
   );
 };
 
-const N = MODEL_SIZE * MODEL_SIZE;
-
 // Zkušební průchod na prázdném vstupu. První inference kompiluje shadery
 // (WebGPU) a alokuje buffery — bez zahřátí by na to čekal první tah štětcem.
-const warmUp = async (session: ort.InferenceSession, model: InpaintModelId) => {
+const warmUp = async (session: ort.InferenceSession, model: InpaintModelId, size = MODEL_SIZE) => {
+  const N = size * size;
   const started = performance.now();
   const mask = new Uint8Array(N);
   mask.fill(1, (N >> 1) - 4096, (N >> 1) + 4096);
-  await runModel(session, model, new Uint8Array(3 * N), mask);
+  await runModel(session, model, new Uint8Array(3 * N), mask, size);
   return performance.now() - started;
 };
 
 // Druhý průchod po zahřátí = skutečná rychlost jednoho tahu na daném backendu.
-const measure = async (session: ort.InferenceSession, model: InpaintModelId) => {
-  await warmUp(session, model);
-  return warmUp(session, model);
+const measure = async (session: ort.InferenceSession, model: InpaintModelId, size = MODEL_SIZE) => {
+  await warmUp(session, model, size);
+  return warmUp(session, model, size);
 };
 
-const createSession = async (model: InpaintModelId, bytes: Uint8Array) => {
-  const hasWebGpu = typeof (self.navigator as Navigator & { gpu?: unknown })?.gpu !== 'undefined';
+const createSession = async (model: InpaintModelId, bytes: Uint8Array, size: 512 | 1024) => {
+  const key = sessionKey(model, size);
+  const modelBytes = model === 'quality' ? resizeLamaInput(bytes, size) : bytes;
+  // Both EPs share the WASM module. Finish its initialization before trying GPU.
+  const cpu = await ort.InferenceSession.create(modelBytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+  const hasWebGpu = !gpuDisabled && typeof (self.navigator as Navigator & { gpu?: unknown })?.gpu !== 'undefined';
   let gpu: ort.InferenceSession | null = null;
   if (hasWebGpu) {
     try {
       // Některé ovladače GPU inicializaci nikdy nedokončí, pak radši CPU.
       gpu = await withTimeout(
-        ort.InferenceSession.create(bytes, { executionProviders: ['webgpu'], graphOptimizationLevel: 'all' }),
+        ort.InferenceSession.create(modelBytes, { executionProviders: ['webgpu'], graphOptimizationLevel: 'all' }),
         WEBGPU_INIT_TIMEOUT_MS,
         'WEBGPU_INIT_TIMEOUT',
+        (lateSession) => lateSession.release(),
       );
-    } catch {
+    } catch (error) {
+      rethrowGpuTimeout(error);
       gpu = null;
     }
   }
 
   // LaMa (208 MB) je na CPU několikanásobně pomalejší — když GPU projde, bere se GPU.
   if (gpu && model === 'quality') {
+    const warming = warmUp(gpu, model, size);
     try {
-      await withTimeout(warmUp(gpu, model), WEBGPU_INIT_TIMEOUT_MS, 'WEBGPU_WARMUP_TIMEOUT');
-      backends.set(model, 'webgpu');
+      await withTimeout(warming, WEBGPU_INIT_TIMEOUT_MS, 'WEBGPU_WARMUP_TIMEOUT');
+      await cpu.release().catch(() => {});
+      backends.set(key, 'webgpu');
       return gpu;
-    } catch {
-      await gpu.release().catch(() => {});
+    } catch (error) {
+      rethrowGpuTimeout(error);
+      releaseWhenSettled(gpu, warming);
       gpu = null;
     }
   }
-
-  const cpu = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
 
   // Rychlý model (MI-GAN) má v grafu i předzpracování nad uint8, které WebGPU
   // často nepodporuje a přehazuje mezi GPU a CPU — na výkonném CPU bývá WASM
   // rychlejší. Proto se oba změří na tomhle počítači a nechá se rychlejší.
   if (gpu) {
+    const measuring = measure(gpu, model, size);
+    let gpuMs = Infinity;
     try {
-      const gpuMs = await withTimeout(measure(gpu, model), WEBGPU_INIT_TIMEOUT_MS, 'WEBGPU_WARMUP_TIMEOUT');
-      const cpuMs = await measure(cpu, model);
-      if (gpuMs < cpuMs) {
+      gpuMs = await withTimeout(measuring, WEBGPU_INIT_TIMEOUT_MS, 'WEBGPU_WARMUP_TIMEOUT');
+    } catch (error) {
+      rethrowGpuTimeout(error);
+      releaseWhenSettled(gpu, measuring);
+      gpu = null;
+    }
+    if (gpu) {
+      let cpuMs: number;
+      try {
+        cpuMs = await measure(cpu, model, size);
+      } catch {
+        // Keep the verified GPU when the CPU benchmark itself fails.
         await cpu.release().catch(() => {});
-        backends.set(model, 'webgpu');
+        backends.set(key, 'webgpu');
         return gpu;
       }
-    } catch {
-      /* GPU neprošlo, zůstává CPU */
+      if (gpuMs < cpuMs) {
+        await cpu.release().catch(() => {});
+        backends.set(key, 'webgpu');
+        return gpu;
+      }
+      await gpu.release().catch(() => {});
+      backends.set(key, 'wasm');
+      return cpu;
     }
-    await gpu.release().catch(() => {});
-  } else if (model === 'fast') {
-    await warmUp(cpu, model);
   }
-  backends.set(model, 'wasm');
+  if (model === 'fast') {
+    try {
+      await warmUp(cpu, model, size);
+    } catch (error) {
+      await cpu.release().catch(() => {});
+      throw error;
+    }
+  }
+  backends.set(key, 'wasm');
   return cpu;
 };
 
-const getSession = (model: InpaintModelId, id: number) => {
-  let pending = sessions.get(model);
+const getSession = (model: InpaintModelId, id: number, size: 512 | 1024) => {
+  const key = sessionKey(model, size);
+  let pending = sessions.get(key);
   if (!pending) {
     pending = fetchModel(model, id).then((bytes) => {
       post({ type: 'progress', id, phase: 'init' });
-      return createSession(model, bytes);
+      return createSession(model, bytes, size);
     });
     // Při chybě zapomenout, ať jde zkusit znovu.
-    pending.catch(() => sessions.delete(model));
-    sessions.set(model, pending);
+    pending.catch(() => sessions.delete(key));
+    sessions.set(key, pending);
   }
   return pending;
 };
@@ -149,9 +204,12 @@ const runModel = async (
   model: InpaintModelId,
   image: Uint8Array,
   mask: Uint8Array,
+  size = MODEL_SIZE,
 ): Promise<Uint8Array> => {
-  const dims = [1, 3, MODEL_SIZE, MODEL_SIZE];
-  const maskDims = [1, 1, MODEL_SIZE, MODEL_SIZE];
+  const N = size * size;
+  if (image.length !== 3 * N || mask.length !== N) throw new Error('INPAINT_INVALID_INPUT');
+  const dims = [1, 3, size, size];
+  const maskDims = [1, 1, size, size];
   let inputs: Record<string, ort.Tensor>;
 
   if (model === 'fast') {
@@ -178,12 +236,17 @@ const runModel = async (
   let outputs: ort.InferenceSession.ReturnType | undefined;
   try {
     outputs = await session.run(inputs);
+    const output = outputs.result ?? outputs.output ?? outputs[session.outputNames[0]];
+    if (output.dims.length !== 4 || output.dims[2] !== size || output.dims[3] !== size || output.data.length !== 3 * N) throw new Error('INPAINT_INVALID_OUTPUT');
     if (model === 'fast') {
-      return new Uint8Array((outputs.result ?? outputs[session.outputNames[0]]).data as Uint8Array);
+      return new Uint8Array(output.data as Uint8Array);
     }
     const data = (outputs.output ?? outputs[session.outputNames[0]]).data as Float32Array;
     const result = new Uint8Array(3 * N);
-    for (let i = 0; i < 3 * N; i++) result[i] = Math.max(0, Math.min(255, Math.round(data[i])));
+    for (let i = 0; i < 3 * N; i++) {
+      if (!Number.isFinite(data[i])) throw new Error('INPAINT_INVALID_OUTPUT');
+      result[i] = Math.max(0, Math.min(255, Math.round(data[i])));
+    }
     return result;
   } finally {
     // Copy results before releasing buffers, including warm-up and failed runs.
@@ -195,20 +258,37 @@ const handle = async (event: MessageEvent<Request>) => {
   const msg = event.data;
   if (msg.type === 'config') {
     // Jen před první session, potom už runtime počet vláken nezmění.
-    if (sessions.size === 0) ort.env.wasm.numThreads = Math.max(1, msg.numThreads);
+    if (sessions.size === 0) {
+      if (msg.numThreads !== undefined) ort.env.wasm.numThreads = Math.max(1, msg.numThreads);
+      gpuDisabled = msg.disableGpu === true;
+    }
     post({ type: 'ready', id: msg.id });
     return;
   }
   try {
-    const session = await getSession(msg.model, msg.id);
+    const size = msg.type === 'run' ? msg.size ?? MODEL_SIZE : MODEL_SIZE;
+    if ((size !== 512 && size !== 1024) || (size === 1024 && msg.model !== 'quality')) throw new Error('INPAINT_UNSUPPORTED_RESOLUTION');
+    // Only one LaMa resolution lives on the GPU/CPU at a time. Messages are
+    // serialized below, so a previous inference cannot lose its active session.
+    if (msg.model === 'quality') {
+      for (const [key, session] of sessions) {
+        if (key.startsWith('quality:') && key !== sessionKey(msg.model, size)) {
+          sessions.delete(key);
+          backends.delete(key);
+          await (await session).release();
+        }
+      }
+    }
+    const session = await getSession(msg.model, msg.id, size);
     if (msg.type === 'load') {
-      post({ type: 'ready', id: msg.id, backend: backends.get(msg.model) });
+      post({ type: 'ready', id: msg.id, backend: backends.get(sessionKey(msg.model, size)) });
       return;
     }
+    post({ type: 'progress', id: msg.id, phase: 'compute', backend: backends.get(sessionKey(msg.model, size)) });
     const started = performance.now();
-    const result = await runModel(session, msg.model, msg.image, msg.mask);
+    const result = await runModel(session, msg.model, msg.image, msg.mask, size);
     post(
-      { type: 'result', id: msg.id, result, ms: Math.round(performance.now() - started), backend: backends.get(msg.model) },
+      { type: 'result', id: msg.id, result, ms: Math.round(performance.now() - started), backend: backends.get(sessionKey(msg.model, size)) },
       [result.buffer],
     );
   } catch (error) {
@@ -216,4 +296,5 @@ const handle = async (event: MessageEvent<Request>) => {
   }
 };
 
-self.onmessage = handle;
+let queue = Promise.resolve();
+self.onmessage = event => { queue = queue.then(() => handle(event), () => handle(event)); };
