@@ -19,8 +19,8 @@ The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
 interface runs in a dedicated application window. The installed application
 does not require Vite, a terminal or an external browser.
 
-**A client release is not available yet.** The 0.1.4 package on
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.4) is an unsigned
+**A client release is not available yet.** The 0.1.5 package on
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.5) is an unsigned
 development preview. Do not distribute it to clients. Windows may show SmartScreen
 or block installation; disabling protection is not part of the installation instructions.
 
@@ -33,7 +33,7 @@ file origin and integrity; it does not guarantee immediate SmartScreen reputatio
 macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
-Published development release: [0.1.4 — retouch and local-1.6 culling](docs/releases/0.1.4.md).
+Published development release: [0.1.5 — retouch response and model reuse](docs/releases/0.1.5.md).
 Includes adaptive retouching, clone and heal brushes, full originals and manual subject selection.
 Documentation index: [docs/README.md](docs/README.md).
 
@@ -260,7 +260,7 @@ verify recovery of every stored project. Deleting application data is a separate
 - RAW import extracts a preview; it does not perform demosaicing or full RAW development.
   Files without a usable embedded JPEG may fail to import.
 - There are no user accounts, server storage or synchronization.
-- [Release 0.1.4 notes](docs/releases/0.1.4.md) distinguish current checks from historical evidence.
+- [Release 0.1.5 notes](docs/releases/0.1.5.md) distinguish current checks from historical evidence.
   Synthetic checks and local photo sets do not establish general accuracy across
   genres, cameras and RAW files.
 - Retouching has not been comprehensively verified across all browsers and GPUs.

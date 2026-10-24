@@ -1,15 +1,16 @@
 # FrameMind Studio documentation
 
-Latest published development release: **0.1.4**, Windows x64, unsigned preview.
+Latest published development release: **0.1.5**, Windows x64, unsigned preview.
 It includes adaptive retouching, clone/heal brushes, full originals and culling
-engine `local-1.6`. See [release changes and verification](releases/0.1.4.md).
+engine `local-1.6`. See [performance fixes and verification](releases/0.1.5.md).
 
 - [Český přehled funkcí, dat a omezení](../README.md)
 - [English feature, data and limitation guide](../README.en.md)
 - [Windows installation, updates and native verification](desktop.md)
 - [Local culling: full originals, zoom, comparison and shortcuts (Czech)](culling.md)
+- [Release 0.1.5: model reuse and brush response](releases/0.1.5.md)
 - [Release 0.1.4: retouching, subject regions and verified duplicates](releases/0.1.4.md)
-- [Changes after 0.1.4](releases/unreleased.md)
+- [Changes after 0.1.5](releases/unreleased.md)
 - [Previous release 0.1.3](releases/0.1.3.md)
 - [Previous release 0.1.2](releases/0.1.2.md)
 - [Contributing and optional synthetic browser checks](../CONTRIBUTING.md)

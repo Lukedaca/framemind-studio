@@ -19,8 +19,8 @@ Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v
 je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
 Vite, terminál ani externí prohlížeč.
 
-**Klientské vydání zatím není dostupné.** Balíček 0.1.4 v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.4) je nepodepsaný
+**Klientské vydání zatím není dostupné.** Balíček 0.1.5 v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.5) je nepodepsaný
 vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může zobrazit
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
@@ -33,7 +33,7 @@ varování SmartScreen. [Oficiální vysvětlení Microsoftu](https://learn.micr
 Vydání pro macOS a Linux nebyla sestavena ani ověřena.
 
 Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md).
-Zveřejněné vývojové vydání: [0.1.4 — retuš a culling local-1.6](docs/releases/0.1.4.md).
+Zveřejněné vývojové vydání: [0.1.5 — odezva retuše a opakované použití modelů](docs/releases/0.1.5.md).
 Obsahuje adaptivní retuš, klonovací a hojivý štětec, celé originály a označení hlavního motivu.
 Přehled dokumentace: [docs/README.md](docs/README.md).
 
@@ -259,7 +259,7 @@ Při odinstalaci je odstranění dat samostatná volba.
 - RAW import extrahuje náhled; nejde o demosaicing ani plné vyvolání RAW.
   Soubor bez použitelného vloženého JPEG nemusí jít importovat.
 - Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
-- Rozsah aktuálního i historického ověření popisují [poznámky k 0.1.4](docs/releases/0.1.4.md).
+- Rozsah aktuálního i historického ověření popisují [poznámky k 0.1.5](docs/releases/0.1.5.md).
   Syntetické kontroly a místní fotografické sady neprokazují obecnou přesnost
   napříč žánry, fotoaparáty a RAW soubory.
 - Kompletní ověření retuše ve všech prohlížečích a na všech GPU nebylo provedeno.

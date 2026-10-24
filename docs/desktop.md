@@ -7,18 +7,18 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 ## Instalace a aktualizace
 
 Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
-`FrameMind-Studio_0.1.4_x64-setup.exe` je v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.4); není určen klientům.
+`FrameMind-Studio_0.1.5_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.5); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
 
-Instalátor 0.1.4 má přibližně 219 MiB. Obsahuje offline instalační program WebView2,
+Instalátor 0.1.5 má přibližně 220 MiB. Obsahuje offline instalační program WebView2,
 který použije, pokud runtime není nainstalovaný. Připojení není potřeba pro
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.4 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+Instalátor 0.1.5 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
 SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
@@ -42,7 +42,7 @@ Výstupy:
 
 - `dist-desktop/`: zabalený frontend bez PWA a service workeru.
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
-- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.4_x64-setup.exe`: instalátor.
+- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.5_x64-setup.exe`: instalátor.
 
 Název souboru zveřejněného na GitHubu používá `FrameMind-Studio` s pomlčkou;
 obsah je totožný s místním instalátorem se jménem `FrameMind Studio`.

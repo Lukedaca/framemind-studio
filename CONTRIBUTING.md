@@ -152,12 +152,21 @@ establish native application behavior.
 For a short native clone-brush check without model inference, run
 `powershell.exe -NoProfile -File scripts/windows-retouch-smoke.ps1 -Quick`.
 It checks a real source sample, a lossless working copy and unchanged originals.
+Add `-ModelCheck` to exercise actual MI-GAN inference, cached reopening and a
+second repair. It uses the local fast-model file, does not decode whole images
+while polling computation, and checks the original JPEG's complete SHA-256.
 
 After a desktop build, run
 `powershell.exe -NoProfile -File scripts/windows-retouch-smoke.ps1 -Hd` for the
 native check. It refuses an already running Studio, creates a separate WebView2
 profile, seeds models directly into its cache without changing CSP, and compares
 the normal workspace's IndexedDB/localStorage file hashes before and after.
+
+For the bounded 24 MP retouch-response comparison, run
+`node scripts/retouch-performance-smoke.mjs` with the local `fast.onnx` file above.
+It compares the 0.1.4 brush with the current source, checks unchanged mask pixels,
+counts redundant drawing/blur work and verifies shared model preparation plus
+actual MI-GAN inference. It uses an isolated browser and a 150-second deadline.
 
 ## License
 

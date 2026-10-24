@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../workers/modelFetch', () => ({
+  fetchCachedModel: vi.fn(async (_cache, _url, expected, progress) => {
+    progress(expected, expected, true);
+    return new Uint8Array(4);
+  }),
+}));
+
 class TestWorker {
   static instances: TestWorker[] = [];
   messages: Record<string, any>[] = [];
@@ -26,9 +33,39 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('local retouch runtime recovery', () => {
+  it('reuses the loaded model across photo changes and shares concurrent preparation', async () => {
+    const { preloadInpaintModel, readyInpaintBackend } = await import('../services/localInpaint');
+    const first = preloadInpaintModel('fast');
+    const second = preloadInpaintModel('fast');
+    await flush();
+    const worker = TestWorker.instances[0];
+    expect(worker.messages).toHaveLength(1);
+    ready(worker);
+    await expect(Promise.all([first, second])).resolves.toEqual(['wasm', 'wasm']);
+    expect(readyInpaintBackend('fast')).toBe('wasm');
+    await expect(preloadInpaintModel('fast')).resolves.toBe('wasm');
+    expect(worker.messages).toHaveLength(1);
+  });
+
+  it('forgets model readiness after a worker crash', async () => {
+    const { preloadInpaintModel, readyInpaintBackend } = await import('../services/localInpaint');
+    const first = preloadInpaintModel('fast');
+    await flush();
+    ready(TestWorker.instances[0]);
+    await first;
+    TestWorker.instances[0].onerror?.({ message: 'device lost' });
+    expect(readyInpaintBackend('fast')).toBeUndefined();
+    const second = preloadInpaintModel('fast');
+    await flush();
+    expect(TestWorker.instances).toHaveLength(2);
+    ready(TestWorker.instances[1]);
+    await expect(second).resolves.toBe('wasm');
+  });
+
   it('retries a GPU timeout in a new CPU worker, never the initializing runtime', async () => {
     const { preloadInpaintModel } = await import('../services/localInpaint');
     const pending = preloadInpaintModel('fast');
+    await flush();
     const original = TestWorker.instances[0];
     original.reply(original.messages[0].id, { type: 'error', error: 'INPAINT_GPU_TIMEOUT' });
     await flush();
@@ -46,6 +83,7 @@ describe('local retouch runtime recovery', () => {
     const { preloadInpaintModel } = await import('../services/localInpaint');
     const first = preloadInpaintModel('fast');
     const second = preloadInpaintModel('quality');
+    await flush();
     const original = TestWorker.instances[0];
     original.reply(original.messages[0].id, { type: 'error', error: 'INPAINT_GPU_TIMEOUT' });
     await flush();
@@ -61,6 +99,7 @@ describe('local retouch runtime recovery', () => {
   it('restarts a stuck initialization with GPU disabled and one CPU thread', async () => {
     const { preloadInpaintModel } = await import('../services/localInpaint');
     const pending = preloadInpaintModel('fast');
+    await flush();
     const original = TestWorker.instances[0];
     original.reply(original.messages[0].id, { type: 'progress', phase: 'init' });
     await vi.advanceTimersByTimeAsync(150001);
@@ -75,6 +114,7 @@ describe('local retouch runtime recovery', () => {
     const { preloadInpaintModel } = await import('../services/localInpaint');
     const pending = preloadInpaintModel('fast');
     const rejected = expect(pending).rejects.toThrow('CPU_INIT_FAILED');
+    await flush();
     const original = TestWorker.instances[0];
     original.reply(original.messages[0].id, { type: 'error', error: 'INPAINT_GPU_TIMEOUT' });
     await flush();
@@ -89,6 +129,7 @@ describe('local retouch runtime recovery', () => {
     const { preloadInpaintModel } = await import('../services/localInpaint');
     const pending = preloadInpaintModel('quality');
     const rejected = expect(pending).rejects.toThrow('INPAINT_COMPUTE_TIMEOUT');
+    await flush();
     const worker = TestWorker.instances[0];
     const id = worker.messages[0].id;
     worker.reply(id, { type: 'progress', phase: 'init' });

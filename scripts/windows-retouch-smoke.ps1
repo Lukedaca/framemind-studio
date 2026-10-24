@@ -1,4 +1,4 @@
-param([switch]$Hd, [switch]$Installed, [switch]$Quick)
+param([switch]$Hd, [switch]$Installed, [switch]$Quick, [switch]$ModelCheck)
 $ErrorActionPreference = 'Stop'
 $repoPath = Split-Path -Parent $PSScriptRoot
 $exePath = if ($Installed) { Join-Path $env:LOCALAPPDATA 'FrameMind Studio\framemind-studio.exe' }
@@ -37,6 +37,7 @@ try {
   $arguments = @('scripts/retouch-adaptive-smoke.mjs')
   if ($Hd) { $arguments += '--hd' }
   if ($Quick) { $arguments += '--quick' }
+  if ($ModelCheck) { $arguments += '--model-check' }
   $stdout = Join-Path $outputPath 'native.log'
   $stderr = Join-Path $outputPath 'native.err'
   $smoke = Start-Process -FilePath (Get-Command node).Source -ArgumentList $arguments -WorkingDirectory $repoPath -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr

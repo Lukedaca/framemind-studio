@@ -21,7 +21,21 @@ import {
 import { planInpaintRegions } from '../utils/inpaintRegions';
 import { harmonizeInpaintBoundary } from '../utils/inpaintBlend';
 import { drawInpaintInput } from '../utils/inpaintCanvas';
-import type { InpaintModelId } from '../utils/inpaintModels';
+import { INPAINT_MODELS, type InpaintModelId } from '../utils/inpaintModels';
+import { fetchCachedModel } from '../workers/modelFetch';
+import { isTauri } from '@tauri-apps/api/core';
+import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
+import ortModuleUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
+
+let desktopRuntime: Promise<{ binary: Uint8Array; module: string }> | null = null;
+const loadDesktopRuntime = () => {
+  if (!desktopRuntime) desktopRuntime = Promise.all([fetch(ortWasmUrl), fetch(ortModuleUrl)]).then(async ([binary, module]) => {
+    if (!binary.ok || !module.ok) throw new Error('INPAINT_RUNTIME_LOAD_FAILED');
+    const [bytes, source] = await Promise.all([binary.arrayBuffer(), module.text()]);
+    return { binary: new Uint8Array(bytes), module: URL.createObjectURL(new Blob([source], { type: 'application/javascript' })) };
+  }).catch(error => { desktopRuntime = null; throw error; });
+  return desktopRuntime;
+};
 
 /** Volba v panelu: auto vybere model podle velikosti retušované plochy. */
 export type InpaintChoice = 'auto' | InpaintModelId;
@@ -58,8 +72,14 @@ let singleThread = false;
 let disableGpu = false;
 let seq = 0;
 const jobs = new Map<number, PendingJob>();
+const modelLoads = new Map<string, { promise: Promise<InpaintBackend>; listeners: Set<NonNullable<PendingJob['onProgress']>>; progress?: InpaintProgress }>();
+const readyModels = new Map<string, InpaintBackend>();
+
+export const readyInpaintBackend = (model: InpaintModelId, size: 512 | 1024 = 512) => readyModels.get(`${model}:${size}`);
 
 const resetWorker = (error: Error) => {
+  modelLoads.clear();
+  readyModels.clear();
   jobs.forEach((job) => {
     clearTimeout(job.initTimer);
     job.reject(error);
@@ -122,8 +142,8 @@ const sendOnce = <T>(message: Record<string, unknown>, onProgress?: PendingJob['
 
 // Zaseknutá příprava modelu se jednou zopakuje na jednom vlákně (model už je
 // v Cache Storage, takže se znovu nestahuje).
-const send = async <T>(message: Record<string, unknown>, onProgress?: PendingJob['onProgress'], transfer: Transferable[] = []) => {
-  const retryCopy = transfer.length ? structuredClone(message) : message;
+const send = async <T>(message: Record<string, unknown>, onProgress?: PendingJob['onProgress'], transfer: Transferable[] = [], reload?: () => Promise<{ message: Record<string, unknown>; transfer: Transferable[] }>) => {
+  const retryCopy = transfer.length && !reload ? structuredClone(message) : message;
   try {
     return await sendOnce<T>(message, onProgress, transfer);
   } catch (error) {
@@ -132,14 +152,56 @@ const send = async <T>(message: Record<string, unknown>, onProgress?: PendingJob
       disableGpu = true;
       resetWorker(error);
     }
+    if (reload) {
+      const next = await reload();
+      return sendOnce<T>(next.message, onProgress, next.transfer);
+    }
     return sendOnce<T>(retryCopy, onProgress);
   }
 };
 
 // Stáhne a připraví model dopředu (např. při otevření retuše), aby první tah
 // štětcem nečekal na stažení.
-export const preloadInpaintModel = (model: InpaintModelId, onProgress?: PendingJob['onProgress']) =>
-  send<{ backend: InpaintBackend }>({ type: 'load', model }, onProgress).then((msg) => msg.backend);
+export const preloadInpaintModel = (model: InpaintModelId, onProgress?: PendingJob['onProgress'], size: 512 | 1024 = 512) => {
+  const key = `${model}:${size}`;
+  const ready = readyModels.get(key);
+  if (ready) return Promise.resolve(ready);
+  let load = modelLoads.get(key);
+  if (!load) {
+    const listeners = new Set<NonNullable<PendingJob['onProgress']>>();
+    const entry = { promise: undefined! as Promise<InpaintBackend>, listeners, progress: undefined as InpaintProgress | undefined };
+    const progress = (progress: InpaintProgress) => {
+      entry.progress = progress;
+      for (const listener of listeners) listener(progress);
+    };
+    // WebView2's worker cache/network path can stall on the desktop origin.
+    // Read pinned weights in the window and transfer ownership to the worker;
+    // inference, graph parsing and GPU/CPU initialization stay off the UI thread.
+    const loadBytes = async () => {
+      const definition = INPAINT_MODELS[model];
+      const bytes = await fetchCachedModel('fm-inpaint-models-v1', definition.url, definition.bytes,
+        (loaded, total, cached) => progress({ phase: 'download', loaded, total, cached }));
+      const desktop = typeof window !== 'undefined' && isTauri() ? await loadDesktopRuntime() : undefined;
+      const runtime = desktop?.binary.slice();
+      return { message: { type: 'load', model, size, bytes, runtime, runtimeModule: desktop?.module }, transfer: [bytes.buffer, ...(runtime ? [runtime.buffer] : [])] as Transferable[] };
+    };
+    entry.promise = loadBytes().then(payload => send<{ backend: InpaintBackend }>(payload.message, progress, payload.transfer, loadBytes)).then(msg => {
+      if (model === 'quality') for (const other of readyModels.keys()) if (other.startsWith('quality:') && other !== key) readyModels.delete(other);
+      readyModels.set(key, msg.backend);
+      return msg.backend;
+    }).finally(() => {
+      if (modelLoads.get(key) === entry) modelLoads.delete(key);
+    });
+    modelLoads.set(key, entry);
+    load = entry;
+  }
+  const entry = load;
+  if (onProgress) {
+    entry.listeners.add(onProgress);
+    if (entry.progress) onProgress(entry.progress);
+  }
+  return entry.promise.finally(() => { if (onProgress) entry.listeners.delete(onProgress); });
+};
 
 const canvas = (width: number, height: number) => {
   const c = document.createElement('canvas');
@@ -245,14 +307,12 @@ export interface BlendOptions {
 // model by jinak dostal zbytečně velkou díru.
 const HOLE_ALPHA_THRESHOLD = 12;
 
-export const inpaintRegion = async (
+/** Read and label a stroke once, even when several contexts are compared. */
+export const prepareInpaintMask = (
   source: HTMLCanvasElement,
   maskCanvas: HTMLCanvasElement,
   choice: InpaintChoice,
-  onProgress?: PendingJob['onProgress'],
-  blend: BlendOptions = { hardness: 1, strength: 1 },
-): Promise<InpaintPatch> => {
-  if (blend.isCancelled?.()) throw new Error('INPAINT_CANCELLED');
+) => {
   const mw = maskCanvas.width;
   const mh = maskCanvas.height;
   const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
@@ -273,15 +333,38 @@ export const inpaintRegion = async (
   const padding = Math.ceil((MASK_DILATION_PX + 6) * Math.max(W, H) / (MODEL_SIZE * Math.min(sx, sy))) + 2;
   const { labels, regions } = planInpaintRegions(alpha, mw, mh, HOLE_ALPHA_THRESHOLD, { padding });
   if (!regions.length) throw new Error('EMPTY_MASK');
-  const plans = regions.map(region => {
+  return { mw, mh, W, H, sx, sy, alpha, labels, regions, choice };
+};
+
+const planInpaintCrops = (prepared: ReturnType<typeof prepareInpaintMask>, context?: InpaintContext) => {
+  const { regions, sx, sy, W, H, choice } = prepared;
+  return regions.map(region => {
     const box = region.box;
     const x = Math.floor(box.x * sx);
     const y = Math.floor(box.y * sy);
     const fullBox = { x, y, width: Math.min(W, Math.ceil((box.x + box.width) * sx)) - x, height: Math.min(H, Math.ceil((box.y + box.height) * sy)) - y };
     const model: InpaintModelId = choice === 'auto' ? pickAutoModel(region.area * sx * sy) : choice;
-    const crop = computeInpaintCrop(fullBox, W, H, inpaintContextFactor(model, blend.context));
+    const crop = computeInpaintCrop(fullBox, W, H, inpaintContextFactor(model, context));
     return { region, model, crop };
   });
+};
+
+export const inpaintVariantKey = (prepared: ReturnType<typeof prepareInpaintMask>, context: InpaintContext, resolution: 512 | 1024) =>
+  JSON.stringify(planInpaintCrops(prepared, context).map(({ crop, model }) =>
+    [crop, model, model === 'quality' && resolution === 1024 && Math.max(crop.width, crop.height) > MODEL_SIZE ? 1024 : MODEL_SIZE]));
+
+export const inpaintRegion = async (
+  source: HTMLCanvasElement,
+  maskCanvas: HTMLCanvasElement,
+  choice: InpaintChoice,
+  onProgress?: PendingJob['onProgress'],
+  blend: BlendOptions = { hardness: 1, strength: 1 },
+  prepared?: ReturnType<typeof prepareInpaintMask>,
+): Promise<InpaintPatch> => {
+  if (blend.isCancelled?.()) throw new Error('INPAINT_CANCELLED');
+  const mask = prepared ?? prepareInpaintMask(source, maskCanvas, choice);
+  const { mw, mh, alpha, labels } = mask;
+  const plans = planInpaintCrops(mask, blend.context);
   const left = Math.min(...plans.map(p => p.crop.x));
   const top = Math.min(...plans.map(p => p.crop.y));
   const right = Math.max(...plans.map(p => p.crop.x + p.crop.width));
@@ -340,6 +423,7 @@ const inpaintCrop = async (
   const sx = source.width / maskCanvas.width;
   const sy = source.height / maskCanvas.height;
   const size = model === 'quality' && blend.resolution === 1024 && Math.max(crop.width, crop.height) > MODEL_SIZE ? 1024 : MODEL_SIZE;
+  await preloadInpaintModel(model, onProgress, size);
   const pixels = size * size;
   const viewport = fitInpaintViewport(crop.width, crop.height, size);
 

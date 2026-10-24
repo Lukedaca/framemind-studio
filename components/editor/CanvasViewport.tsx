@@ -57,13 +57,19 @@ const MASK_COLOR = 'rgb(214, 92, 255)';
 const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
   ({ imageSrc, activeTool, brushSize, brushHardness = 1, onStrokeEnd, onLassoClick, processing = false, className }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
+    const photoCanvasRef = useRef<HTMLCanvasElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const cursorRef = useRef<HTMLDivElement>(null);
+    const frameRef = useRef(0);
+    const lastPhotoRef = useRef<{ source: Source; version: number; transform: string } | null>(null);
     const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
     // Rozpracovaný tah: kreslí se tvrdě sem a do masky se sloučí až rozmazaný,
     // jinak by se měkké okraje překrývajících se kousků tahu sčítaly do tvrda.
     const strokeCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const softStrokeRef = useRef<HTMLCanvasElement | null>(null);
     const strokeBlurRef = useRef(0);
+    const strokeBoundsRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
+    const softDirtyRef = useRef(false);
     const imageRef = useRef<Source | null>(null);
     // Co je právě vidět: URL načteného souboru, nebo null po vložení retuše,
     // dokud se nový soubor neuloží (verze roste s každým vloženým výřezem).
@@ -72,8 +78,6 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
 
     const transformRef = useRef({ scale: 1, offsetX: 0, offsetY: 0 });
     const [displayScale, setDisplayScale] = useState(1);
-    const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
-    const [pulse, setPulse] = useState(0);
     const maskDirtyRef = useRef(false);
     const drawingRef = useRef<{ pointerId: number; last: { x: number; y: number } } | null>(null);
     const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
@@ -87,12 +91,36 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       return Math.min(1, MAX_MASK_SIDE / Math.max(widthOf(img), heightOf(img)));
     };
 
-    const render = useCallback(() => {
+    const updateSoftStroke = useCallback(() => {
+      const stroke = strokeCanvasRef.current;
+      const soft = softStrokeRef.current;
+      const bounds = strokeBoundsRef.current;
+      if (!softDirtyRef.current || !stroke || !soft || !bounds) return;
+      const padding = Math.ceil(strokeBlurRef.current * 4) + 2;
+      const x = Math.max(0, Math.floor(bounds.left) - padding);
+      const y = Math.max(0, Math.floor(bounds.top) - padding);
+      const width = Math.min(stroke.width, Math.ceil(bounds.right) + padding) - x;
+      const height = Math.min(stroke.height, Math.ceil(bounds.bottom) + padding) - y;
+      if (width > 0 && height > 0) {
+        const ctx = soft.getContext('2d')!;
+        ctx.clearRect(x, y, width, height);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x, y, width, height); ctx.clip();
+        ctx.filter = `blur(${strokeBlurRef.current}px)`;
+        ctx.drawImage(stroke, x, y, width, height, x, y, width, height);
+        ctx.restore();
+      }
+      softDirtyRef.current = false;
+    }, []);
+
+    const draw = useCallback(() => {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
+      const photo = photoCanvasRef.current;
+      const photoCtx = photo?.getContext('2d');
       const img = imageRef.current;
       const container = containerRef.current;
-      if (!canvas || !ctx || !container) return;
+      if (!canvas || !ctx || !photo || !photoCtx || !container) return;
 
       const dpr = window.devicePixelRatio || 1;
       const cw = container.clientWidth;
@@ -100,25 +128,39 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) {
         canvas.width = Math.round(cw * dpr);
         canvas.height = Math.round(ch * dpr);
+        photo.width = canvas.width;
+        photo.height = canvas.height;
+        lastPhotoRef.current = null;
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, cw, ch);
       if (!img) return;
 
       const t = transformRef.current;
+      const transform = `${cw},${ch},${dpr},${t.scale},${t.offsetX},${t.offsetY}`;
+      const previous = lastPhotoRef.current;
+      // Keep the full-resolution photo on its own surface. Brush feedback and
+      // processing indicators must not repeatedly rescale the entire original.
+      if (previous?.source !== img || previous.version !== versionRef.current || previous.transform !== transform) {
+        photoCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        photoCtx.clearRect(0, 0, cw, ch);
+        photoCtx.save();
+        photoCtx.translate(t.offsetX, t.offsetY);
+        photoCtx.scale(t.scale, t.scale);
+        photoCtx.imageSmoothingQuality = 'high';
+        photoCtx.shadowColor = 'rgba(0,0,0,0.55)';
+        photoCtx.shadowBlur = 40 / t.scale;
+        photoCtx.fillStyle = '#000';
+        photoCtx.fillRect(0, 0, widthOf(img), heightOf(img));
+        photoCtx.shadowColor = 'transparent'; photoCtx.shadowBlur = 0;
+        photoCtx.drawImage(img, 0, 0);
+        photoCtx.restore();
+        lastPhotoRef.current = { source: img, version: versionRef.current, transform };
+      }
+      updateSoftStroke();
       ctx.save();
       ctx.translate(t.offsetX, t.offsetY);
       ctx.scale(t.scale, t.scale);
-      ctx.imageSmoothingQuality = 'high';
-      // Stín vrhá levný obdélník, ne fotka — stín pod 24MP obrázkem by se
-      // přepočítával v každém snímku pulzování masky.
-      ctx.shadowColor = 'rgba(0,0,0,0.55)';
-      ctx.shadowBlur = 40 / t.scale;
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, widthOf(img), heightOf(img));
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      ctx.drawImage(img, 0, 0);
       if ((activeTool === 'clone' || activeTool === 'heal') && sampleSourceRef.current) {
         const point = sampleSourceRef.current, radius = 9 / t.scale;
         ctx.strokeStyle = '#35df95'; ctx.lineWidth = 1.5 / t.scale;
@@ -130,29 +172,28 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
       const mask = maskCanvasRef.current;
       const stroke = drawingRef.current ? softStrokeRef.current ?? strokeCanvasRef.current : null;
       if (mask && (maskDirtyRef.current || stroke)) {
-        ctx.globalAlpha = processing ? 0.35 + 0.25 * Math.sin(pulse) : 0.55;
+        ctx.globalAlpha = 0.55;
         ctx.drawImage(mask, 0, 0, widthOf(img), heightOf(img));
         if (stroke) ctx.drawImage(stroke, 0, 0, widthOf(img), heightOf(img));
         ctx.globalAlpha = 1;
       }
       ctx.restore();
-    }, [processing, pulse, activeTool]);
+    }, [activeTool, updateSoftStroke]);
 
-    // Pulzování masky během výpočtu.
-    useEffect(() => {
-      if (!processing) return;
-      let raf = 0;
-      const tick = () => {
-        setPulse((p) => p + 0.12);
-        raf = requestAnimationFrame(tick);
-      };
-      raf = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(raf);
-    }, [processing]);
+    const drawRef = useRef(draw);
+    drawRef.current = draw;
+    const render = useCallback(() => {
+      if (!frameRef.current) frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = 0;
+        drawRef.current();
+      });
+    }, []);
 
     useEffect(() => {
       render();
-    }, [render]);
+    }, [render, activeTool]);
+
+    useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
 
     const fitToScreen = useCallback(() => {
       const container = containerRef.current;
@@ -273,6 +314,8 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
         return c;
       };
       strokeCanvasRef.current = make();
+      strokeBoundsRef.current = null;
+      softDirtyRef.current = false;
       const h = Math.min(1, Math.max(0, brushHardness));
       // Poloměr rozmazání v pixelech masky: u nulové tvrdosti přes půl štětce.
       const radius = ((brushSize / transformRef.current.scale) * maskScale()) / 2;
@@ -302,17 +345,19 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
         ctx.lineTo(to.x * s, to.y * s);
         ctx.stroke();
       }
-      const soft = softStrokeRef.current;
-      if (soft) {
-        const sctx = soft.getContext('2d')!;
-        sctx.clearRect(0, 0, soft.width, soft.height);
-        sctx.filter = `blur(${strokeBlurRef.current}px)`;
-        sctx.drawImage(stroke, 0, 0);
-        sctx.filter = 'none';
-      }
+      const radius = ctx.lineWidth / 2;
+      const previous = strokeBoundsRef.current;
+      strokeBoundsRef.current = {
+        left: Math.min(previous?.left ?? Infinity, Math.min(from.x, to.x) * s - radius),
+        top: Math.min(previous?.top ?? Infinity, Math.min(from.y, to.y) * s - radius),
+        right: Math.max(previous?.right ?? -Infinity, Math.max(from.x, to.x) * s + radius),
+        bottom: Math.max(previous?.bottom ?? -Infinity, Math.max(from.y, to.y) * s + radius),
+      };
+      softDirtyRef.current = true;
     };
 
     const commitStroke = () => {
+      updateSoftStroke();
       const mask = maskCanvasRef.current;
       const stroke = softStrokeRef.current ?? strokeCanvasRef.current;
       if (mask && stroke) {
@@ -353,7 +398,10 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
 
     const onPointerMove = (e: React.PointerEvent) => {
       const p = localPoint(e);
-      if (activeTool === 'brush' || activeTool === 'clone' || activeTool === 'heal') setCursor(p);
+      if ((activeTool === 'brush' || activeTool === 'clone' || activeTool === 'heal') && cursorRef.current) {
+        cursorRef.current.style.display = 'block';
+        cursorRef.current.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) translate(-50%, -50%)`;
+      }
       if (panRef.current?.pointerId === e.pointerId) {
         transformRef.current.offsetX += p.x - panRef.current.x;
         transformRef.current.offsetY += p.y - panRef.current.y;
@@ -441,22 +489,25 @@ const CanvasViewport = forwardRef<CanvasViewportHandle, CanvasViewportProps>(
 
     return (
       <div ref={containerRef} className={`relative w-full h-full overflow-hidden touch-none select-none ${className || ''}`}>
+        <canvas ref={photoCanvasRef} data-testid="retouch-photo" className="pointer-events-none absolute inset-0 w-full h-full" />
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full"
+          data-testid="retouch-mask"
+          className={`absolute inset-0 w-full h-full ${processing ? 'animate-pulse' : ''}`}
           style={{ cursor: cursorStyle }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
-          onPointerLeave={() => setCursor(null)}
+          onPointerLeave={() => { if (cursorRef.current) cursorRef.current.style.display = 'none'; }}
           onDoubleClick={() => activeTool === 'none' && fitToScreen()}
         />
 
-        {isBrush && cursor && !processing && (
+        {isBrush && !processing && (
           <div
-            className="pointer-events-none absolute rounded-full border border-white/80 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
-            style={{ width: brushSize, height: brushSize, left: cursor.x, top: cursor.y, transform: 'translate(-50%, -50%)' }}
+            ref={cursorRef}
+            className="pointer-events-none absolute left-0 top-0 rounded-full border border-white/80 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
+            style={{ display: 'none', width: brushSize, height: brushSize }}
           />
         )}
 

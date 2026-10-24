@@ -14,7 +14,7 @@ import { fetchCachedModel } from './modelFetch';
 
 type Request =
   | { type: 'config'; id: number; numThreads?: number; disableGpu?: boolean }
-  | { type: 'load'; id: number; model: InpaintModelId }
+  | { type: 'load'; id: number; model: InpaintModelId; size?: 512 | 1024; bytes?: Uint8Array; runtime?: Uint8Array; runtimeModule?: string }
   | { type: 'run'; id: number; model: InpaintModelId; size?: 512 | 1024; image: Uint8Array; mask: Uint8Array };
 
 const CACHE_NAME = 'fm-inpaint-models-v1';
@@ -36,6 +36,8 @@ ort.env.wasm.numThreads = self.crossOriginIsolated
 
 const WEBGPU_INIT_TIMEOUT_MS = 30_000;
 let gpuDisabled = false;
+let wasmInitialized = false;
+let configuredThreads: number | undefined;
 
 const rethrowGpuTimeout = (error: unknown) => {
   if (error instanceof Error && /WEBGPU_(INIT|WARMUP)_TIMEOUT/.test(error.message)) {
@@ -96,18 +98,32 @@ const warmUp = async (session: ort.InferenceSession, model: InpaintModelId, size
   return performance.now() - started;
 };
 
-// Druhý průchod po zahřátí = skutečná rychlost jednoho tahu na daném backendu.
-const measure = async (session: ort.InferenceSession, model: InpaintModelId, size = MODEL_SIZE) => {
-  await warmUp(session, model, size);
-  return warmUp(session, model, size);
-};
-
 const createSession = async (model: InpaintModelId, bytes: Uint8Array, size: 512 | 1024) => {
   const key = sessionKey(model, size);
   const modelBytes = model === 'quality' ? resizeLamaInput(bytes, size) : bytes;
-  // Both EPs share the WASM module. Finish its initialization before trying GPU.
-  const cpu = await ort.InferenceSession.create(modelBytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+  const createCpu = async () => {
+    const session = await ort.InferenceSession.create(modelBytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+    wasmInitialized = true;
+    return session;
+  };
+  // MI-GAN's uint8 pipeline is faster on threaded CPU than mixed CPU/GPU.
+  // Do not run four full benchmark repairs before allowing the first stroke.
+  if (model === 'fast') {
+    const cpu = await createCpu();
+    backends.set(key, 'wasm');
+    return cpu;
+  }
   const hasWebGpu = !gpuDisabled && typeof (self.navigator as Navigator & { gpu?: unknown })?.gpu !== 'undefined';
+  if (!hasWebGpu) {
+    const cpu = await createCpu();
+    backends.set(key, 'wasm');
+    return cpu;
+  }
+  // Both EPs share WASM. Fast-model initialization normally already prepared it.
+  // On a direct cold LaMa request finish WASM setup first, then release its large
+  // CPU graph before allocating GPU buffers. Never initialize both concurrently.
+  if (!wasmInitialized) await (await createCpu()).release();
+  ort.env.webgpu.powerPreference = 'high-performance';
   let gpu: ort.InferenceSession | null = null;
   if (hasWebGpu) {
     try {
@@ -125,11 +141,10 @@ const createSession = async (model: InpaintModelId, bytes: Uint8Array, size: 512
   }
 
   // LaMa (208 MB) je na CPU několikanásobně pomalejší — když GPU projde, bere se GPU.
-  if (gpu && model === 'quality') {
+  if (gpu) {
     const warming = warmUp(gpu, model, size);
     try {
       await withTimeout(warming, WEBGPU_INIT_TIMEOUT_MS, 'WEBGPU_WARMUP_TIMEOUT');
-      await cpu.release().catch(() => {});
       backends.set(key, 'webgpu');
       return gpu;
     } catch (error) {
@@ -139,56 +154,17 @@ const createSession = async (model: InpaintModelId, bytes: Uint8Array, size: 512
     }
   }
 
-  // Rychlý model (MI-GAN) má v grafu i předzpracování nad uint8, které WebGPU
-  // často nepodporuje a přehazuje mezi GPU a CPU — na výkonném CPU bývá WASM
-  // rychlejší. Proto se oba změří na tomhle počítači a nechá se rychlejší.
-  if (gpu) {
-    const measuring = measure(gpu, model, size);
-    let gpuMs = Infinity;
-    try {
-      gpuMs = await withTimeout(measuring, WEBGPU_INIT_TIMEOUT_MS, 'WEBGPU_WARMUP_TIMEOUT');
-    } catch (error) {
-      rethrowGpuTimeout(error);
-      releaseWhenSettled(gpu, measuring);
-      gpu = null;
-    }
-    if (gpu) {
-      let cpuMs: number;
-      try {
-        cpuMs = await measure(cpu, model, size);
-      } catch {
-        // Keep the verified GPU when the CPU benchmark itself fails.
-        await cpu.release().catch(() => {});
-        backends.set(key, 'webgpu');
-        return gpu;
-      }
-      if (gpuMs < cpuMs) {
-        await cpu.release().catch(() => {});
-        backends.set(key, 'webgpu');
-        return gpu;
-      }
-      await gpu.release().catch(() => {});
-      backends.set(key, 'wasm');
-      return cpu;
-    }
-  }
-  if (model === 'fast') {
-    try {
-      await warmUp(cpu, model, size);
-    } catch (error) {
-      await cpu.release().catch(() => {});
-      throw error;
-    }
-  }
+  const cpu = await createCpu();
   backends.set(key, 'wasm');
   return cpu;
 };
 
-const getSession = (model: InpaintModelId, id: number, size: 512 | 1024) => {
+const getSession = (model: InpaintModelId, id: number, size: 512 | 1024, supplied?: Uint8Array) => {
   const key = sessionKey(model, size);
   let pending = sessions.get(key);
   if (!pending) {
-    pending = fetchModel(model, id).then((bytes) => {
+    pending = (supplied ? Promise.resolve(supplied) : fetchModel(model, id)).then((bytes) => {
+      if (bytes.byteLength !== INPAINT_MODELS[model].bytes) throw new Error('INPAINT_MODEL_SIZE_MISMATCH');
       post({ type: 'progress', id, phase: 'init' });
       return createSession(model, bytes, size);
     });
@@ -259,14 +235,24 @@ const handle = async (event: MessageEvent<Request>) => {
   if (msg.type === 'config') {
     // Jen před první session, potom už runtime počet vláken nezmění.
     if (sessions.size === 0) {
-      if (msg.numThreads !== undefined) ort.env.wasm.numThreads = Math.max(1, msg.numThreads);
+      if (msg.numThreads !== undefined) ort.env.wasm.numThreads = configuredThreads = Math.max(1, msg.numThreads);
       gpuDisabled = msg.disableGpu === true;
     }
     post({ type: 'ready', id: msg.id });
     return;
   }
   try {
-    const size = msg.type === 'run' ? msg.size ?? MODEL_SIZE : MODEL_SIZE;
+    if (msg.type === 'load' && msg.runtime && !wasmInitialized) {
+      // Native-origin fetches from workers can stall. The window supplies the
+      // packaged binary and a same-origin Blob URL of the standalone module.
+      // Pthreads load that module, never this app worker's message handler.
+      ort.env.wasm.numThreads = msg.runtimeModule && self.crossOriginIsolated
+        ? configuredThreads ?? Math.min(8, Math.max(1, (self.navigator?.hardwareConcurrency ?? 4) - 1))
+        : 1;
+      ort.env.wasm.wasmPaths = msg.runtimeModule ? { mjs: msg.runtimeModule } : undefined;
+      ort.env.wasm.wasmBinary = msg.runtime;
+    }
+    const size = msg.size ?? MODEL_SIZE;
     if ((size !== 512 && size !== 1024) || (size === 1024 && msg.model !== 'quality')) throw new Error('INPAINT_UNSUPPORTED_RESOLUTION');
     // Only one LaMa resolution lives on the GPU/CPU at a time. Messages are
     // serialized below, so a previous inference cannot lose its active session.
@@ -279,7 +265,7 @@ const handle = async (event: MessageEvent<Request>) => {
         }
       }
     }
-    const session = await getSession(msg.model, msg.id, size);
+    const session = await getSession(msg.model, msg.id, size, msg.type === 'load' ? msg.bytes : undefined);
     if (msg.type === 'load') {
       post({ type: 'ready', id: msg.id, backend: backends.get(sessionKey(msg.model, size)) });
       return;

@@ -9,7 +9,7 @@ import { Segmented } from './editor/ui';
 import type { UploadedFile, EditorAction, History, ManualEdits, View } from '../types';
 import * as geminiService from '../services/geminiService';
 import { describeAiError } from '../services/aiErrors';
-import { encodeCanvas, inpaintRegion, outputType, preloadInpaintModel, type InpaintChoice, type InpaintPatch } from '../services/localInpaint';
+import { encodeCanvas, inpaintRegion, inpaintVariantKey, prepareInpaintMask, outputType, preloadInpaintModel, readyInpaintBackend, type InpaintChoice, type InpaintPatch } from '../services/localInpaint';
 import type { InpaintContext } from '../utils/inpaintMath';
 import { encodeForSegment, loadSegmentModel, renderSegmentMask, segmentAt, segmentBoxes, type SegmentCandidate } from '../services/localSegment';
 import { SEGMENT_TOTAL_BYTES } from '../utils/segmentModel';
@@ -158,7 +158,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     try { return localStorage.getItem(RESOLUTION_KEY) === '1024' ? 1024 : 512; } catch { return 512; }
   });
   const effectiveResolution = HD_RETOUCH_ENABLED && model === 'quality' ? retouchResolution : 512;
-  const [variantProgress, setVariantProgress] = useState<number | null>(null);
+  const [variantProgress, setVariantProgress] = useState<{ current: number; total: number } | null>(null);
   const [pendingRetouch, setPendingRetouch] = useState<PendingRetouch | null>(null);
   const pendingRetouchRef = useRef<PendingRetouch | null>(null);
   const retouchRequestRef = useRef(0);
@@ -303,9 +303,10 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
 
   // --- Retuš ---
   const loadModel = useCallback((id: InpaintModelId) => {
-    setModelStatus((s) => (s.state === 'ready' ? s : { state: 'downloading', loaded: 0, total: 1 }));
+    const ready = readyInpaintBackend(id);
+    setModelStatus(ready ? { state: 'ready', backend: ready } : { state: 'preparing' });
     return preloadInpaintModel(id, (p) => {
-      if (p.phase === 'init') setModelStatus({ state: 'preparing' });
+      if (p.phase === 'init' || p.cached) setModelStatus({ state: 'preparing' });
       else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
     })
       .then((backend) => {
@@ -323,8 +324,11 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
   useEffect(() => {
     if (mode !== 'retouch' || retouchTool === 'clone' || retouchTool === 'heal') return;
     if (model === 'fast' || model === 'auto') loadModel('fast');
-    else setModelStatus({ state: 'idle' });
-  }, [mode, model, loadModel, retouchTool]);
+    else {
+      const ready = readyInpaintBackend('quality', effectiveResolution);
+      setModelStatus(ready ? { state: 'ready', backend: ready } : { state: 'idle' });
+    }
+  }, [mode, model, loadModel, retouchTool, effectiveResolution]);
 
   const changeModel = (next: InpaintChoice) => {
     setModel(next);
@@ -438,24 +442,26 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
         else { vp.clearMask(); addNotification(t.retouch_clone_outside, 'info'); }
         return;
       }
-      const contexts: InpaintContext[] = compareVariants ? ['auto', 'detail', 'wide'] : [retouchContext];
+      const prepared = prepareInpaintMask(source, mask, model);
       const cropKeys = new Set<string>();
+      const choices: InpaintContext[] = compareVariants ? ['auto', 'detail', 'wide'] : [retouchContext];
+      const contexts = choices.filter(context => {
+        const key = inpaintVariantKey(prepared, context, effectiveResolution);
+        if (cropKeys.has(key)) return false;
+        cropKeys.add(key);
+        return true;
+      });
       for (const [index, context] of contexts.entries()) {
         if (!isRetouchCurrent(attempt)) return;
-        if (compareVariants) setVariantProgress(index + 1);
+        if (compareVariants) setVariantProgress({ current: index + 1, total: contexts.length });
         const patch = await inpaintRegion(source, mask, model, (p) => {
           if (!isRetouchCurrent(attempt)) return;
-          if (p.phase === 'init') setModelStatus({ state: 'preparing' });
+          if (p.phase === 'init' || p.cached) setModelStatus({ state: 'preparing' });
           else if (p.phase === 'download' && p.total) setModelStatus({ state: 'downloading', loaded: p.loaded || 0, total: p.total });
           else if (p.phase === 'compute' && p.backend) setModelStatus({ state: 'ready', backend: p.backend });
-        }, { hardness: fromLasso ? 1 : brushHardness / 100, strength: retouchStrength / 100, context, harmonize, resolution: effectiveResolution, isCancelled: () => !isRetouchCurrent(attempt) });
+        }, { hardness: fromLasso ? 1 : brushHardness / 100, strength: retouchStrength / 100, context, harmonize, resolution: effectiveResolution, isCancelled: () => !isRetouchCurrent(attempt) }, prepared);
         if (!isRetouchCurrent(attempt)) { releaseRetouchLayer(patch); return; }
-        // Equal crops are one variant; random grain does not make a new context.
-        const cropKey = JSON.stringify(patch.regions.map(region => [region.crop, region.model, region.inputSize]));
-        if (!cropKeys.has(cropKey)) {
-          cropKeys.add(cropKey);
-          variants.push({ context, patch });
-        } else releaseRetouchLayer(patch);
+        variants.push({ context, patch });
       }
       if (compareVariants) {
         setModelStatus({ state: 'ready', backend: variants[0].patch.backend });
@@ -867,7 +873,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
           {(retouching || busyLabel) && (
             <div className="pointer-events-none absolute left-1/2 top-4 flex -translate-x-1/2 items-center gap-2.5 rounded-full border border-hairline bg-ink-950/80 px-4 py-1.5 text-[12px] text-ink-100 backdrop-blur-md">
               <span className="fm-spinner" />
-              {busyLabel || (modelStatus.state === 'downloading' ? t.retouch_downloading : modelStatus.state === 'preparing' ? t.retouch_preparing : variantProgress !== null ? t.retouch_variants_progress.replace('{current}', String(variantProgress)).replace('{total}', '3') : t.retouch_running)}
+              {busyLabel || (modelStatus.state === 'downloading' ? t.retouch_downloading : modelStatus.state === 'preparing' ? t.retouch_preparing : variantProgress !== null ? t.retouch_variants_progress.replace('{current}', String(variantProgress.current)).replace('{total}', String(variantProgress.total)) : t.retouch_running)}
             </div>
           )}
         </main>

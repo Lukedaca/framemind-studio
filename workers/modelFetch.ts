@@ -15,7 +15,10 @@ export const fetchCachedModel = async (
     const hit = await cache.match(url);
     if (hit) {
       onProgress(expected, expected, true);
-      return new Uint8Array(await hit.arrayBuffer());
+      const bytes = new Uint8Array(await hit.arrayBuffer());
+      if (bytes.byteLength === expected) return bytes;
+      // Do not repeatedly initialize a truncated cached model.
+      await cache.delete(url);
     }
   } catch {
     // Cache Storage nemusí být dostupná (soukromé okno) — stáhne se pokaždé.
@@ -44,7 +47,7 @@ export const fetchCachedModel = async (
       onProgress(loaded, total, false);
     }
   }
-  if (loaded !== total) throw new Error('MODEL_DOWNLOAD_FAILED: incomplete');
+  if (loaded !== total || loaded !== expected) throw new Error('MODEL_DOWNLOAD_FAILED: incomplete');
 
   if (cache) {
     try {
