@@ -1,8 +1,9 @@
+**[Česky](README.md) · [English](README.en.md) · [MIT](LICENSE)**
+
 <div align="center">
   <img src="public/brand/readme-logo-cs.png" alt="FrameMind" width="440" />
   <h1>FrameMind Studio</h1>
-  <p>Lokální desktopové fotostudio pro Windows: import, výběr, úpravy, retuš a export.</p>
-  <p><a href="README.md">Česky</a> · <a href="README.en.md">English</a> · <a href="LICENSE">MIT</a></p>
+  <p>Lokální desktopové fotostudio pro Windows: import, výběr, úpravy, retuš a export</p>
 </div>
 
 FrameMind Studio je open-source aplikace pro lokální provoz na vlastním počítači.
@@ -25,7 +26,7 @@ vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může z
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
 Uživatel nepotřebuje Git, Node.js ani Rust. Instalátor obsahuje offline instalační
-program WebView2 pro počítače, kde runtime chybí; proto má přibližně 220 MiB.
+program WebView2 pro počítače, kde runtime chybí; proto má přibližně 230 MB.
 Instalace je pro současného uživatele; aplikace má zástupce a standardní odinstalaci.
 Pro přípravu klientského vydání je nutný důvěryhodný podpis vydavatele.
 Podpis ověřuje původ a integritu souboru; sám negarantuje okamžité odstranění

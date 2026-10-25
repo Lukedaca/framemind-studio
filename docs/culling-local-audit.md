@@ -166,7 +166,7 @@ All three real soft frames received reject suggestions; IMG_9981 stayed keep.
 Native sample diagnostics and a manual keep override across rerun/profile change
 passed, with zero culling external requests and page errors. The user's open
 installed application was left running. The normal-identifier NSIS development
-installer was subsequently built at version 0.1.2 (214.41 MiB), without installing
+installer was subsequently built at version 0.1.2 (about 225 MB), without installing
 or publishing it. Native evidence is in output/playwright/native-culling-real.json.
 
 This is calibration and regression evidence for one JPEG gallery. Accuracy across

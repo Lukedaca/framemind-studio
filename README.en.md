@@ -1,8 +1,9 @@
+**[Česky](README.md) · [English](README.en.md) · [MIT](LICENSE)**
+
 <div align="center">
   <img src="public/brand/readme-logo-en.png" alt="FrameMind" width="440" />
   <h1>FrameMind Studio</h1>
-  <p>A local Windows photo studio: import, select, adjust, retouch and export.</p>
-  <p><a href="README.md">Česky</a> · <a href="README.en.md">English</a> · <a href="LICENSE">MIT</a></p>
+  <p>A local Windows photo studio: import, select, adjust, retouch and export</p>
 </div>
 
 FrameMind Studio is an open-source application run locally on your own computer.
@@ -25,7 +26,7 @@ development preview. Do not distribute it to clients. Windows may show SmartScre
 or block installation; disabling protection is not part of the installation instructions.
 
 Users do not need Git, Node.js or Rust. The installer includes an offline WebView2
-installer for computers without the runtime, making it about 220 MiB.
+installer for computers without the runtime, making it about 230 MB.
 Installation is per user, with shortcuts and standard uninstallation.
 Preparing a client release requires a trusted publisher signature. Signing verifies
 file origin and integrity; it does not guarantee immediate SmartScreen reputation.

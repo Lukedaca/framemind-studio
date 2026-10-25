@@ -13,7 +13,7 @@ Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a 
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
 
-Instalátor 0.1.6 má přibližně 220 MiB. Obsahuje offline instalační program WebView2,
+Instalátor 0.1.6 má přibližně 230 MB. Obsahuje offline instalační program WebView2,
 který použije, pokud runtime není nainstalovaný. Připojení není potřeba pro
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
