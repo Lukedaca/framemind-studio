@@ -11,7 +11,7 @@ interface ProjectContextType {
   updateProject: (id: string, updates: Partial<Project>) => void;
   addClient: (client: Omit<Client, 'id' | 'createdAt'>) => void;
   workspace: EditorWorkspace | null;
-  saveWorkspace: (workspace: EditorWorkspace) => void;
+  saveWorkspace: (workspace: EditorWorkspace, options?: { discardUnusedPhotos?: boolean }) => void;
   storageReady: boolean;
   storageStatus: 'loading' | 'saving' | 'saved' | 'error';
   storageError: string | null;
@@ -31,6 +31,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [storageStatus, setStorageStatus] = useState<'loading' | 'saving' | 'saved' | 'error'>('loading');
   const [storageError, setStorageError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [discardUnusedPhotos, setDiscardUnusedPhotos] = useState(false);
 
   useEffect(() => {
     if (hydrated) return;
@@ -58,8 +59,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (!hydrated) return;
     let cancelled = false;
     setStorageStatus('saving');
-    projectStorage.save({ clients, projects, workspace }).then(() => {
-      if (!cancelled) { setStorageStatus('saved'); setStorageError(null); }
+    projectStorage.save({ clients, projects, workspace }, { discardUnusedPhotos }).then(() => {
+      if (!cancelled) {
+        setStorageStatus('saved'); setStorageError(null);
+        if (discardUnusedPhotos) setDiscardUnusedPhotos(false);
+      }
     }).catch((error) => {
       console.error('Failed to save CRM storage.', error);
       if (!cancelled) {
@@ -68,7 +72,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     });
     return () => { cancelled = true; };
-  }, [clients, projects, workspace, hydrated, retry]);
+  }, [clients, projects, workspace, hydrated, retry, discardUnusedPhotos]);
 
   const currentProject = useMemo(() => {
     if (!currentProjectId) return null;
@@ -115,7 +119,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setCurrentProjectId(project ? project.id : null);
   }, []);
 
-  const saveWorkspace = useCallback((next: EditorWorkspace) => {
+  const saveWorkspace = useCallback((next: EditorWorkspace, options?: { discardUnusedPhotos?: boolean }) => {
+    if (options?.discardUnusedPhotos) setDiscardUnusedPhotos(true);
     setWorkspace(previous => previous?.history === next.history && previous.activeFileId === next.activeFileId && previous.projectId === next.projectId ? previous : next);
     if (!next.projectId) return;
     setProjects(previous => previous.map(project => {

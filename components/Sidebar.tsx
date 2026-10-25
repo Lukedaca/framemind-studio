@@ -1,6 +1,7 @@
 import React from 'react';
 import type { EditorAction, View } from '../types';
 import { useTranslation } from '../contexts/LanguageContext';
+import { useProject } from '../contexts/ProjectContext';
 import {
   FmStudioIcon,
   FmProjectsIcon,
@@ -21,6 +22,9 @@ interface SidebarProps {
   currentView: View;
   activeAction: EditorAction;
   fileCount: number;
+  hasWorkspace: boolean;
+  onClearWorkspace: () => void;
+  clearPending: boolean;
 }
 
 interface Item {
@@ -31,8 +35,9 @@ interface Item {
   step?: number;
 }
 
-const Sidebar = ({ isOpen, onClose, onNavigate, onOpenApiKeyModal, currentView, activeAction, fileCount }: SidebarProps) => {
+const Sidebar = ({ isOpen, onClose, onNavigate, onOpenApiKeyModal, currentView, activeAction, fileCount, hasWorkspace, onClearWorkspace, clearPending }: SidebarProps) => {
   const { t, language, setLanguage } = useTranslation();
+  const { storageStatus, retryStorage } = useProject();
   const ic = 'h-[18px] w-[18px]';
 
   const workflow: Item[] = [
@@ -114,6 +119,17 @@ const Sidebar = ({ isOpen, onClose, onNavigate, onOpenApiKeyModal, currentView, 
           <div>
             <p className="fm-eyebrow mb-2 px-3">{t.pipeline_workflow}</p>
             <div className="space-y-0.5">{workflow.map(row)}</div>
+            <button
+              onClick={onClearWorkspace}
+              disabled={!hasWorkspace || clearPending}
+              className="mt-3 flex min-h-10 w-full items-center gap-3 rounded-xl border border-hairline px-3 text-left text-[12px] text-ink-300 transition-colors hover:bg-white/[0.04] hover:text-ink-100 disabled:opacity-35"
+              title={t.workspace_clear_hint}
+            >
+              <svg viewBox="0 0 20 20" className="h-[18px] w-[18px] flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                <path d="M3 5h14M7 5V3h6v2M5 5l1 12h8l1-12M8 8v6M12 8v6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {t.workspace_clear}
+            </button>
           </div>
           <div>
             <p className="fm-eyebrow mb-2 px-3">{t.nav_studio_section}</p>
@@ -122,6 +138,10 @@ const Sidebar = ({ isOpen, onClose, onNavigate, onOpenApiKeyModal, currentView, 
         </nav>
 
         <div className="space-y-3 border-t border-hairline p-4">
+          {(currentView !== 'editor' || fileCount === 0) && <div className={`px-1 text-[11px] leading-snug ${storageStatus === 'error' ? 'text-[#ffb3c0]' : 'text-ink-500'}`} role="status" aria-live="polite">
+            {storageStatus === 'error' ? t.storage_save_failed : storageStatus === 'saving' ? t.storage_saving : t.storage_saved}
+            {storageStatus === 'error' && <button onClick={retryStorage} className="mt-1 block underline">{t.storage_retry}</button>}
+          </div>}
           <div className="flex items-center gap-2">
             <div className="fm-seg fm-seg--sm flex-1">
               <button className={language === 'cs' ? 'is-active' : ''} onClick={() => setLanguage('cs')}>CZ</button>

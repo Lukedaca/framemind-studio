@@ -34,6 +34,7 @@ export class IndexedDbProjectStorage implements ProjectStorage {
   private database: Promise<IDBDatabase> | null = null;
   private assetKeys = new WeakMap<Blob, string>();
   private restored = new Map<string, { file: File; url: string }>();
+  private storedAssetKeys = new Set<string>();
   private saves: Promise<void> = Promise.resolve();
 
   constructor(private readonly databaseName = 'framemind-studio-projects-v2') {}
@@ -73,6 +74,7 @@ export class IndexedDbProjectStorage implements ProjectStorage {
     };
     snapshot.projects.forEach(project => { collect(project.files); collectHistory(project.editorHistory); });
     collectHistory(snapshot.workspace?.history);
+    this.storedAssetKeys = keys;
     const missing = [...keys].filter(key => !this.restored.has(key));
     if (missing.length) {
       const transaction = db.transaction('assets', 'readonly');
@@ -107,21 +109,24 @@ export class IndexedDbProjectStorage implements ProjectStorage {
     };
   }
 
-  save(data: StoredData): Promise<void> {
-    const next = this.saves.catch(() => {}).then(() => this.write(data));
+  save(data: StoredData, options?: { discardUnusedPhotos?: boolean }): Promise<void> {
+    const next = this.saves.catch(() => {}).then(() => this.write(data, options?.discardUnusedPhotos === true));
     this.saves = next;
     return next;
   }
 
-  private async write(data: StoredData): Promise<void> {
+  private async write(data: StoredData, discardUnusedPhotos: boolean): Promise<void> {
     const db = await this.open();
     const newAssets = new Map<Blob, { key: string; asset: Asset }>();
+    const usedKeys = new Set<string>();
     const assetKey = (file: File): string => {
       if (!(file instanceof Blob)) throw new Error('Cannot save an unavailable photo.');
-      const known = this.assetKeys.get(file) || newAssets.get(file)?.key;
-      if (known) return known;
+      const previous = this.assetKeys.get(file);
+      const known = (previous && this.storedAssetKeys.has(previous) ? previous : undefined) || newAssets.get(file)?.key;
+      if (known) { usedKeys.add(known); return known; }
       const key = crypto.randomUUID();
       newAssets.set(file, { key, asset: { blob: file, name: file.name, type: file.type, lastModified: file.lastModified } });
+      usedKeys.add(key);
       return key;
     };
     const photos = new WeakMap<UploadedFile, StoredPhoto>();
@@ -148,12 +153,30 @@ export class IndexedDbProjectStorage implements ProjectStorage {
     try {
       for (const { key, asset } of newAssets.values()) transaction.objectStore('assets').put(asset, key);
       transaction.objectStore('metadata').put(snapshot, 'crm');
+      if (discardUnusedPhotos) {
+        // Delete only copies unreachable from every saved project and all Undo/Redo entries.
+        // Metadata and cleanup commit together, so a failed clear preserves the previous set.
+        const assets = transaction.objectStore('assets');
+        const request = assets.openKeyCursor();
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) return;
+          if (!usedKeys.has(cursor.key as string)) assets.delete(cursor.key);
+          cursor.continue();
+        };
+      }
     } catch (error) {
       transaction.abort();
       await done.catch(() => {});
       throw error;
     }
     await done;
+    if (discardUnusedPhotos) {
+      this.storedAssetKeys = usedKeys;
+      for (const key of this.restored.keys()) if (!usedKeys.has(key)) this.restored.delete(key);
+    } else {
+      for (const key of usedKeys) this.storedAssetKeys.add(key);
+    }
     // Cache keys only after a successful atomic commit. Failed saves remain retryable.
     for (const [file, { key }] of newAssets) this.assetKeys.set(file, key);
   }

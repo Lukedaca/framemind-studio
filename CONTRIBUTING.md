@@ -31,6 +31,9 @@ npm run build
 npm run build:desktop
 ```
 
+If automatic worker parallelism exceeds available memory on Windows, run
+`node node_modules/vitest/vitest.mjs run --maxWorkers=2` instead of `npm run test:run`.
+
 CI runs these checks on pushes to main and pull requests. It verifies a build,
 without deploying the application. Explain additional browser or real-image
 checks in the pull request; distinguish completed checks from unverified behavior.
@@ -127,6 +130,25 @@ save failure/retry and complete browser shutdown/restart. It uses synthetic phot
 and an isolated Chromium profile under ignored `output/playwright/history-profile-*`.
 It checks original hashes, asset deduplication, atomic rollback and preservation
 of legacy metadata. It never opens a normal browser profile or existing user photos.
+
+For clearing the working photo set, start Vite on port 3106 with
+`node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 3106 --strictPort`.
+In another terminal, run `node scripts/workspace-clear-smoke.mjs`.
+`EDITOR_SMOKE_URL` can select a different local server. The check creates a new
+profile and synthetic images, then exercises cancelled confirmation, an import
+finishing after a clear, rollback after aborted cleanup, Retry, preservation of
+saved projects and their past/future image assets, a complete browser restart,
+an empty workspace containing only Redo, and unchanged disk originals.
+Stop the test server after the checks finish.
+
+For installed WebView2, set `DESKTOP_SMOKE_CDP`, `DESKTOP_SMOKE_PID` and
+`DESKTOP_SMOKE_ISOLATED=1` only after launching Studio with a fresh separate
+`WEBVIEW2_USER_DATA_FOLDER` and verifying that the WebView process uses it.
+See [the Windows guide](docs/desktop.md). The marker alone does not create isolation.
+The script refuses a profile with existing projects or workspace photos; never
+attach it to a normal working profile. A native reload is checked by the script;
+a complete native process restart must be checked separately with the same
+isolated profile. Reports go to ignored output.
 
 For local retouching, place the exact model files configured in
 `utils/inpaintModels.ts` in ignored `output/playwright/retouch-quality/` as

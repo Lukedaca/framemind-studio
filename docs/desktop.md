@@ -7,18 +7,18 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 ## Instalace a aktualizace
 
 Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
-`FrameMind-Studio_0.1.5_x64-setup.exe` je v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.5); není určen klientům.
+`FrameMind-Studio_0.1.6_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.6); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
 
-Instalátor 0.1.5 má přibližně 220 MiB. Obsahuje offline instalační program WebView2,
+Instalátor 0.1.6 má přibližně 220 MiB. Obsahuje offline instalační program WebView2,
 který použije, pokud runtime není nainstalovaný. Připojení není potřeba pro
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.5 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+Instalátor 0.1.6 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
 SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
@@ -42,10 +42,15 @@ Výstupy:
 
 - `dist-desktop/`: zabalený frontend bez PWA a service workeru.
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
-- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.5_x64-setup.exe`: instalátor.
+- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.6_x64-setup.exe`: instalátor.
 
 Název souboru zveřejněného na GitHubu používá `FrameMind-Studio` s pomlčkou;
 obsah je totožný s místním instalátorem se jménem `FrameMind Studio`.
+
+Tauri při balení označuje EXE uvnitř instalátoru typem NSIS. Nainstalované EXE
+proto nemusí mít stejný SHA-256 jako samostatné EXE v `target/release/`.
+Při kontrole instalace porovnávejte nainstalované EXE s příslušným NSIS payloadem;
+shoda čísla verze ani návratový kód instalátoru samy nestačí.
 
 Pro vývoj okna aplikace použijte `npm run desktop:dev`. Tauri spustí Vite na
 `127.0.0.1:3000`; tento port musí být volný. Instalovaný release žádný Vite server
@@ -112,10 +117,27 @@ IndexedDB v místním profilu. Obrazová data jsou oddělená od nastavení; pos
 je znovu nezapisují. Starší JSON v `localStorage` zůstává zachovaný, ale jeho
 chybějící obrazová data je nutné importovat znovu. Původní soubory na disku se
 nemění. Obnova po úplném restartu byla ověřena v odděleném Chromiu na generovaných
-snímcích. Při aktualizaci na 0.1.3 byla ověřena shoda všech 12 existujících souborů
-IndexedDB/localStorage před prvním spuštěním a otevření instalovaného okna; tato
-kontrola sama neověřuje obnovu každého uloženého projektu. Originály uchovávejte
+snímcích. Při aktualizaci na 0.1.6 byla ověřena shoda všech 346 existujících souborů
+IndexedDB/localStorage před otevřením aktualizované aplikace. Samostatná nativní
+kontrola ověřila vyprázdnění, úplný restart a zachování syntetického projektu;
+nejde o audit všech existujících projektů. Originály uchovávejte
 na disku a výsledky exportujte. GitHub zálohuje kód, nikoli místní fotografie či CRM.
+
+## Nová práce a vyprázdnění sady
+
+Přeinstalace zachovává místní pracovní sadu; další import k ní přidává fotografie.
+Chcete-li začít novou práci, zvolte vlevo pod postupem **Vyprázdnit sadu**.
+Potvrzení odstraní pracovní sadu včetně historie Zpět/Znovu a otevře prázdný import.
+Výsledky mimo uložený projekt předem exportujte. Zrušení dialogu nic nemění.
+
+Uložené projekty, klienti a originály na disku se nemažou. Otevřený projekt se
+od pracovní sady odpojí a lze jej později znovu otevřít přes Projekty. Úložiště
+odstraní jen obrazové kopie nepoužívané žádným uloženým projektem ani jeho historií.
+Pouhé spuštění nebo aktualizace aplikace tuto operaci neprovádí.
+
+Počkejte na **Uloženo lokálně**. Pokud zápis selže, je i mimo editor dostupné
+**Zkusit znovu**. Neúspěšná transakce zachová poslední uloženou sadu i obrazová data;
+bez úspěšného opakování se tento starší stav může po restartu obnovit.
 
 ## Připojení a omezení
 
@@ -227,3 +249,29 @@ powershell.exe -NoProfile -File scripts/windows-retouch-smoke.ps1 -Quick
 ```
 
 Kontrola používá oddělený profil. Běžná data aplikace se nemají otevírat v QA profilu.
+
+## Vývojové vydání 0.1.6 — 25. října 2026
+
+Prošlo 208 testů v 27 souborech, TypeScript a sestavení Windows NSIS balíčku.
+Prohlížečový test historie a nový test vyprázdnění pracovaly se syntetickými snímky.
+Stejný test vyprázdnění prošel přímo v nainstalované 0.1.6: zrušení potvrzení,
+odložený import, atomické selhání zápisu a opakování, zachování projektu i obrazových
+dat jeho historie a nový import do prázdné sady. Samostatný úplný restart procesu
+potvrdil prázdnou sadu a zachovaný projekt. Chyby stránky byly nulové.
+
+Všech 346 souborů běžného IndexedDB/localStorage profilu zůstalo podle SHA-256
+beze změny během aktualizace a testů, před znovuotevřením běžné aplikace.
+Nativní export, modelová inference ani fotografická přesnost se pro tuto opravu
+znovu netestovaly. Úplný rozsah a odkazy: [poznámky k 0.1.6](releases/0.1.6.md).
+
+Pro samostatný test vyprázdnění spusťte nainstalovanou aplikaci výše uvedeným
+postupem s novým prázdným QA profilem a nastavte:
+
+```powershell
+$env:DESKTOP_SMOKE_ISOLATED = '1'
+node scripts/workspace-clear-smoke.mjs
+```
+
+Tento test spouštějte odděleně od ostatních smoke testů; vyžaduje nový prázdný profil.
+Proměnná potvrzuje záměr testovat odděleně, sama profil neodděluje. Nejprve ověřte
+skutečný profil procesu WebView2. Testovací data a výsledky zůstanou v `output/playwright/`.

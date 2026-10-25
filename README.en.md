@@ -19,8 +19,8 @@ The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
 interface runs in a dedicated application window. The installed application
 does not require Vite, a terminal or an external browser.
 
-**A client release is not available yet.** The 0.1.5 package on
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.5) is an unsigned
+**A client release is not available yet.** The 0.1.6 package on
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.6) is an unsigned
 development preview. Do not distribute it to clients. Windows may show SmartScreen
 or block installation; disabling protection is not part of the installation instructions.
 
@@ -33,7 +33,7 @@ file origin and integrity; it does not guarantee immediate SmartScreen reputatio
 macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
-Published development release: [0.1.5 — retouch response and model reuse](docs/releases/0.1.5.md).
+Published development release: [0.1.6 — clearing the working photo set](docs/releases/0.1.6.md).
 Includes adaptive retouching, clone and heal brushes, full originals and manual subject selection.
 Documentation index: [docs/README.md](docs/README.md).
 
@@ -108,6 +108,22 @@ failed saves can be retried. Imported originals on disk are never overwritten.
 Desktop exports use system dialogs for saving one photo or selecting a batch folder.
 The web development version uses the File System Access API when available;
 otherwise, individual files are downloaded through the browser.
+
+## Starting fresh and clearing the photo set
+
+Studio restores the last working photo set and its history at startup. Another
+import adds photos to that set. To start fresh, choose **Clear photo set** below
+the workflow in the left sidebar and confirm. Studio returns to an empty import
+screen and discards this workspace's Undo/Redo history. Export work outside a
+saved project before clearing it.
+
+Saved projects, clients and original files on disk are kept. An open project is
+detached from the workspace; its photos can be reopened through Projects.
+Clearing discards only local image copies that no saved project or its history
+needs. Cancelling the confirmation changes nothing.
+
+Wait for **Saved locally** before closing. If saving fails, choose **Retry**;
+until the write succeeds, restarting may restore the last successfully saved state.
 
 ## Culling without AI
 
@@ -251,16 +267,18 @@ Gallery preview is not a public photo-hosting service.
 Desktop has a separate WebView2 profile under `%LOCALAPPDATA%\cz.framemind.studio\`.
 Existing browser data is not migrated automatically. The new frontend uses the
 same local IndexedDB storage. Workspace recovery was verified in isolated Chromium.
-The local update to 0.1.3 preserved all 12 existing IndexedDB/localStorage files
-before first launch, and the installed window opened. This check alone does not
-verify recovery of every stored project. Deleting application data is a separate uninstall option.
+The local update to 0.1.6 preserved all 346 existing IndexedDB/localStorage files
+before opening the updated application. A separate installed-app check verified
+clearing, a complete process restart and preservation of a synthetic saved project;
+it did not audit recovery of every existing project. Deleting application data
+is a separate uninstall option.
 
 ## Limitations and verification
 
 - RAW import extracts a preview; it does not perform demosaicing or full RAW development.
   Files without a usable embedded JPEG may fail to import.
 - There are no user accounts, server storage or synchronization.
-- [Release 0.1.5 notes](docs/releases/0.1.5.md) distinguish current checks from historical evidence.
+- [Release 0.1.6 notes](docs/releases/0.1.6.md) distinguish current checks from historical evidence.
   Synthetic checks and local photo sets do not establish general accuracy across
   genres, cameras and RAW files.
 - Retouching has not been comprehensively verified across all browsers and GPUs.

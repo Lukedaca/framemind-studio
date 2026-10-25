@@ -19,6 +19,7 @@ import { createHistory, historyReducer } from './utils/editorHistory';
 import { initApiKeyStorage } from './utils/apiKey';
 import { normalizeImageFile } from './utils/imageProcessor';
 import { getRawOriginal } from './utils/rawProvenance';
+import { confirmAction } from './utils/confirmAction';
 import { useTranslation } from './contexts/LanguageContext';
 import { useProject } from './contexts/ProjectContext';
 
@@ -52,6 +53,9 @@ function App() {
   const [galleryProjectId, setGalleryProjectId] = useState<string | null>(null);
   const filesRef = useRef(files);
   const activeFileIdRef = useRef(activeFileId);
+  const workspaceGeneration = useRef(0);
+  const clearingWorkspace = useRef(false);
+  const [clearPending, setClearPending] = useState(false);
   filesRef.current = files;
   activeFileIdRef.current = activeFileId;
 
@@ -78,6 +82,7 @@ function App() {
   }, [files, activeFileId]);
 
   const loadProjectWorkspace = useCallback((project: Project) => {
+    workspaceGeneration.current++;
     const restored = project.editorHistory || createHistory(project.files);
     filesRef.current = restored.present.state;
     dispatchHistory({ type: 'REPLACE', payload: restored });
@@ -140,6 +145,35 @@ function App() {
     setNotifications((n) => [...n, { id, message, type }]);
     setTimeout(() => setNotifications((n) => n.filter((item) => item.id !== id)), 5000);
   }, []);
+
+  const handleClearWorkspace = useCallback(async () => {
+    if (clearingWorkspace.current) return;
+    clearingWorkspace.current = true;
+    setClearPending(true);
+    try {
+      if (!await confirmAction(t.workspace_clear_confirm)) return;
+      workspaceGeneration.current++;
+      const empty = createHistory();
+      filesRef.current = [];
+      activeFileIdRef.current = null;
+      dispatchHistory({ type: 'REPLACE', payload: empty });
+      setActiveFileId(null);
+      setWorkspaceProjectId(null);
+      setCurrentProject(null);
+      setActiveAction(null);
+      // Detach from a saved project's route before autosave can restore that project.
+      window.history.pushState({}, '', '/');
+      saveWorkspace({ projectId: null, activeFileId: null, history: empty }, { discardUnusedPhotos: true });
+      setView('upload');
+      setIsSidebarOpen(false);
+    } catch (error) {
+      console.error('Could not clear workspace.', error);
+      addNotification(t.workspace_clear_failed, 'error');
+    } finally {
+      clearingWorkspace.current = false;
+      setClearPending(false);
+    }
+  }, [t.workspace_clear_confirm, t.workspace_clear_failed, setCurrentProject, saveWorkspace, addNotification]);
 
   const prepareUploadedFiles = useCallback(async (selectedFiles: File[]) => {
     // U formátů, které skutečně vyžadují převod, držíme nízký souběh.
@@ -224,7 +258,12 @@ function App() {
 
   // Po importu: víc fotek → nejdřív výběr, jedna fotka → rovnou úpravy.
   const handleFilesSelected = useCallback(async (selectedFiles: File[]) => {
+    const generation = workspaceGeneration.current;
     const validFiles = await prepareUploadedFiles(selectedFiles);
+    if (generation !== workspaceGeneration.current) {
+      for (const file of validFiles) URL.revokeObjectURL(file.previewUrl);
+      return;
+    }
     if (validFiles.length === 0) return;
     const total = filesRef.current.length + validFiles.length;
     setFiles((current) => [...current, ...validFiles], `Import ${validFiles.length}`);
@@ -350,6 +389,9 @@ function App() {
         currentView={view}
         activeAction={activeAction}
         fileCount={files.length}
+        hasWorkspace={files.length > 0 || history.past.length > 0 || history.future.length > 0}
+        onClearWorkspace={handleClearWorkspace}
+        clearPending={clearPending}
       />
       <main className="flex min-w-0 flex-1 flex-col lg:pl-60">
         <Suspense fallback={<Loading />}>{renderView()}</Suspense>

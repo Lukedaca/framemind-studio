@@ -15,7 +15,7 @@ export interface StoredData {
 export interface ProjectStorage {
   /** Vrací null, když nic není uloženo nebo data neprošla validací. */
   load(): Promise<StoredData | null>;
-  save(data: StoredData): Promise<void>;
+  save(data: StoredData, options?: { discardUnusedPhotos?: boolean }): Promise<void>;
 }
 
 const STORAGE_KEY = 'fotograf_crm_v1';

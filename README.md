@@ -19,8 +19,8 @@ Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v
 je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
 Vite, terminál ani externí prohlížeč.
 
-**Klientské vydání zatím není dostupné.** Balíček 0.1.5 v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.5) je nepodepsaný
+**Klientské vydání zatím není dostupné.** Balíček 0.1.6 v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.6) je nepodepsaný
 vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může zobrazit
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
@@ -33,7 +33,7 @@ varování SmartScreen. [Oficiální vysvětlení Microsoftu](https://learn.micr
 Vydání pro macOS a Linux nebyla sestavena ani ověřena.
 
 Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md).
-Zveřejněné vývojové vydání: [0.1.5 — odezva retuše a opakované použití modelů](docs/releases/0.1.5.md).
+Zveřejněné vývojové vydání: [0.1.6 — vyprázdnění pracovní sady](docs/releases/0.1.6.md).
 Obsahuje adaptivní retuš, klonovací a hojivý štětec, celé originály a označení hlavního motivu.
 Přehled dokumentace: [docs/README.md](docs/README.md).
 
@@ -108,6 +108,21 @@ při chybě lze uložení opakovat. Importované originály na disku se nepřepi
 Desktop používá systémové dialogy pro uložení jedné fotky i výběr složky pro sadu.
 Ve webovém vývojovém režimu ukládání používá File System Access API, pokud jej
 prohlížeč nabízí; jinak se jednotlivé soubory stahují přes prohlížeč.
+
+## Nová práce a vyprázdnění sady
+
+Studio po spuštění obnoví poslední pracovní sadu včetně historie. Další import
+přidává fotografie do této sady. Pro novou práci klikněte vlevo pod postupem na
+**Vyprázdnit sadu** a potvrďte dialog. Aplikace přejde na prázdný import a zruší
+historii Zpět/Znovu této pracovní sady. Výsledky mimo uložený projekt si předem exportujte.
+
+Uložené projekty, klienti a originály na disku zůstanou zachované. Otevřený projekt
+se od pracovní sady odpojí; jeho fotografie lze znovu otevřít přes Projekty.
+Vyprázdnění odstraní jen místní obrazové kopie, které nepotřebuje žádný uložený
+projekt ani jeho historie. Zrušení potvrzení nic nemění.
+
+Před zavřením počkejte na **Uloženo lokálně**. Při chybě použijte **Zkusit znovu**;
+dokud zápis neprojde, může se po restartu vrátit poslední úspěšně uložený stav.
 
 ## Culling bez AI
 
@@ -249,9 +264,10 @@ to u takového projektu zobrazí. Náhled galerie není veřejný hosting fotogr
 Desktop má vlastní profil WebView2 pod `%LOCALAPPDATA%\cz.framemind.studio\`.
 Data z původního prohlížeče se do něj automaticky nepřenesou. Nový frontend používá
 stejné místní IndexedDB úložiště. Obnova pracovního stavu byla ověřena v odděleném
-Chromiu. Při místní aktualizaci na 0.1.3 zůstalo všech 12 existujících souborů
-IndexedDB a localStorage před prvním spuštěním beze změny a instalované okno se
-otevřelo; tato kontrola sama neověřuje obnovu každého uloženého projektu.
+Chromiu. Při místní aktualizaci na 0.1.6 zůstalo všech 346 existujících souborů
+IndexedDB a localStorage před otevřením aktualizované aplikace beze změny.
+Samostatný test nainstalované aplikace ověřil vyprázdnění, úplný restart a zachování
+syntetického uloženého projektu; nejde o kontrolu každého dříve uloženého projektu.
 Při odinstalaci je odstranění dat samostatná volba.
 
 ## Omezení a ověření
@@ -259,7 +275,7 @@ Při odinstalaci je odstranění dat samostatná volba.
 - RAW import extrahuje náhled; nejde o demosaicing ani plné vyvolání RAW.
   Soubor bez použitelného vloženého JPEG nemusí jít importovat.
 - Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
-- Rozsah aktuálního i historického ověření popisují [poznámky k 0.1.5](docs/releases/0.1.5.md).
+- Rozsah aktuálního i historického ověření popisují [poznámky k 0.1.6](docs/releases/0.1.6.md).
   Syntetické kontroly a místní fotografické sady neprokazují obecnou přesnost
   napříč žánry, fotoaparáty a RAW soubory.
 - Kompletní ověření retuše ve všech prohlížečích a na všech GPU nebylo provedeno.
