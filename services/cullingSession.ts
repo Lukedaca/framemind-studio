@@ -1,4 +1,5 @@
-import type { UploadedFile, CullingGenre, CullingResult } from '../types';
+import type { UploadedFile, CullingGenre, CullingResult, CullingFocusRegion, CullingIntent } from '../types';
+import { validateFocusRegions } from '../utils/cullingRegions';
 import type { PhotoAnalysis, SimilarityInput, SimilarityAssignment } from '../utils/cullingEngine';
 import type { CullingRequest, CullingResponse } from '../utils/cullingProtocol';
 import type { CullingInspection, InspectionPoint } from '../utils/cullingInspection';
@@ -48,12 +49,14 @@ export class CullingSession {
     });
   }
 
-  async analyze(file: UploadedFile, force = false, focusRegion: CullingResult['focusRegion'] | null = file.culling?.focusRegion): Promise<PhotoAnalysis> {
+  async analyze(file: UploadedFile, force = false, selection: CullingFocusRegion | CullingFocusRegion[] | null | undefined = file.culling?.focusRegions ?? file.culling?.focusRegion, automatic = true): Promise<PhotoAnalysis> {
     if (this.closed) throw this.failure;
     const input = cullingInput(file), cached = measurements.get(input.file);
-    const focus = JSON.stringify(focusRegion ?? null);
+    const focusRegions = selection ? Array.isArray(selection) ? selection : [selection] : [];
+    validateFocusRegions(focusRegions);
+    const focus = JSON.stringify({ regions: focusRegions, automatic });
     if (!force && cached?.metadata === input.metadataFile && cached.source === input.source && cached.focus === focus) return cached.analysis;
-    const analysis = await this.request<PhotoAnalysis>({ kind: 'analyze', ...input, focusRegion: focusRegion ?? undefined });
+    const analysis = await this.request<PhotoAnalysis>({ kind: 'analyze', ...input, focusRegions, automatic });
     measurements.set(input.file, { metadata: input.metadataFile, source: input.source, focus, analysis });
     return analysis;
   }
@@ -74,7 +77,7 @@ export class CullingSession {
     reverse.set(a, identical); duplicateProofs.set(b, reverse);
     return identical;
   }
-  score(analysis: PhotoAnalysis, genre: CullingGenre | null): Promise<CullingResult> { return this.request({ kind: 'score', analysis, genre }); }
+  score(analysis: PhotoAnalysis, genre: CullingGenre | null, intent?: CullingIntent): Promise<CullingResult> { return this.request({ kind: 'score', analysis, genre, intent }); }
   async group(items: SimilarityInput[]): Promise<Map<string, SimilarityAssignment>> {
     return new Map(await this.request<[string, SimilarityAssignment][]>({ kind: 'group', items }));
   }

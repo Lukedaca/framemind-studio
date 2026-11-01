@@ -1,10 +1,13 @@
 // Pure local scoring and grouping; browser I/O belongs to cullingSession/worker.
 import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, CullingNativeMetrics, CullingResult,
-  CullingScoreBreakdown, CullingScorePart, CullingSignature, CullingVerdictSource } from '../types';
+  CullingScoreBreakdown, CullingScorePart, CullingSignature, CullingVerdictSource, CullingIntent, CullingFocusMeasurement } from '../types';
 import { clamp01 } from './cullingMetrics';
 import { compareAlignedSignatures, compareSignatures, isValidSignature, type SimilarityComparison } from './cullingSimilarity';
+import { comparableFocus, focusMeasurements, focusSharpness, severelySoftFocus, validFocusEvidence } from './cullingRegions';
+import { validAutomaticEvidence } from './cullingAutomatic';
 
-export const CULLING_ENGINE_VERSION = 'local-1.6';
+export const CULLING_ENGINE_VERSION = 'local-1.8';
+export const CULLING_INTENTS: CullingIntent[] = ['standard', 'detail', 'motion', 'creative', 'stack'];
 export const SIMILARITY_EXACT_LIMIT = 320;
 export const MAX_SERIES_SIZE = 48;
 const PARTS: CullingScorePart[] = ['sharpness', 'exposure', 'clipping', 'noise', 'contrast', 'motion'];
@@ -18,7 +21,10 @@ const profiles = {
 export const CULLING_GENRES = Object.keys(profiles) as CullingGenre[];
 
 function nativeSharpness(metrics: CullingMetrics): number {
-  if (metrics.focus) return metrics.focus.sharpnessScore;
+  const selected = focusSharpness(metrics);
+  if (selected !== undefined) return selected;
+  if (metrics.automatic?.status === 'measured' && metrics.automatic.summary && metrics.automatic.summary.informativeSamples >= 2)
+    return Math.min(metrics.sharpnessScore, metrics.automatic.summary.maxSharpnessScore);
   const native = metrics.native;
   return native && (native.fixedInformativeSamples ?? native.informativeSamples) >= 2 ?
     Math.min(metrics.sharpnessScore, native.fixedMaxSharpnessScore ?? native.maxSharpnessScore) : metrics.sharpnessScore;
@@ -28,14 +34,21 @@ const referenceDetail = (native: CullingNativeMetrics) => native.fixedMaxLaplaci
 const referenceSamples = (native: CullingNativeMetrics) => native.fixedInformativeSamples ?? native.informativeSamples;
 const referenceSharpness = (native: CullingNativeMetrics) => native.fixedMaxSharpnessScore ?? native.maxSharpnessScore;
 
-export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGenre | null): CullingScoreBreakdown {
+export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGenre | null, intent: CullingIntent = 'standard'): CullingScoreBreakdown {
   const technical = metrics.technical;
-  const weights = profiles[genre ?? 'other'] ?? profiles.other;
-  const confidence = [metrics.focus?.technical.detailConfidence ?? technical?.detailConfidence ?? 0, 1, 1, technical?.noiseConfidence ?? 0, 1, technical?.motionConfidence ?? 0];
+  const weights = [...(profiles[genre ?? 'other'] ?? profiles.other)];
+  if (intent === 'motion') { weights[0] = 0; weights[5] = 0; }
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!validFocusEvidence(metrics) || !validAutomaticEvidence(metrics)) return Object.fromEntries(PARTS.map((part, i) =>
+    [part, { score: 0, weight: weights[i] / total, contribution: 0 }])) as CullingScoreBreakdown;
+  const selected = focusMeasurements(metrics);
+  const auto = metrics.automatic?.status === 'measured' ? metrics.automatic : undefined;
+  const confidence = [selected.length ? Math.min(...selected.map(f => f.technical.detailConfidence)) :
+    auto?.samples.length ? Math.max(...auto.samples.map(f => f.technical.detailConfidence)) : technical?.detailConfidence ?? 0,
+    1, 1, technical?.noiseConfidence ?? 0, 1, technical?.motionConfidence ?? 0];
   const values = [nativeSharpness(metrics), metrics.exposureScore,
     1 - Math.min(1, (metrics.highlightClipping + metrics.shadowClipping) * 1.5),
     metrics.noiseScore, metrics.contrastScore, 1 - (technical?.motionBlurEstimate ?? 0)];
-  const total = weights.reduce((sum, weight) => sum + weight, 0);
   return Object.fromEntries(PARTS.map((part, i) => {
     const weight = weights[i] / Math.max(1e-9, total);
     // Weak detail evidence must not remove its weight and inflate a blurred photo's score.
@@ -45,43 +58,56 @@ export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGen
   })) as CullingScoreBreakdown;
 }
 
-export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre | null): number {
-  return Math.round(Object.values(computeScoreBreakdown(metrics, genre)).reduce((sum, item) => sum + item.contribution, 0));
+export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre | null, intent: CullingIntent = 'standard'): number {
+  return Math.round(Object.values(computeScoreBreakdown(metrics, genre, intent)).reduce((sum, item) => sum + item.contribution, 0));
 }
 
+type DecisionContext = Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence' | 'relativeNativeSharpness' | 'referenceNativeSharpness' | 'duplicateVerified' | 'intent' | 'focusComparisonVerified' | 'relativeFocusSharpness' | 'referenceFocusSharpness'>;
 export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: number,
-  context: Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence' | 'relativeNativeSharpness' | 'referenceNativeSharpness' | 'duplicateVerified'> = {}):
-  { decision: CullingDecision; reasons: string[]; risks: string[] } {
+  context: DecisionContext = {}):
+  { decision: CullingDecision; reasons: string[]; risks: string[]; rejectionKind?: CullingResult['rejectionKind'] } {
   const technical = metrics.technical;
-  if (!technical || !Object.values(technical).every(Number.isFinite) ||
+  if (!technical || !Object.values(technical).every(Number.isFinite) || !validFocusEvidence(metrics) || !validAutomaticEvidence(metrics) ||
       (metrics.native && !Object.values(metrics.native).every(v => Number.isFinite(v) && v >= 0))) {
     return { decision: 'review', reasons: ['cull_reason_reanalyze'], risks: ['cull_risk_missing_metrics'] };
   }
   const risks: string[] = [];
   const reasons: string[] = [];
-  const focus = metrics.focus;
-  if (focus) {
-    if (focus.technical.detailConfidence < 0.15 || focus.sharpnessScore < 0.6) risks.push('cull_risk_focus_soft');
+  const selected = focusMeasurements(metrics);
+  const auto = !selected.length && metrics.automatic?.status === 'measured' ? metrics.automatic : undefined;
+  const focus = selected[0] ?? auto?.samples[0];
+  const intent = context.intent ?? 'standard', assessBlur = !['motion', 'creative', 'stack'].includes(intent);
+  if (selected.length && assessBlur) {
+    if (selected.some(f => f.technical.detailConfidence < 0.15 || f.sharpnessScore < 0.6)) risks.push('cull_risk_focus_soft');
     else reasons.push('cull_reason_focus_detail');
   }
-  const detail = focus?.technical ?? technical;
-  if (detail.noiseConfidence >= 0.6 && detail.noiseEstimate > 6 && (detail.scaleConsistency ?? 1) < 0.25 && (detail.fineEdgeEnergy ?? 0) > 1) risks.push('cull_risk_scale_conflict');
-  if (technical.detailConfidence < 0.15 || (metrics.native && referenceSamples(metrics.native) < 2)) risks.push('cull_risk_low_detail');
-  else if (nativeSharpness(metrics) >= 0.6) reasons.push(metrics.native ? 'cull_reason_native_detail' : 'cull_reason_detail');
-  else risks.push(metrics.native ? 'cull_risk_native_soft' : 'cull_risk_preview_soft');
-  if (metrics.native && referenceSharpness(metrics.native) < 0.6 && metrics.native.maxLaplacianVariance >= 8 &&
+  if (auto && assessBlur) {
+    if ((auto.summary?.informativeSamples ?? 0) < 2 || nativeSharpness(metrics) < .6) risks.push('cull_risk_auto_soft');
+    else reasons.push('cull_reason_auto_detail');
+  }
+  if (!selected.length && metrics.automatic?.status === 'unavailable') risks.push('cull_risk_auto_unavailable');
+  const details = selected.length ? selected.map(f => f.technical) : auto ? auto.samples.map(f => f.technical) : [technical];
+  if (details.some(detail => detail.noiseConfidence >= 0.6 && detail.noiseEstimate > 6 &&
+      (detail.scaleConsistency ?? 1) < 0.25 && (detail.fineEdgeEnergy ?? 0) > 1)) risks.push('cull_risk_scale_conflict');
+  if (!focus && assessBlur) {
+    if (technical.detailConfidence < 0.15 || (metrics.native && referenceSamples(metrics.native) < 2)) risks.push('cull_risk_low_detail');
+    else if (nativeSharpness(metrics) >= 0.6) reasons.push(metrics.native ? 'cull_reason_native_detail' : 'cull_reason_detail');
+    else risks.push(metrics.native ? 'cull_risk_native_soft' : 'cull_risk_preview_soft');
+  }
+  if (!focus && assessBlur && metrics.native && referenceSharpness(metrics.native) < 0.6 && metrics.native.maxLaplacianVariance >= 8 &&
       metrics.native.maxLaplacianVariance > referenceDetail(metrics.native) * 1.25) risks.push('cull_risk_detail_outside_grid');
   if (metrics.highlightClipping > 0.1) risks.push('cull_risk_highlights');
   if (metrics.shadowClipping > 0.25) risks.push('cull_risk_shadows');
   if (Math.max(technical.redClip, technical.greenClip, technical.blueClip) > 0.2 && metrics.highlightClipping <= 0.1) risks.push('cull_risk_channel_clip');
-  if (technical.noiseConfidence >= 0.6 && technical.noiseEstimate > 18) risks.push('cull_risk_noise');
-  if (technical.motionConfidence >= 0.6 && technical.motionBlurEstimate > 0.7) risks.push('cull_risk_direction');
+  if ([technical, ...details].some(detail => detail.noiseConfidence >= 0.6 && detail.noiseEstimate > 18)) risks.push('cull_risk_noise');
+  if (assessBlur && technical.motionConfidence >= 0.6 && technical.motionBlurEstimate > 0.7) risks.push('cull_risk_direction');
   if (!risks.includes('cull_risk_highlights') && !risks.includes('cull_risk_shadows')) reasons.push('cull_reason_range');
   if (context.duplicateGroupId) {
     if (context.isBestInGroup) reasons.push('cull_reason_best_in_group');
     else {
       risks.push(context.groupKind === 'near-duplicate' ? 'cull_risk_duplicate' : 'cull_risk_series_alternative');
-      if ((context.relativeSharpness ?? 1) < 0.5 && technical.detailConfidence >= 0.3) risks.push('cull_risk_soft_vs_series');
+      if (assessBlur && !focus && (context.referenceDetailConfidence ?? 0) >= 0.3 && (context.relativeSharpness ?? 1) < 0.5 && technical.detailConfidence >= 0.3) risks.push('cull_risk_soft_vs_series');
+      if (assessBlur && context.focusComparisonVerified && (context.relativeFocusSharpness ?? 1) < 0.5) risks.push('cull_risk_focus_vs_series');
     }
   }
   // A nearly empty clipped preview has lost essentially all luminance data.
@@ -91,7 +117,7 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
   const emptyShadows = metrics.shadowClipping >= 0.98 &&
     Math.min(technical.redShadowClip, technical.greenShadowClip, technical.blueShadowClip) >= 0.98;
    const emptyClippedPreview = (emptyHighlights || emptyShadows) && technical.dynamicRange <= 8 && technical.entropy < 1 &&
-     (!focus || (focus.technical.dynamicRange <= 8 && focus.technical.entropy < 1));
+      [...selected, ...(auto?.samples ?? [])].every(f => f.technical.dynamicRange <= 8 && f.technical.entropy < 1);
   const native = metrics.native;
   // Broad, measurable edges but almost no fine detail across the 1:1 sample grid.
   // Low texture, noisy samples and any observed sharp patch veto this suggestion.
@@ -121,36 +147,50 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
     (context.relativeNativeSharpness ?? 1) < 0.25 && (context.referenceNativeSharpness ?? 0) >= 0.7 &&
     Number.isFinite(context.relativeSharpness) && (context.relativeSharpness ?? 2) <= 1.2 &&
     native && referenceSamples(native) >= 5 && native.maxSharpnessScore < 0.6 && native.maxNoiseEstimate < 3;
-  const rejectReasons = [
+  const softSelectedRegion = intent === 'detail' && selected.some(severelySoftFocus);
+  const softerSelectedAlternative = assessBlur && alternative && context.focusComparisonVerified === true &&
+    (context.relativeFocusSharpness ?? 1) < 0.25 && (context.referenceFocusSharpness ?? 0) >= 0.7 && selected.some(severelySoftFocus);
+  const protectedSet = intent === 'stack' || intent === 'creative';
+  const automaticBlur = assessBlur && auto && auto.coverage >= .0025 && auto.coverage <= .65 &&
+    auto.summary && auto.summary.informativeSamples >= 3 && auto.summary.sampleCount >= 3 &&
+    auto.summary.maxSharpnessScore < .6 && auto.summary.maxLaplacianVariance < 8 &&
+    auto.summary.maxEdgeAcutance < .012 && auto.summary.maxNoiseEstimate < 3;
+  const rejectReasons = protectedSet ? [] : [
     ...(emptyClippedPreview ? ['cull_reason_empty_clipped'] : []),
-    ...(severelySoftNative ? ['cull_reason_native_blur'] : []),
+    ...(assessBlur && severelySoftNative ? ['cull_reason_native_blur'] : []),
+    ...(softSelectedRegion ? ['cull_reason_focus_blur'] : []),
+    ...(automaticBlur ? ['cull_reason_auto_blur'] : []),
     ...(redundantCopy ? ['cull_reason_redundant_copy'] : []),
-    ...(muchSofterAlternative || muchSofterNativeAlternative ? ['cull_reason_soft_alternative'] : []),
+    ...(assessBlur && (muchSofterAlternative || muchSofterNativeAlternative) ? ['cull_reason_soft_alternative'] : []),
+    ...(softerSelectedAlternative ? ['cull_reason_focus_alternative'] : []),
   ];
+  if (intent !== 'standard') reasons.push('cull_reason_intent_' + intent);
   const decision = rejectReasons.length ? 'reject' : risks.length || finalScore < 75 ? 'review' : 'keep';
   reasons.unshift(...rejectReasons);
   if (decision === 'review') reasons.push('cull_reason_needs_review');
-  return { decision, reasons, risks };
+  const technicalRejection = rejectReasons.some(r => r !== 'cull_reason_redundant_copy');
+  return { decision, reasons, risks, rejectionKind: decision === 'reject' ? technicalRejection ? 'technical' : 'redundant' : undefined };
 }
 
 export interface PhotoAnalysis {
   focusRegion?: CullingResult['focusRegion'];
+  focusRegions?: CullingResult['focusRegions'];
   metrics: CullingMetrics;
   aspectRatio: number;
   source: NonNullable<CullingResult['source']>;
   exif?: CullingExif;
 }
 
-export function buildCullingResult(analysis: PhotoAnalysis, genre: CullingGenre | null): CullingResult {
-  const finalScore = computeFinalScore(analysis.metrics, genre);
-  return { ...analysis, finalScore, ...deriveTechnicalDecision(analysis.metrics, finalScore), genre: genre ?? undefined,
-    scoreBreakdown: computeScoreBreakdown(analysis.metrics, genre), engineVersion: CULLING_ENGINE_VERSION, analysisStatus: 'done' };
+export function buildCullingResult(analysis: PhotoAnalysis, genre: CullingGenre | null, intent: CullingIntent = 'standard'): CullingResult {
+  const finalScore = computeFinalScore(analysis.metrics, genre, intent);
+  return { ...analysis, intent, finalScore, ...deriveTechnicalDecision(analysis.metrics, finalScore, { intent }), genre: genre ?? undefined,
+    scoreBreakdown: computeScoreBreakdown(analysis.metrics, genre, intent), engineVersion: CULLING_ENGINE_VERSION, analysisStatus: 'done' };
 }
 
 export function rescoreCullingResult(result: CullingResult, genre: CullingGenre | null): CullingResult {
   if (result.engineVersion !== CULLING_ENGINE_VERSION || result.analysisStatus === 'error') return result;
-  const finalScore = computeFinalScore(result.metrics, genre);
-  return { ...result, finalScore, genre: genre ?? undefined, scoreBreakdown: computeScoreBreakdown(result.metrics, genre),
+  const finalScore = computeFinalScore(result.metrics, genre, result.intent);
+  return { ...result, finalScore, genre: genre ?? undefined, scoreBreakdown: computeScoreBreakdown(result.metrics, genre, result.intent),
     ...deriveTechnicalDecision(result.metrics, finalScore, result) };
 }
 
@@ -173,9 +213,14 @@ export interface SimilarityInput {
   sharpness: number;
   detailConfidence?: number;
   native?: CullingNativeMetrics;
+  focusRegions?: CullingFocusMeasurement[];
+  intent?: CullingIntent;
   exif?: CullingExif;
 }
 export interface SimilarityAssignment {
+  focusComparisonVerified?: boolean;
+  relativeFocusSharpness?: number;
+  referenceFocusSharpness?: number;
   duplicateGroupId?: string;
   isBestInGroup?: boolean;
   groupRank?: number;
@@ -202,6 +247,7 @@ function relatedTime(a: SimilarityInput, b: SimilarityInput): boolean {
 }
 
 function pair(a: SimilarityInput, b: SimilarityInput): SimilarityComparison | null {
+  if ((a.intent ?? 'standard') !== (b.intent ?? 'standard') || a.intent === 'stack' || a.intent === 'creative') return null;
   if (!isValidSignature(a.signature) || !isValidSignature(b.signature) ||
       !Number.isFinite(a.aspectRatio) || !Number.isFinite(b.aspectRatio) || a.aspectRatio <= 0 || b.aspectRatio <= 0 ||
       Math.abs(a.aspectRatio / b.aspectRatio - 1) > 0.03) return null;
@@ -255,7 +301,12 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
   }
   for (const [index, group] of groups.entries()) {
     if (group.length < 2) continue;
-    group.sort((a, b) => b.finalScore - a.finalScore || lexical(a.filename, b.filename) || lexical(a.id, b.id));
+    const regionalRanking = group.every((item, i) => (item.intent ?? 'standard') === (group[0].intent ?? 'standard') &&
+      !['motion', 'creative', 'stack'].includes(item.intent ?? 'standard') &&
+      group.slice(0, i + 1).every(other => comparableFocus(item.focusRegions, other.focusRegions)));
+    const regionalScore = (item: SimilarityInput) => Math.min(...item.focusRegions!.map(f => f.sharpnessScore));
+    group.sort((a, b) => (regionalRanking ? regionalScore(b) - regionalScore(a) : 0) ||
+      b.finalScore - a.finalScore || lexical(a.filename, b.filename) || lexical(a.id, b.id));
     const best = group[0];
     // Reuse the all-pairs evidence collected on admission instead of measuring
     // every pair again. Complete linkage and its scene-change veto are unchanged.
@@ -274,11 +325,17 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
       const extraDetailRatio = native && rank !== 0 ? Math.max(0, item.native!.maxLaplacianVariance) / Math.max(1, reference) : 1;
       const relativeSharpness = native ? Math.max(previewRatio, Math.max(0, sharpness) / Math.max(1, reference), extraDetailRatio) : previewRatio;
       assignments.set(item.id, {
+        focusComparisonVerified: regionalRanking,
+        relativeFocusSharpness: regionalRanking ? Math.min(...item.focusRegions!.map((f, i) =>
+          f.technical.laplacianVariance / Math.max(1, best.focusRegions![i].technical.laplacianVariance))) : undefined,
+        referenceFocusSharpness: regionalRanking && best.focusRegions!.every(f => f.technical.noiseEstimate < 3 &&
+          f.technical.detailConfidence >= 0.6) ? regionalScore(best) : undefined,
         duplicateGroupId: groupId, isBestInGroup: rank === 0, groupRank: rank + 1,
         groupKind: nearDuplicate ? 'near-duplicate' : 'burst', similarityToBest: pair(item, best)?.score ?? 1,
         relativeSharpness,
         scoreGap: Math.max(0, best.finalScore - item.finalScore) / Math.max(1, best.finalScore),
-        referenceDetailConfidence: native ? Math.min(1, referenceSamples(best.native!) / 5) : best.detailConfidence ?? 0,
+        referenceDetailConfidence: item.focusRegions?.length || best.focusRegions?.length ? 0 :
+          native ? Math.min(1, referenceSamples(best.native!) / 5) : best.detailConfidence ?? 0,
         relativeNativeSharpness: native ? Math.max(0, sharpness) / Math.max(1, reference) : undefined,
         referenceNativeSharpness: native && referenceSamples(best.native!) >= 5 && best.native!.maxNoiseEstimate < 3 ? referenceSharpness(best.native!) : undefined,
       });

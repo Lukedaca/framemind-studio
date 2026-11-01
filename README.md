@@ -10,7 +10,8 @@ FrameMind Studio je open-source aplikace pro lokální provoz na vlastním poč�
 GitHub slouží pro zdrojový kód, zálohu a příspěvky; aplikaci nikam nenasazujeme.
 Autorem a správcem je [Lukáš Drštička (Lukedaca)](https://github.com/Lukedaca).
 
-**Culling je kompletně bez AI:** nemá Gemini, API klíč, detekční modely ani síťová volání.
+**Culling běží lokálně:** vývojová verze obsahuje přibalený model pro nalezení výrazných
+objektů, bez API klíče a odesílání fotografií. Publikovaná 0.1.6 tento model ještě nemá.
 Celé Studio zatím není plně offline: editor stále obsahuje dvě cloudové funkce
 a modely retuše i písma se stahují. Přesný stav je v části [Připojení a data](#připojení-a-data).
 
@@ -37,6 +38,9 @@ Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md
 Zveřejněné vývojové vydání: [0.1.6 — vyprázdnění pracovní sady](docs/releases/0.1.6.md).
 Obsahuje adaptivní retuš, klonovací a hojivý štětec, celé originály a označení hlavního motivu.
 Přehled dokumentace: [docs/README.md](docs/README.md).
+
+[Aktuální snímky vývojové 0.1.7](demo-screenshots/README.md) ukazují také nový
+automatický culling a porovnání. Nejde o snímky publikovaného instalátoru 0.1.6.
 
 ## Vývoj a spuštění ze zdrojů
 
@@ -125,7 +129,7 @@ projekt ani jeho historie. Zrušení potvrzení nic nemění.
 Před zavřením počkejte na **Uloženo lokálně**. Při chybě použijte **Zkusit znovu**;
 dokud zápis neprojde, může se po restartu vrátit poslední úspěšně uložený stav.
 
-## Culling bez AI
+## Lokální automatický culling
 
 Analýza běží po jednom snímku v samostatném workeru. Měří náhled s delší stranou
 nejvýše 768 px: rozložení jasu, přepaly, stíny, kontrast, indikátory detailu,
@@ -133,12 +137,21 @@ nejvýše 768 px: rozložení jasu, přepaly, stíny, kontrast, indikátory deta
 Profil vyberete ručně; mění váhy technického skóre, nikoli obsahovou analýzu.
 
 U větších zdrojů se měří až devět pevných výřezů 384 × 384 px bez zmenšení.
-Engine 1.5 přidává nejvýše čtyři další výřezy podle struktury náhledu, včetně
-oblastí mimo původní mřížku. Skóre a reference série vycházejí z pevných míst;
+Nejvýše čtyři další výřezy podle struktury náhledu pokryjí i místa mimo původní
+mřížku. Bez ručních či automatických oblastí vychází skóre a reference série z pevných míst;
 doplňkový ostrý detail může zabránit vyřazení a poslat snímek ke kontrole.
-Výřezy se měří postupně. Nejde o detekci subjektu a důležitý detail lze stále minout.
+Výřezy se měří postupně. Samotná mřížka neurčuje subjekt a důležitý detail lze minout.
 
-Aktuální zdrojový kód používá engine **local-1.6**. Kliknutí na fotografii otevře
+Verze zdrojů **0.1.7 / local-1.8** přidává automatické hledání výrazných objektů
+přibaleným modelem U²-NetP. Až 12 výřezů 128 × 128 px se měří v původním rozlišení;
+silné známky rozmazání mohou automaticky označit snímek k vyřazení. Ruční označení
+není potřeba. Model nerozpoznává oči ani rozhodující moment a může minout důležitý
+detail. Zveřejněný instalátor 0.1.6 obsahuje **local-1.6**.
+[Nevydané změny](docs/releases/unreleased.md) zahrnují také čtyři ruční oblasti,
+jejich ověřené porovnání a fotografický záměr po snímcích. **Použít výběr a otevřít
+editor** po potvrzení odebere vyřazené z pracovní sady a pokračuje do úprav;
+**Zpět** obnoví snímky, skóre, verdikty i vysvětlení. Originály na disku se nemažou.
+Kliknutí na fotografii otevře
 celý původní obrazový soubor bez dalšího převodu nebo komprese. Tlačítkem `+`
 lze vybrat až čtyři snímky k porovnání. Výchozí pohled ukáže celý záběr;
 100 %, 200 % a 400 % umožňují kontrolu detailu, kolečko mění zoom a tažení posouvá
@@ -147,8 +160,12 @@ aktivního snímku, 0 ukáže celý záběr, 1 nastaví 100 % a Esc náhled zav�
 U RAW se stále zobrazuje vložený JPEG, nikoli vyvolaná senzorová data.
 
 V porovnání lze ručně **Označit hlavní motiv** a kliknutím určit oblast
-128 / 256 / 384 px. Její ostrost v původním rozlišení pak vstupuje do skóre;
-nejistý nebo měkký motiv vyžaduje kontrolu. Automatika sama subjekt nerozpoznává.
+128 / 256 / 384 px. Ve vývojovém enginu lze přidat až čtyři oblasti a polohy
+přenést na porovnávané snímky. Jejich ostrost v původním rozlišení vstupuje do skóre;
+nejistý detail vyžaduje kontrolu. Důraz na označené detaily může navrhnout vyřazení
+při silných známkách rozmazání. Záměrný pohyb, autorská volnost a sada pro skládání
+mají samostatná pravidla popsaná v návodu. Model odhaduje výrazné oblasti,
+nikoli skutečný fotografický záměr nebo správnost hlavního motivu.
 Nadbytečná kopie vyžaduje shodu všech dekódovaných pixelů JPEG/PNG nebo SHA-256
 původních RAW dat; podobný náhled nestačí. Rozpor měření detailu ve dvou měřítkách
 přidá důvod ke kontrole, sám nezpůsobí vyřazení.
@@ -184,8 +201,9 @@ místo opakovaného výpočtu stejných dvojic.
 
 Náhledové metriky neposuzují oči, výraz, rozhodující moment, kompozici ani zaostření
 na konkrétní subjekt. Směrový indikátor není důkaz pohybového rozmazání.
-Kalibrace dosud zahrnuje jednu sportovní sadu 114 JPEGů; nejde o reprezentativní
-ověření napříč žánry, fotoaparáty a RAW soubory.
+Nová automatika prošla celou místní sadou 251 RAWů a kontrolními ostrými a uměle
+rozmazanými snímky portrétu, zvířete a produktu. Nejde o reprezentativní ověření
+přesnosti napříč žánry a fotoaparáty; podrobnosti jsou v poznámkách k nevydané verzi.
 
 Z RAW se měří vložený JPEG, nikoli RAW senzorová data. Jeho zpracování ve fotoaparátu
 ovlivňuje měření. Starší automatické výsledky vyžadují novou analýzu;
@@ -239,7 +257,7 @@ Výkon závisí na zařízení, prohlížeči a zvolené výpočetní cestě.
 
 | Funkce nebo zdroj | Připojení / uložení |
 |---|---|
-| Culling | Žádná síťová volání, modely ani klíče |
+| Culling | Lokální přibalený U²-NetP, bez externích požadavků a klíče |
 | Vývojové závislosti | `npm ci` a první Rust build stahují závislosti; instalovaný uživatel je nepotřebuje |
 | Retuš a klikací laso | Modely se načítají z Hugging Face, URL jsou připnuté na commit; cache je v profilu WebView nebo prohlížeče |
 | Písmo rozhraní | Google Fonts; webová PWA má pravidla pro jejich cache, desktop PWA nepoužívá |
@@ -276,7 +294,12 @@ Při odinstalaci je odstranění dat samostatná volba.
 - RAW import extrahuje náhled; nejde o demosaicing ani plné vyvolání RAW.
   Soubor bez použitelného vloženého JPEG nemusí jít importovat.
 - Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
-- Rozsah aktuálního i historického ověření popisují [poznámky k 0.1.6](docs/releases/0.1.6.md).
+- Aktuální ověření: TypeScript, 234 testů a webový i Windows build prošly.
+  Automatický výběr, potvrzení, editor a Zpět byly ověřeny v produkčním webovém
+  buildu i skutečném Windows EXE 0.1.7 s odděleným profilem. Instalátor 0.1.7
+  je připravený místně; jeho instalace ani zveřejnění zatím neproběhly.
+- Aktuální kontroly popisují [nevydané změny](docs/releases/unreleased.md);
+  historické kontroly jsou v [poznámkách k 0.1.6](docs/releases/0.1.6.md).
   Syntetické kontroly a místní fotografické sady neprokazují obecnou přesnost
   napříč žánry, fotoaparáty a RAW soubory.
 - Kompletní ověření retuše ve všech prohlížečích a na všech GPU nebylo provedeno.

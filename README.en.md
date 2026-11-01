@@ -10,7 +10,8 @@ FrameMind Studio is an open-source application run locally on your own computer.
 GitHub hosts the source, backup and contributions; the application is not deployed.
 The author and maintainer is [Lukáš Drštička (Lukedaca)](https://github.com/Lukedaca).
 
-**Culling uses no AI:** it has no Gemini, API key, detection models or network calls.
+**Culling runs locally:** the development version bundles a salient-object model,
+without an API key or photo uploads. Published version 0.1.6 does not include it.
 The entire Studio is not fully offline yet: the editor still has two cloud features,
 and retouch models and fonts are downloaded. See [Connections and data](#connections-and-data).
 
@@ -35,6 +36,9 @@ macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
 Published development release: [0.1.6 — clearing the working photo set](docs/releases/0.1.6.md).
+
+[Current development 0.1.7 screenshots](demo-screenshots/README.md) show the new
+automatic culling and comparison interface, separately from the published 0.1.6 installer.
 Includes adaptive retouching, clone and heal brushes, full originals and manual subject selection.
 Documentation index: [docs/README.md](docs/README.md).
 
@@ -126,7 +130,7 @@ needs. Cancelling the confirmation changes nothing.
 Wait for **Saved locally** before closing. If saving fails, choose **Retry**;
 until the write succeeds, restarting may restore the last successfully saved state.
 
-## Culling without AI
+## Local automatic culling
 
 Analysis processes one image at a time in a dedicated worker. It measures a preview
 whose longer side is at most 768 px: luminance distribution, clipped highlights,
@@ -134,13 +138,22 @@ shadows, contrast, and detail, noise and directional blur indicators.
 EXIF is read from the original input when available. You select a profile manually;
 it changes technical score weights rather than analyzing image content.
 
-Larger sources use up to nine fixed, unscaled 384 × 384 px samples. Engine 1.5
-adds up to four detail-guided samples, including areas outside the original grid.
-Scores and series references use fixed positions; extra sharp detail can veto
+Larger sources use up to nine fixed, unscaled 384 × 384 px samples and up to four
+detail-guided samples outside the original grid. Without manual or automatic regions,
+scores and series references use fixed positions; extra sharp detail can veto
 rejection and require review. Samples are processed sequentially. This does not
-detect subjects, and important detail can still be missed.
+identify subjects by itself, and important detail can still be missed.
 
-The current source uses engine **local-1.6**. Click a photograph to open the whole
+Source version **0.1.7 / local-1.8** automatically finds salient objects with a
+bundled U²-NetP model. Up to twelve 128 × 128 px crops are measured at native
+resolution; strong blur evidence can automatically flag a photo for rejection.
+Manual marking is optional. The model does not recognize eyes or decisive moments
+and can miss important detail. The published 0.1.6 installer contains **local-1.6**.
+[Unreleased changes](docs/releases/unreleased.md) also add four manual regions,
+verified regional comparison and per-photo intent. **Use selection and open editor**
+confirms removal of rejected photos from the working set and continues to editing.
+**Undo** restores photos, scores, decisions and explanations. Disk originals are kept.
+Click a photograph to open the whole
 original image file without another conversion or compression. Select up to four
 frames with `+` for comparison. The initial view fits the entire frame; 100%, 200%
 and 400% reveal detail. Scroll to zoom and drag to pan. The 100% scale accounts
@@ -149,8 +162,12 @@ for display pixel density. K/R/X change the active frame's manual choice,
 its embedded JPEG rather than developed sensor data.
 
 In comparison, **Mark the main subject** lets you select a 128 / 256 / 384 px
-region. Its original-scale sharpness contributes to the score; weak or uncertain
-subject detail requires review. The application does not detect the subject itself.
+region. The development engine supports up to four regions and copying their
+positions to compared photos. Original-scale detail contributes to the score;
+uncertain detail requires review. Selected-detail priority permits rejection
+suggestions for strong measured blur. Intentional motion, creative freedom and
+stacking have separate policies described in the guide. The model estimates salient
+regions, not photographic intent or the correctness of the main subject.
 A redundant copy requires identical decoded JPEG/PNG pixels or a SHA-256 match
 of original RAW bytes; a similar preview is insufficient. Conflicting detail
 measurements at two scales add a review reason, never a sole rejection reason.
@@ -185,8 +202,9 @@ collected instead of computing all of the same comparisons again.
 
 Preview metrics do not assess eyes, expression, decisive moments, composition or
 focus on a particular subject. The directional indicator does not prove motion blur.
-Calibration covers one sports set of 114 JPEGs so far; it does not represent
-different genres, cameras or RAW files.
+The new automatic path was checked on a local set of 251 RAW files and sharp /
+artificially blurred portrait, animal and product controls. This does not establish
+accuracy across genres and cameras; see the unreleased notes for evidence and limits.
 
 RAW analysis measures the embedded JPEG, not sensor data. Camera processing affects
 those measurements. Older automatic results require fresh analysis; manual choices take precedence.
@@ -241,7 +259,7 @@ Performance depends on the device, browser and execution path.
 
 | Feature or resource | Connection / storage |
 |---|---|
-| Culling | No network calls, models or keys |
+| Culling | Bundled local U²-NetP, no external requests or API key |
 | Development dependencies | `npm ci` and the first Rust build download dependencies; installed users do not need them |
 | Retouching and click-based lasso | Models load from Hugging Face at commit-pinned URLs; cached in the WebView or browser profile |
 | Interface fonts | Google Fonts; web PWA caching rules apply only to web builds, desktop does not use PWA |
@@ -279,7 +297,12 @@ is a separate uninstall option.
 - RAW import extracts a preview; it does not perform demosaicing or full RAW development.
   Files without a usable embedded JPEG may fail to import.
 - There are no user accounts, server storage or synchronization.
-- [Release 0.1.6 notes](docs/releases/0.1.6.md) distinguish current checks from historical evidence.
+- Current checks passed: TypeScript, 234 tests, web and Windows builds.
+  Automatic selection, confirmation, editor handoff and Undo passed in the web
+  production build and actual Windows 0.1.7 executable with isolated profiles.
+  A local 0.1.7 installer is prepared; it has not been installed or published.
+- [Unreleased changes](docs/releases/unreleased.md) describe current verification;
+  [release 0.1.6 notes](docs/releases/0.1.6.md) retain historical evidence.
   Synthetic checks and local photo sets do not establish general accuracy across
   genres, cameras and RAW files.
 - Retouching has not been comprehensively verified across all browsers and GPUs.

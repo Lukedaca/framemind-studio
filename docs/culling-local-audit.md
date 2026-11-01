@@ -4,8 +4,10 @@
 
 Audit of checkout `Lukedaca/framemind-studio`, baseline `69a17bc`.
 
-The sections before "Implemented local branch" describe the historical baseline
-and refactor plan. The implementation section and README describe current behavior.
+This entire document is a historical baseline and implementation record.
+For current local-1.8 model boundaries, behavior and verification, use the
+[culling guide](culling.md), [source README](../README.md) and
+[development notes](releases/unreleased.md).
 
 ## Baseline flow (before refactor)
 

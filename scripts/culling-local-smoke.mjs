@@ -152,12 +152,12 @@ try {
       const result = await session.score(analysis, 'sport');
       return { width: analysis.metrics.technical.width, height: analysis.metrics.technical.height,
         version: result.engineVersion, score: result.finalScore, originalUnchanged: before === await hash(),
-        aiPresent: 'ai' in result, signatureLength: analysis.metrics.signature.luma.length };
+        remoteAiPresent: 'ai' in result, localModelStatus: analysis.metrics.automatic?.status, signatureLength: analysis.metrics.signature.luma.length };
     } finally { session.close(); }
   }, images.image);
   if (!desktopCdp) {
-    assert.equal(report.worker.version, 'local-1.6'); assert.equal(report.worker.originalUnchanged, true);
-    assert.equal(report.worker.aiPresent, false); assert.equal(report.worker.signatureLength, 1024);
+  assert.equal(report.worker.version, 'local-1.8'); assert.equal(report.worker.originalUnchanged, true);
+  assert.equal(report.worker.remoteAiPresent, false); assert.equal(report.worker.signatureLength, 1024);
   }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
   report.externalRequests = external.length; report.pageErrors = errors;

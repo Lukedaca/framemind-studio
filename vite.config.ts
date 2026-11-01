@@ -35,6 +35,7 @@ export default defineConfig(({ mode }) => {
         host: '127.0.0.1',
         headers: ISOLATION_HEADERS,
       },
+      optimizeDeps: { include: ['onnxruntime-web/webgpu'] },
       plugins: [
         react(),
         detectApiKeys(),
@@ -54,6 +55,7 @@ export default defineConfig(({ mode }) => {
             ],
           },
           workbox: {
+            maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
             skipWaiting: true,
             clientsClaim: true,
             // WASM runtime ONNX (~25 MB) je nad limitem precache; cachuje se při

@@ -1,9 +1,13 @@
 import exifr from 'exifr';
-import type { CullingExif } from '../types';
+import type { CullingExif, CullingFocusRegion } from '../types';
 import { PREVIEW_MAX_SIDE, nativeSampleRects, readMetrics, summarizeNativeSamples } from '../utils/cullingMetrics';
 import { buildCullingResult, computeSimilarityGroups, type PhotoAnalysis } from '../utils/cullingEngine';
 import type { CullingRequest } from '../utils/cullingProtocol';
 import { inspectionRect, type CullingInspection } from '../utils/cullingInspection';
+import { validateFocusRegions } from '../utils/cullingRegions';
+import { CULLING_SUBJECT_MODEL } from '../utils/cullingAutomatic';
+import { automaticRegions } from './cullingSubject';
+let automaticWarningShown = false;
 
 async function readExif(file: File): Promise<CullingExif | undefined> {
   try {
@@ -39,26 +43,43 @@ async function analyze(request: Extract<CullingRequest, { kind: 'analyze' }>): P
     const metrics = readMetrics(preview.data, width, height);
     if (Math.max(bitmap.width, bitmap.height) > PREVIEW_MAX_SIDE) {
       const samples = nativeSampleRects(bitmap.width, bitmap.height, preview).map(rect => {
-        // Reuse the canvas and original bitmap; no full-resolution pixel buffer or model.
+        // Reuse the canvas and original bitmap; no full-resolution pixel buffer.
         canvas.width = rect.width; canvas.height = rect.height;
         context.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
         return readMetrics(context.getImageData(0, 0, rect.width, rect.height).data, rect.width, rect.height, false, false);
       });
       metrics.native = summarizeNativeSamples(samples, bitmap.width, bitmap.height, nativeSampleRects(bitmap.width, bitmap.height).length);
     }
-    if (request.focusRegion) {
-      const region = request.focusRegion;
-      if (![region.x, region.y, region.width, region.height].every(Number.isFinite) || region.width <= 0 || region.height <= 0) throw new Error('Invalid focus region');
+    const regions = request.focusRegions ?? (request.focusRegion ? [request.focusRegion] : []);
+    validateFocusRegions(regions);
+    const measureRegion = (region: CullingFocusRegion, withSignature: boolean) => {
       const w = Math.max(1, Math.min(384, bitmap.width, Math.round(region.width * bitmap.width)));
       const h = Math.max(1, Math.min(384, bitmap.height, Math.round(region.height * bitmap.height)));
       const x = Math.max(0, Math.min(bitmap.width - w, Math.round(region.x * bitmap.width)));
       const y = Math.max(0, Math.min(bitmap.height - h, Math.round(region.y * bitmap.height)));
       canvas.width = w; canvas.height = h;
       context.drawImage(bitmap, x, y, w, h, 0, 0, w, h);
-      const focus = readMetrics(context.getImageData(0, 0, w, h).data, w, h, false);
-      metrics.focus = { region: { x: x / bitmap.width, y: y / bitmap.height, width: w / bitmap.width, height: h / bitmap.height }, technical: focus.technical!, sharpnessScore: focus.sharpnessScore };
+      const focus = readMetrics(context.getImageData(0, 0, w, h).data, w, h, withSignature);
+      return { metrics: focus, measurement: { region: { x: x / bitmap.width, y: y / bitmap.height, width: w / bitmap.width, height: h / bitmap.height },
+        technical: focus.technical!, sharpnessScore: focus.sharpnessScore, signature: focus.signature,
+        sourceWidth: bitmap.width, sourceHeight: bitmap.height } };
+    };
+    metrics.focusRegions = regions.map(region => measureRegion(region, true).measurement);
+    const first = metrics.focusRegions[0];
+    metrics.focus = first ? { region: first.region, technical: first.technical, sharpnessScore: first.sharpnessScore } : undefined;
+    if (!regions.length && request.automatic !== false) {
+      try {
+        const plan = await automaticRegions(bitmap), measured = plan.regions.map(region => measureRegion(region, false));
+        metrics.automatic = { model: CULLING_SUBJECT_MODEL, status: measured.length ? 'measured' : 'no-region', coverage: plan.coverage,
+          samples: measured.map(m => m.measurement), summary: measured.length ? { ...summarizeNativeSamples(measured.map(m => m.metrics), bitmap.width, bitmap.height), sampleSize: 128 } : undefined };
+      } catch (error) {
+        if (!automaticWarningShown) { console.warn('[Culling] Local object check unavailable:', error instanceof Error ? error.message : String(error)); automaticWarningShown = true; }
+        // A failed local model is visible review evidence, never a silent quality approval.
+        metrics.automatic = { model: CULLING_SUBJECT_MODEL, status: 'unavailable', coverage: 0, samples: [] };
+      }
     }
-    return { metrics, focusRegion: metrics.focus?.region, aspectRatio: bitmap.width / bitmap.height, source: request.source, exif: await readExif(request.metadataFile) };
+    return { metrics, focusRegion: metrics.focus?.region, focusRegions: metrics.focusRegions.map(f => f.region),
+      aspectRatio: bitmap.width / bitmap.height, source: request.source, exif: await readExif(request.metadataFile) };
   } finally { bitmap.close(); }
 }
 
@@ -111,7 +132,7 @@ self.onmessage = async ({ data }: MessageEvent<CullingRequest>) => {
       : data.kind === 'inspect' ? await inspect(data)
       : data.kind === 'verify-duplicate' ? await verifyDuplicate(data.file, data.reference, data.bytesOnly)
       : data.kind === 'group' ? [...computeSimilarityGroups(data.items)]
-      : buildCullingResult(data.analysis, data.genre);
+      : buildCullingResult(data.analysis, data.genre, data.intent);
     self.postMessage({ id: data.id, value });
   } catch (error) {
     self.postMessage({ id: data.id, error: error instanceof Error ? error.message : String(error) });

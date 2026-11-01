@@ -48,7 +48,12 @@ dialog API in desktop mode and browser confirmation in web mode.
 ## Preserve culling boundaries
 
 Culling is local and deterministic. Its import graph must not reach Gemini,
-API-key management, downloaded detectors, ONNX, usage tracking or network calls.
+API-key management, remote inference, runtime model downloads or usage tracking.
+The sole model path is bundled U²-NetP through `workers/cullingSubject.ts`:
+verify its exact size and SHA-256 before inference, keep model/WASM URLs on the
+application origin, and preserve the bundled attribution and Apache-2.0 license.
+Inference uses one WASM thread inside the culling worker. Cross-origin isolation
+alone does not establish nested pthread support in packaged WebView2.
 Keep preview limits visible. Preserve manual choices across reruns and profile
 changes, require confirmation for set removal, and leave original disk files intact.
 Automatic suggestions may include keep, review or reject with an explained technical reason.
@@ -75,7 +80,18 @@ In a second terminal:
 ```bash
 node scripts/culling-local-smoke.mjs
 node scripts/culling-inspection-smoke.mjs
+node scripts/culling-regions-smoke.mjs
 ```
+
+For automatic measurements and editor handoff, run
+`node scripts/culling-automatic-smoke.mjs <sharp-image> <known-blurred-image>`.
+Use public or synthetic fixtures from unrelated scenes: two identical sharp
+copies exercise duplication independently from the blurred-image case. The check
+covers blur/copy suggestions, cancelled and accepted confirmation, editor handoff,
+Undo restoration of scores/decisions/explanations, source hashes and zero external
+culling requests. `CULLING_SMOKE_URL` selects a production preview.
+`DESKTOP_SMOKE_CDP` and `DESKTOP_SMOKE_PID` attach to an owned native instance;
+verify its separate profile first, as described in the Windows guide.
 
 The script uses synthetic photos and writes results to ignored
 `output/playwright/`. Override `CULLING_SMOKE_URL` for another local server.

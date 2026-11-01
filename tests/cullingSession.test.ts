@@ -71,6 +71,26 @@ describe('owned local culling worker', () => {
     worker.onmessage!({ data: { id: worker.postMessage.mock.calls[1][0].id, value: { source: 'image' } } });
     await forced; session.close();
   });
+  it('keys measurement reuse by all selected regions and remeasures when they are cleared', async () => {
+    const source = image(), session = new CullingSession(), worker = FakeWorker.instances[0];
+    const regions = [{ x: 0.1, y: 0.1, width: 0.1, height: 0.1 }, { x: 0.5, y: 0.5, width: 0.1, height: 0.1 }];
+    const first = session.analyze(source, false, regions);
+    const request = worker.postMessage.mock.calls[0][0];
+    expect(request.focusRegions).toEqual(regions);
+    worker.onmessage!({ data: { id: request.id, value: { source: 'image', focusRegions: regions } } });
+    await first;
+    await session.analyze(source, false, regions.map(r => ({ ...r })));
+    expect(worker.postMessage).toHaveBeenCalledTimes(1);
+    const cleared = session.analyze(source, false, []);
+    expect(worker.postMessage.mock.calls[1][0].focusRegions).toEqual([]);
+    worker.onmessage!({ data: { id: worker.postMessage.mock.calls[1][0].id, value: { source: 'image', focusRegions: [] } } });
+    await cleared; session.close();
+  });
+  it('rejects invalid selection before sending work to the decoder', async () => {
+    const session = new CullingSession(), worker = FakeWorker.instances[0];
+    await expect(session.analyze(image(), false, { x: -1, y: 0, width: 0.1, height: 0.1 })).rejects.toThrow('Invalid focus');
+    expect(worker.postMessage).not.toHaveBeenCalled(); session.close();
+  });
   it('inspection and analysis use the immutable RAW import preview after edits', async () => {
     const baseFile = new File(['preview'], 'base.jpg'), edited = image();
     const original = new File(['raw'], 'source.CR2');

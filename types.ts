@@ -111,7 +111,15 @@ export type CullingGenre =
   | 'other';
 
 export interface CullingMetrics {
+  automatic?: {
+    model: 'u2netp-309c8469';
+    status: 'measured' | 'no-region' | 'unavailable';
+    coverage: number;
+    samples: CullingFocusMeasurement[];
+    summary?: CullingNativeMetrics;
+  };
   focus?: { region: CullingFocusRegion; technical: CullingTechnicalMetrics; sharpnessScore: number };
+  focusRegions?: CullingFocusMeasurement[];
   hash: string;
   meanLuma: number;
   sharpnessScore: number; // 0-1
@@ -132,9 +140,24 @@ export interface CullingMetrics {
 }
 
 export interface CullingFocusRegion { x: number; y: number; width: number; height: number }
+export interface CullingFocusMeasurement {
+  region: CullingFocusRegion;
+  technical: CullingTechnicalMetrics;
+  sharpnessScore: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  signature?: CullingSignature;
+}
+export type CullingIntent = 'standard' | 'detail' | 'motion' | 'creative' | 'stack';
 
 export interface CullingResult {
   focusRegion?: CullingFocusRegion;
+  focusRegions?: CullingFocusRegion[];
+  intent?: CullingIntent;
+  focusComparisonVerified?: boolean;
+  relativeFocusSharpness?: number;
+  referenceFocusSharpness?: number;
+  rejectionKind?: 'technical' | 'redundant';
   duplicateVerified?: boolean;
   metrics: CullingMetrics;
   finalScore: number; // 0-100 (žánrově vážený)

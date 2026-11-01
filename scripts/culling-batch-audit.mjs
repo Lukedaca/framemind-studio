@@ -11,9 +11,13 @@ const folder = process.argv[2];
 assert.ok(folder, 'Usage: node scripts/culling-batch-audit.mjs <folder> [label]');
 const label = process.argv[3] ?? 'batch';
 assert.match(label, /^[a-z0-9-]+$/i);
+const genre = process.env.CULLING_AUDIT_GENRE === 'general' ? null : process.env.CULLING_AUDIT_GENRE ?? 'sport';
 const output = fileURLToPath(new URL('../output/playwright/', import.meta.url));
 await mkdir(output, { recursive: true });
-const paths = (await readdir(folder)).filter(name => /\.(jpe?g|png)$/i.test(name)).sort().map(name => resolve(folder, name));
+const requestedNames = new Set(process.argv.slice(4));
+const paths = (await readdir(folder)).filter(name => /\.(jpe?g|png|cr2|cr3|nef|arw|dng|orf|rw2|raf|pef)$/i.test(name) &&
+  (!requestedNames.size || requestedNames.has(name))).sort().map(name => resolve(folder, name));
+assert.ok(!requestedNames.size || requestedNames.size === paths.length, 'A requested source file was not found');
 assert.ok(paths.length, 'No supported images');
 const hash = async path => {
   const digest = createHash('sha256');
@@ -27,6 +31,7 @@ const browser = await chromium.launch({ headless: true,
 const base = process.env.CULLING_SMOKE_URL ?? 'http://127.0.0.1:3100';
 const page = await browser.newPage();
 const external = [], errors = [];
+page.on('console', message => { if (message.text().startsWith('[Culling]')) console.log(message.text()); });
 await page.route('**/*', route => {
   const url = route.request().url();
   if (/^https?:/.test(url) && new URL(url).origin !== new URL(base).origin) {
@@ -43,21 +48,26 @@ try {
     document.body.append(input);
     window.audit = { session: new CullingSession(), rows: [], thumbs: [] };
   });
+  await page.evaluate(genre => { window.audit.genre = genre; }, genre);
   external.length = 0;
   const started = Date.now();
   for (let index = 0; index < paths.length; index++) {
     await page.locator('#audit-file').setInputFiles(paths[index]);
     await page.evaluate(async () => {
-      const file = document.querySelector('#audit-file').files[0];
-      const analysis = await window.audit.session.analyze({ id: file.name, file, originalFile: file });
-      const result = await window.audit.session.score(analysis, 'sport');
+      const original = document.querySelector('#audit-file').files[0];
+      const { isRawFile, processRawFile } = await import('/utils/rawProcessor.ts');
+      const raw = isRawFile(original);
+      const file = raw ? await processRawFile(original) : original;
+      const analysis = await window.audit.session.analyze({ id: original.name, file, originalFile: original,
+        ...(raw ? { baseFile: file, cullingSource: 'embedded-jpeg-preview' } : {}) });
+      const result = await window.audit.session.score(analysis, window.audit.genre);
       const bitmap = await createImageBitmap(file);
       try {
         const canvas = document.createElement('canvas');
         canvas.width = 280; canvas.height = Math.round(280 * bitmap.height / bitmap.width);
         canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         window.audit.thumbs.push(canvas.toDataURL('image/jpeg', 0.85));
-        window.audit.rows.push({ filename: file.name, originalWidth: bitmap.width, originalHeight: bitmap.height, result });
+        window.audit.rows.push({ filename: original.name, originalWidth: bitmap.width, originalHeight: bitmap.height, result });
       } finally { bitmap.close(); }
     });
     if ((index + 1) % 20 === 0) console.log(`Measured ${index + 1}/${paths.length}`);
@@ -72,7 +82,7 @@ try {
       detailConfidence: result.metrics.technical.detailConfidence, exif: result.exif,
       native: result.metrics.native,
     })));
-    for (const row of rows) row.result = rescoreCullingResult({ ...row.result, ...groups.get(row.filename) }, 'sport');
+    for (const row of rows) row.result = rescoreCullingResult({ ...row.result, ...groups.get(row.filename) }, window.audit.genre);
     const pairs = [];
     for (let i = 0; i < rows.length; i++) for (let j = Math.max(0, i - 2); j < i; j++) {
       pairs.push({ a: rows[j].filename, b: rows[i].filename,
@@ -101,13 +111,16 @@ try {
   assert.deepEqual(external, []);
   const counts = { keep: 0, review: 0, reject: 0 };
   for (const row of report.rows) counts[row.result.decision]++;
-  const summary = { label, count: paths.length, engineVersion: report.rows[0].result.engineVersion,
+  const summary = { label, genre, count: paths.length, engineVersion: report.rows[0].result.engineVersion,
+    automaticMeasured: report.rows.filter(row => row.result.metrics.automatic?.status === 'measured').length,
+    automaticUnavailable: report.rows.filter(row => row.result.metrics.automatic?.status === 'unavailable').length,
     counts, groupedPhotos: report.rows.filter(row => row.result.duplicateGroupId).length,
     originalHashesUnchanged: true, externalRequests: external.length, pageErrors: errors,
     elapsedSeconds: (Date.now() - started) / 1000 };
   await writeFile(join(output, `${label}-audit.json`), JSON.stringify({ ...summary, ...report,
     originals: paths.map((path, i) => ({ filename: basename(path), sha256: hashes[i] })) }, null, 2));
   console.log(JSON.stringify(summary, null, 2));
+  assert.equal(summary.automaticUnavailable, 0, 'Local automatic inference was unavailable');
   console.log(JSON.stringify(report.rows.slice().sort((a, b) => a.result.finalScore - b.result.finalScore).slice(0, 16)
     .map(({ filename, result: r }) => ({ filename, score: r.finalScore, decision: r.decision,
       sharpness: r.metrics.sharpnessScore, laplacian: r.metrics.technical.laplacianVariance,

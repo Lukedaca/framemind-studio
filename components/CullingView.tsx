@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import type { UploadedFile, CullingResult, CullingGenre, CullingDecision, CullingVerdictSource } from '../types';
-import { CULLING_GENRES, CULLING_ENGINE_VERSION, rescoreCullingResult, getEffectiveDecision, getVerdictSource } from '../utils/cullingEngine';
+import type { UploadedFile, CullingResult, CullingGenre, CullingDecision, CullingVerdictSource, CullingIntent, CullingFocusRegion } from '../types';
+import { CULLING_GENRES, CULLING_INTENTS, CULLING_ENGINE_VERSION, rescoreCullingResult, getEffectiveDecision, getVerdictSource } from '../utils/cullingEngine';
 import { CullingSession } from '../services/cullingSession';
 import { SparklesIcon, StackIcon, XCircleIcon } from './icons';
 import Aperture from './common/Aperture';
@@ -45,6 +45,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [genre, setGenre] = useState<CullingGenre>(() => files.find(f => f.culling?.genre)?.culling?.genre ?? 'other');
+  const [intent, setIntent] = useState<CullingIntent>(() => files.find(f => f.culling?.intent)?.culling?.intent ?? 'standard');
   const [filter, setFilter] = useState<Filter>('all');
   const [collapseSeries, setCollapseSeries] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -58,6 +59,8 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
   const mapRef = useRef(cullingMap);
   mapRef.current = cullingMap;
   const isRunning = phase === 'analyzing' || phase === 'grouping';
+  const batchIntents = new Set(files.map(file => cullingMap.get(file.id)?.intent ?? intent));
+  const batchIntent = batchIntents.size > 1 ? '' : batchIntents.values().next().value ?? intent;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -91,6 +94,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
         finalScore: r.finalScore, sharpness: r.metrics.technical?.laplacianVariance ?? 0,
         detailConfidence: r.metrics.technical?.detailConfidence ?? 0, exif: r.exif,
         native: r.metrics.native,
+        focusRegions: r.metrics.focusRegions, intent: r.intent,
       }] : [];
     }));
     const byId = new Map(files.map(file => [file.id, file]));
@@ -98,7 +102,8 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     for (const [id, result] of workMap) {
       if (result.engineVersion !== CULLING_ENGINE_VERSION || result.analysisStatus !== 'done') continue;
       const { duplicateGroupId, isBestInGroup, groupRank, groupKind, similarityToBest, relativeSharpness, scoreGap,
-        referenceDetailConfidence, relativeNativeSharpness, referenceNativeSharpness, duplicateVerified, ...base } = result;
+        referenceDetailConfidence, relativeNativeSharpness, referenceNativeSharpness, duplicateVerified,
+        focusComparisonVerified, relativeFocusSharpness, referenceFocusSharpness, ...base } = result;
       const assignment = assignments.get(id);
       let verified = false;
       if (assignment?.groupKind === 'near-duplicate' && assignment.isBestInGroup === false && (assignment.similarityToBest ?? 0) >= 0.965) {
@@ -112,7 +117,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     }
   };
 
-  const runCulling = async (selectedGenre: CullingGenre = genre, rescoreOnly = false, force = false) => {
+  const runCulling = async (selectedGenre: CullingGenre = genre, rescoreOnly = false, force = false, overrideIntent?: CullingIntent) => {
     if (!files.length || sessionRef.current) return;
     let session: CullingSession;
     try { session = new CullingSession(); } catch { addNotification(tr('cull_worker_unavailable'), 'error'); return; }
@@ -126,8 +131,9 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
           if (cancelledRef.current) break;
           const file = files[index];
           try {
-            const analysis = await session.analyze(file, force, workMap.get(file.id)?.focusRegion);
-            const result = await session.score(analysis, selectedGenre);
+            const previous = workMap.get(file.id);
+            const analysis = await session.analyze(file, force, previous?.focusRegions ?? previous?.focusRegion);
+            const result = await session.score(analysis, selectedGenre, overrideIntent ?? previous?.intent ?? intent);
             workMap.set(file.id, { ...result, manualDecision: workMap.get(file.id)?.manualDecision });
           } catch (error) {
             if ((error as Error).name === 'AbortError' || cancelledRef.current) throw error;
@@ -136,6 +142,8 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
               metrics: { hash: '', meanLuma: 0, sharpnessScore: 0, exposureScore: 0, highlightClipping: 0,
                 shadowClipping: 0, contrastScore: 0, noiseScore: 0, compositionScore: 0, nativeSharpness: 0 },
               finalScore: 0, decision: 'review', manualDecision: workMap.get(file.id)?.manualDecision,
+              focusRegion: workMap.get(file.id)?.focusRegion, focusRegions: workMap.get(file.id)?.focusRegions,
+              intent: overrideIntent ?? workMap.get(file.id)?.intent ?? intent,
               reasons: ['cull_reason_unreadable'], risks: ['cull_risk_unreadable'], aspectRatio: 1,
               engineVersion: CULLING_ENGINE_VERSION, analysisStatus: 'error', source: file.cullingSource ?? 'image',
             });
@@ -144,7 +152,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
           setProgress({ current: index + 1, total: files.length }); setCullingMap(new Map(workMap));
         }
       } else {
-        for (const [id, result] of workMap) workMap.set(id, rescoreCullingResult(result, selectedGenre));
+        for (const [id, result] of workMap) workMap.set(id, rescoreCullingResult({ ...result, intent: overrideIntent ?? result.intent }, selectedGenre));
       }
       if (!cancelledRef.current && sessionRef.current === session) { setPhase('grouping'); await applySimilarity(workMap, session, selectedGenre); }
     } catch (error) {
@@ -160,20 +168,23 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     }
   };
   const stopCulling = () => { cancelledRef.current = true; sessionRef.current?.close(); };
-  const setFocusRegion = async (id: string, region: CullingResult['focusRegion'] | null) => {
+  const updateSelection = async (ids: string[], regions?: CullingFocusRegion[], selectedIntent?: CullingIntent) => {
     if (sessionRef.current) return;
-    const file = files.find(item => item.id === id);
-    if (!file) return;
+    const selectedFiles = files.filter(file => ids.includes(file.id));
+    if (!selectedFiles.length) return;
     let session: CullingSession;
     try { session = new CullingSession(); } catch { addNotification(tr('cull_worker_unavailable'), 'error'); return; }
     sessionRef.current = session; cancelledRef.current = false;
-    setPhase('analyzing'); setProgress({ current: 0, total: 1 });
+    setPhase('analyzing'); setProgress({ current: 0, total: selectedFiles.length });
     const next = new Map(mapRef.current);
     try {
-      const analysis = await session.analyze(file, true, region);
-      const result = await session.score(analysis, genre);
-      next.set(id, { ...result, manualDecision: next.get(id)?.manualDecision });
-      setProgress({ current: 1, total: 1 });
+      for (const [index, file] of selectedFiles.entries()) {
+        const previous = next.get(file.id);
+        const analysis = await session.analyze(file, false, regions ?? previous?.focusRegions ?? previous?.focusRegion);
+        const result = await session.score(analysis, genre, selectedIntent ?? previous?.intent ?? intent);
+        next.set(file.id, { ...result, manualDecision: previous?.manualDecision });
+        setProgress({ current: index + 1, total: selectedFiles.length });
+      }
       await applySimilarity(next, session, genre);
       if (mountedRef.current && sessionRef.current === session) {
         sessionRef.current = null;
@@ -208,12 +219,14 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     if (mapRef.current.size) void runCulling(nextGenre, true);
   };
   const removeRejects = async () => {
-    if (sessionRef.current) return;
+    if (sessionRef.current) return false;
     const rejects = files.filter(f => getEffectiveDecision(cullingMap.get(f.id)) === 'reject');
-    if (!rejects.length || !await confirmAction(tr('cull_remove_confirm') + ' (' + rejects.length + ')\n' + tr('cull_remove_undo_hint'))) return;
+    if (!rejects.length) return true;
+    if (!await confirmAction(tr('cull_remove_confirm') + ' (' + rejects.length + ')\n' + tr('cull_remove_undo_hint'))) return false;
     const ids = new Set(rejects.map(f => f.id));
     onSetFiles(prev => prev.filter(f => !ids.has(f.id)), tr('cull_remove_rejects'));
     addNotification(ids.size + ' ' + tr('cull_removed_count'), 'info');
+    return true;
   };
 
   // --- Odvozené pohledy ---
@@ -358,6 +371,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
           {result && !inStrip && <p className="text-[11px] text-gray-200 leading-snug line-clamp-2 mt-0.5">
             {result.engineVersion === CULLING_ENGINE_VERSION ? result.reasons.map(translateTag).join(' · ') : tr('cull_reason_reanalyze')}
           </p>}
+          {result?.rejectionKind && getEffectiveDecision(result) === 'reject' && !result.manualDecision && <p className="text-[10px] text-fm-red mt-1">{tr('cull_rejection_' + result.rejectionKind)}</p>}
           {result && result.risks.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {result.risks.slice(0, 2).map((risk, i) => (
@@ -414,6 +428,17 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
               {CULLING_GENRES.map(g => <option key={g} value={g}>{tr('cull_genre_' + g)}</option>)}
             </select>
             <p className="text-[11px] text-gray-400 leading-relaxed">{tr('cull_genre_hint')}</p>
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="culling-intent" className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">{tr('cull_intent_batch')}</label>
+            <select id="culling-intent" value={batchIntent} disabled={isRunning} onChange={e => {
+              const value = e.target.value as CullingIntent; setIntent(value);
+              if (mapRef.current.size) void runCulling(genre, true, false, value);
+            }} className="w-full bg-elevated border border-border-subtle rounded-xl px-3 py-2.5 text-xs text-white">
+              <option value="" disabled>{tr('cull_intent_mixed')}</option>
+              {CULLING_INTENTS.map(value => <option key={value} value={value}>{tr('cull_intent_' + value)}</option>)}
+            </select>
+            <p className="text-[11px] text-gray-400 leading-relaxed">{tr('cull_intent_hint')}</p>
           </div>
           <p className="text-[11px] text-gray-400 leading-relaxed border border-border-subtle rounded-xl p-3">{tr('cull_limits')}</p>
 
@@ -554,10 +579,11 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
             )}
             {onDone && (
               <button
-                onClick={onDone}
+                disabled={isRunning}
+                onClick={async () => { if (await removeRejects()) onDone(); }}
                 className="w-full py-2.5 rounded-xl bg-white text-black text-xs font-bold uppercase tracking-wide hover:bg-gray-200 transition-colors"
               >
-                {tr('cull_continue_editor')}
+                {tr(counts.reject ? 'cull_apply_editor' : 'cull_continue_editor')}
               </button>
             )}
           </div>
@@ -624,7 +650,8 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
         </div>
       </div>
       {inspectionFiles.length > 0 && <CullingCompare key={inspectionIds.join('|')} files={inspectionFiles} results={cullingMap}
-        onDecision={setManualDecision} onFocusRegion={setFocusRegion} busy={isRunning} onClose={() => setInspectionIds([])} />}
+        onDecision={setManualDecision} onFocusRegions={(ids, regions) => { void updateSelection(ids, regions); }}
+        onIntentChange={(id, value) => { void updateSelection([id], undefined, value); }} busy={isRunning} onClose={() => setInspectionIds([])} />}
     </div>
   );
 };

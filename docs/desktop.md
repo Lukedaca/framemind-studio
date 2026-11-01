@@ -42,7 +42,12 @@ Výstupy:
 
 - `dist-desktop/`: zabalený frontend bez PWA a service workeru.
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
-- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.6_x64-setup.exe`: instalátor.
+- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.7_x64-setup.exe`: instalátor aktuálních zdrojů.
+
+Místní sestavení 0.1.7 z 1. listopadu 2026 není zveřejněné ani nainstalované.
+Jeho běžné EXE prošlo v odděleném profilu testem automatického cullingu,
+systémového potvrzení, přechodu do editoru a obnovení přes Zpět.
+Podrobnosti a hranice ověření: [změny po 0.1.6](releases/unreleased.md).
 
 Název souboru zveřejněného na GitHubu používá `FrameMind-Studio` s pomlčkou;
 obsah je totožný s místním instalátorem se jménem `FrameMind Studio`.
@@ -141,7 +146,8 @@ bez úspěšného opakování se tento starší stav může po restartu obnovit.
 
 ## Připojení a omezení
 
-Culling je bez AI, klíčů, modelů a síťových požadavků. Zabalení do desktopu
+Culling ve zdrojové verzi 0.1.7 používá lokální přibalený model U²-NetP bez
+klíčů a stahování modelu za běhu. Publikovaná 0.1.6 jej ještě neobsahuje. Zabalení do desktopu
 nemění jiné části editoru: retuš a klikací laso stále poprvé stahují modely
 z Hugging Face, písma používají Google Fonts a dvě funkce editoru stále používají
 Gemini s vlastním klíčem. Přesný rozpis je v [README](../README.md#připojení-a-data).
