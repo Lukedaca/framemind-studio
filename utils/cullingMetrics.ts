@@ -21,9 +21,9 @@ function percentile(histogram: Uint32Array, count: number, fraction: number): nu
   return 255;
 }
 
-function median(values: number[]): number {
+function median(values: Float64Array): number {
   if (!values.length) return 0;
-  values.sort((a, b) => a - b);
+  values.sort();
   const middle = Math.floor(values.length / 2);
   return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
 }
@@ -60,19 +60,19 @@ export function readMetrics(data: Uint8ClampedArray, width: number, height: numb
   }
 
   // Noise is estimated only in locally smooth samples, away from clipping.
-  const residuals: number[] = [];
-  let samples = 0;
+  const residuals = new Float64Array(Math.ceil(Math.max(0, width - 2) / 2) * Math.ceil(Math.max(0, height - 2) / 2));
+  let samples = 0, residualCount = 0;
   for (let y = 1; y < height - 1; y += 2) {
     for (let x = 1; x < width - 1; x += 2) {
       samples += 1;
       const p = y * width + x;
-      const neighbours = [gray[p - 1], gray[p + 1], gray[p - width], gray[p + width]];
-      if (Math.max(...neighbours) - Math.min(...neighbours) > 32 || gray[p] < 10 || gray[p] > 245) continue;
-      residuals.push(Math.abs(gray[p] - neighbours.reduce((s, v) => s + v, 0) / 4));
+      const left = gray[p - 1], right = gray[p + 1], top = gray[p - width], bottom = gray[p + width];
+      if (Math.max(left, right, top, bottom) - Math.min(left, right, top, bottom) > 32 || gray[p] < 10 || gray[p] > 245) continue;
+      residuals[residualCount++] = Math.abs(gray[p] - (left + right + top + bottom) / 4);
     }
   }
-  const noiseConfidence = clamp01(residuals.length / Math.max(1, samples) / 0.4);
-  const noiseEstimate = median(residuals) / (0.6745 * Math.sqrt(1.25));
+  const noiseConfidence = clamp01(residualCount / Math.max(1, samples) / 0.4);
+  const noiseEstimate = median(residuals.subarray(0, residualCount)) / (0.6745 * Math.sqrt(1.25));
   const filtered = gray.slice();
   for (let y = 1; y < height - 1; y += 1) {
     for (let x = 1; x < width - 1; x += 1) {

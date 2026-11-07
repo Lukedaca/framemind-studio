@@ -1,9 +1,18 @@
 # Changes after 0.1.6
 
-Local development: application `0.1.7`, culling engine `local-1.8`.
+Local development: application `0.1.7`, culling engine `local-1.9`.
 An unsigned Windows x64 NSIS installer has been built locally. These changes
 have not been installed into the user's working application or
 published. The published installer documented in this repository remains 0.1.6.
+
+7 November: replace the culling-only WebGPU/Asyncify imports with standard
+WASM assets, retaining one local worker thread. Use a preallocated Float64
+noise buffer and native numeric sorting; sampled diagnostics remain exactly
+equal. Sparse high-key/low-key subjects now require review instead of being
+discarded as empty clipped frames. Original-scale structure also vetoes that
+rule. Index series members once per render and scroll keyboard selections
+into view. Existing automatic analyses require remeasurement; manual choices
+remain authoritative. See [performance and verification](../culling-performance-2026-11-07.md).
 
 - Automatically find salient objects using the bundled, SHA-256-pinned U²-NetP
   model. Measure up to twelve interior 128 × 128 source-pixel details without

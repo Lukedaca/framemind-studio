@@ -35,7 +35,7 @@ export default defineConfig(({ mode }) => {
         host: '127.0.0.1',
         headers: ISOLATION_HEADERS,
       },
-      optimizeDeps: { include: ['onnxruntime-web/webgpu'] },
+      optimizeDeps: { include: ['onnxruntime-web/webgpu', 'onnxruntime-web/wasm'] },
       plugins: [
         react(),
         detectApiKeys(),

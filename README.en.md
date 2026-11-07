@@ -144,7 +144,7 @@ scores and series references use fixed positions; extra sharp detail can veto
 rejection and require review. Samples are processed sequentially. This does not
 identify subjects by itself, and important detail can still be missed.
 
-Source version **0.1.7 / local-1.8** automatically finds salient objects with a
+Source version **0.1.7 / local-1.9** automatically finds salient objects with a
 bundled U²-NetP model. Up to twelve 128 × 128 px crops are measured at native
 resolution; strong blur evidence can automatically flag a photo for rejection.
 Manual marking is optional. The model does not recognize eyes or decisive moments

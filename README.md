@@ -142,7 +142,7 @@ mřížku. Bez ručních či automatických oblastí vychází skóre a referenc
 doplňkový ostrý detail může zabránit vyřazení a poslat snímek ke kontrole.
 Výřezy se měří postupně. Samotná mřížka neurčuje subjekt a důležitý detail lze minout.
 
-Verze zdrojů **0.1.7 / local-1.8** přidává automatické hledání výrazných objektů
+Verze zdrojů **0.1.7 / local-1.9** přidává automatické hledání výrazných objektů
 přibaleným modelem U²-NetP. Až 12 výřezů 128 × 128 px se měří v původním rozlišení;
 silné známky rozmazání mohou automaticky označit snímek k vyřazení. Ruční označení
 není potřeba. Model nerozpoznává oči ani rozhodující moment a může minout důležitý

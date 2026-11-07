@@ -1,6 +1,6 @@
-import * as ort from 'onnxruntime-web/webgpu';
-import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
-import wasmModuleUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
+import * as ort from 'onnxruntime-web/wasm';
+import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
+import wasmModuleUrl from 'onnxruntime-web/ort-wasm-simd-threaded.mjs?url';
 import modelUrl from '../assets/culling/u2netp.onnx?url';
 import { automaticSamplePlan, subjectInput, SUBJECT_INPUT_SIZE } from '../utils/cullingAutomatic';
 
@@ -33,7 +33,9 @@ export async function automaticRegions(bitmap: ImageBitmap) {
   context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
   context.drawImage(bitmap, 0, 0, SUBJECT_INPUT_SIZE, SUBJECT_INPUT_SIZE);
   const input = new ort.Tensor('float32', subjectInput(context.getImageData(0, 0, SUBJECT_INPUT_SIZE, SUBJECT_INPUT_SIZE).data), [1, 3, SUBJECT_INPUT_SIZE, SUBJECT_INPUT_SIZE]);
-  const output = await model.run({ [model.inputNames[0]]: input }, [model.outputNames[0]]);
-  try { return automaticSamplePlan(output[model.outputNames[0]].data as Float32Array, bitmap.width, bitmap.height); }
-  finally { input.dispose(); Object.values(output).forEach(tensor => tensor.dispose()); }
+  try {
+    const output = await model.run({ [model.inputNames[0]]: input }, [model.outputNames[0]]);
+    try { return automaticSamplePlan(output[model.outputNames[0]].data as Float32Array, bitmap.width, bitmap.height); }
+    finally { Object.values(output).forEach(tensor => tensor.dispose()); }
+  } finally { input.dispose(); }
 }

@@ -255,14 +255,27 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     });
   }, [files, cullingMap, filter, collapseSeries, expandedGroups]);
 
-  const groupMembers = useCallback((groupId: string) =>
-    files.filter(f => cullingMap.get(f.id)?.duplicateGroupId === groupId), [files, cullingMap]);
+  const groupsById = useMemo(() => {
+    const groups = new Map<string, UploadedFile[]>();
+    for (const file of files) {
+      const groupId = cullingMap.get(file.id)?.duplicateGroupId;
+      if (!groupId) continue;
+      const members = groups.get(groupId) ?? [];
+      members.push(file); groups.set(groupId, members);
+    }
+    return groups;
+  }, [files, cullingMap]);
+  const groupMembers = useCallback((groupId: string) => groupsById.get(groupId) ?? [], [groupsById]);
   const selectedCompareIds = compareIds.filter(id => files.some(file => file.id === id));
   const inspectionFiles = inspectionIds.flatMap(id => files.find(file => file.id === id) ?? []);
   const toggleCompare = (id: string) => setCompareIds(previous => previous.includes(id) ? previous.filter(value => value !== id) :
     previous.filter(value => files.some(file => file.id === value)).length < 4 ? [...previous.filter(value => files.some(file => file.id === value)), id] : previous);
 
   // Klávesy jako v profi cullingu: šipky = fokus, K/R/X = verdikt.
+  useEffect(() => {
+    if (focusedId) document.getElementById(`culling-card-${focusedId}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [focusedId]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (sessionRef.current || inspectionIds.length) return;
@@ -311,6 +324,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     return (
       <div
         key={inStrip ? `strip-${file.id}` : file.id}
+        id={inStrip ? undefined : `culling-card-${file.id}`}
         className={`group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200 bg-elevated
           ${inStrip ? 'aspect-square' : 'aspect-[3/2]'}
           ${isFocused ? `ring-2 ${style?.ring ?? 'ring-fm-blue'} shadow-lg` : 'hover:ring-1 hover:ring-gray-600'}`}

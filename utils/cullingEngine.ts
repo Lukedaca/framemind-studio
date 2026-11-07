@@ -6,7 +6,7 @@ import { compareAlignedSignatures, compareSignatures, isValidSignature, type Sim
 import { comparableFocus, focusMeasurements, focusSharpness, severelySoftFocus, validFocusEvidence } from './cullingRegions';
 import { validAutomaticEvidence } from './cullingAutomatic';
 
-export const CULLING_ENGINE_VERSION = 'local-1.8';
+export const CULLING_ENGINE_VERSION = 'local-1.9';
 export const CULLING_INTENTS: CullingIntent[] = ['standard', 'detail', 'motion', 'creative', 'stack'];
 export const SIMILARITY_EXACT_LIMIT = 320;
 export const MAX_SERIES_SIZE = 48;
@@ -110,13 +110,15 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
       if (assessBlur && context.focusComparisonVerified && (context.relativeFocusSharpness ?? 1) < 0.5) risks.push('cull_risk_focus_vs_series');
     }
   }
-  // A nearly empty clipped preview has lost essentially all luminance data.
-  // Isolated highlights, silhouettes and ordinary low-key/high-key photos do not qualify.
-  const emptyHighlights = metrics.highlightClipping >= 0.98 &&
-    Math.min(technical.redClip, technical.greenClip, technical.blueClip) >= 0.98;
-  const emptyShadows = metrics.shadowClipping >= 0.98 &&
-    Math.min(technical.redShadowClip, technical.greenShadowClip, technical.blueShadowClip) >= 0.98;
-   const emptyClippedPreview = (emptyHighlights || emptyShadows) && technical.dynamicRange <= 8 && technical.entropy < 1 &&
+  // A small product, star or distant subject can occupy less than 1% of a frame.
+  // Percentile range/entropy cannot establish emptiness; every preview pixel
+  // must be clipped, and any measured original-scale structure vetoes rejection.
+  const emptyHighlights = metrics.highlightClipping === 1 &&
+    Math.min(technical.redClip, technical.greenClip, technical.blueClip) === 1;
+  const emptyShadows = metrics.shadowClipping === 1 &&
+    Math.min(technical.redShadowClip, technical.greenShadowClip, technical.blueShadowClip) === 1;
+  const emptyClippedPreview = (emptyHighlights || emptyShadows) && technical.dynamicRange <= 8 && technical.entropy < 1 &&
+      (!metrics.native || (metrics.native.informativeSamples === 0 && metrics.native.maxLaplacianVariance <= .01)) &&
       [...selected, ...(auto?.samples ?? [])].every(f => f.technical.dynamicRange <= 8 && f.technical.entropy < 1);
   const native = metrics.native;
   // Broad, measurable edges but almost no fine detail across the 1:1 sample grid.

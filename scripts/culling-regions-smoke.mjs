@@ -76,7 +76,7 @@ try {
   });
   report.worker = fixtures.worker;
   await writeFile(new URL('culling-regions-worker.json', output), JSON.stringify(report.worker, null, 2));
-  assert.equal(report.worker.version, 'local-1.8');
+  assert.equal(report.worker.version, 'local-1.9');
   assert.equal(report.worker.globalDecision, 'keep');
   assert.equal(report.worker.selectedDecision, 'review');
   assert.equal(report.worker.strictDecision, 'reject');

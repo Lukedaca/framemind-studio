@@ -44,7 +44,7 @@ Výstupy:
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
 - `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.7_x64-setup.exe`: instalátor aktuálních zdrojů.
 
-Místní sestavení 0.1.7 z 1. listopadu 2026 není zveřejněné ani nainstalované.
+Místní sestavení 0.1.7 s cullingem local-1.9 ze 7. listopadu 2026 není zveřejněné ani nainstalované.
 Jeho běžné EXE prošlo v odděleném profilu testem automatického cullingu,
 systémového potvrzení, přechodu do editoru a obnovení přes Zpět.
 Podrobnosti a hranice ověření: [změny po 0.1.6](releases/unreleased.md).

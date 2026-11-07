@@ -85,6 +85,7 @@ try {
   assert.equal(await page.getByText('Chyba čtení / obnov import', { exact: true }).count(), 0);
   await page.getByRole('checkbox', { name: 'Sbalit série (jeden reprezentant)' }).uncheck();
   assert.equal(await page.locator('.fm-grid-photos > div').count(), 5);
+  assert.equal(await page.getByText('Automatická kontrola objektů není dostupná: přeměř snímek', { exact: true }).count(), 0);
   const namedCard = name => page.locator('.fm-grid-photos > div').filter({ has: page.getByText(name, { exact: true }) });
   assert.match(await namedCard('IMG_0002.jpg').innerText(), /Nadbytečný téměř totožný záběr/);
   assert.match(await namedCard('IMG_0003.jpg').innerText(), /Téměř celý náhled bez jasových dat/);
@@ -141,7 +142,17 @@ try {
   await page.getByText('Běh zastaven. Dokončená měření zůstávají.', { exact: true }).waitFor();
   report.cancelledUiRun = true;
   mark('stopped');
-  if (!desktopCdp) report.worker = await page.evaluate(async data => {
+  await page.locator('.fm-grid-photos > div').last().click({ position: { x: 10, y: 80 } });
+  await page.keyboard.press('Escape');
+  for (let i = 0; i < 59; i++) await page.keyboard.press('ArrowLeft');
+  const focusedVisible = await page.locator('.fm-grid-photos > div.ring-2').evaluate(card => {
+    const frame = card.closest('.custom-scrollbar').getBoundingClientRect();
+    const bounds = card.getBoundingClientRect();
+    return bounds.top >= frame.top - 1 && bounds.bottom <= frame.bottom + 1;
+  });
+  assert.equal(focusedVisible, true, 'Keyboard selection must scroll its active card into view');
+  report.keyboardSelectionVisible = true;
+  if (!desktopCdp && process.env.CULLING_SMOKE_BUNDLED !== '1') report.worker = await page.evaluate(async data => {
     const { CullingSession } = await import('/services/cullingSession.ts');
     const bytes = Uint8Array.from(atob(data), char => char.charCodeAt(0));
     const file = new File([bytes], 'worker.jpg', { type: 'image/jpeg' });
@@ -155,8 +166,8 @@ try {
         remoteAiPresent: 'ai' in result, localModelStatus: analysis.metrics.automatic?.status, signatureLength: analysis.metrics.signature.luma.length };
     } finally { session.close(); }
   }, images.image);
-  if (!desktopCdp) {
-  assert.equal(report.worker.version, 'local-1.8'); assert.equal(report.worker.originalUnchanged, true);
+  if (report.worker) {
+  assert.equal(report.worker.version, 'local-1.9'); assert.equal(report.worker.originalUnchanged, true);
   assert.equal(report.worker.remoteAiPresent, false); assert.equal(report.worker.signatureLength, 1024);
   }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);

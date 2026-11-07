@@ -1,7 +1,7 @@
 # Lokální culling ve Studiu
 
 Výběr fotografií běží ve vašem počítači bez API klíče a odesílání fotografií.
-Engine `local-1.8` používá přibalený lokální model U²-NetP pro nalezení výrazných
+Engine `local-1.9` používá přibalený lokální model U²-NetP pro nalezení výrazných
 objektů a vlastní technická měření pro automatické označení ponechat, zkontrolovat
 nebo vyřadit. Ruční rozhodnutí fotografa mají přednost.
 Tento návod popisuje [změny po vydání 0.1.6](releases/unreleased.md).
@@ -142,7 +142,27 @@ Kontrola detailu používá obrazový zdroj z importu, nikoli pozdější úprav
 Celé Studio není plně offline: modely retuše a písma se stahují a dvě volitelné
 funkce editoru používají Gemini. [Připojení a data](../README.md#připojení-a-data).
 
-## Aktuální ověření local-1.8 — 1. listopadu 2026
+## Změny local-1.9 — 7. listopadu 2026
+
+Malý motiv na bílé či černé ploše už nestačí k návrhu „prázdný snímek“.
+Celý náhled musí být oříznutý do světel nebo stínů; měřitelná struktura
+v původních výřezech tento návrh blokuje. Třináct nových regresních případů
+zahrnuje výchozí nastavení i všechny technické profily, jediný neklipovaný
+pixel a detail ztracený při zmenšení. Jde o technickou ochranu, nikoli
+rozpoznání fotografického záměru.
+
+Měření šumu používá předem přidělené pole a nativní číselné řazení.
+Model používá standardní WASM runtime s jedním vláknem. Na 12 shodných JPEGech
+se zachovaly všechny metriky, skóre a verdikty. Medián měření po prvním
+snímku klesl z 2,025 na 1,854 s na jednom místním počítači. Není to garance
+rychlosti na jiném hardwaru. Sestavení velké sady zatím stále trvá dlouho;
+samotná optimalizace metrik neřeší cenu inference modelu.
+
+Seznam členů série se připravuje jednou pro celou sadu. Pohyb klávesami
+posouvá aktivní kartu do viditelné části mřížky. Podrobné výsledky a omezení:
+[měření výkonu](culling-performance-2026-11-07.md).
+
+## Ověření local-1.8 — 1. listopadu 2026
 
 Prošly kontroly TypeScriptu, 234 testů v 29 souborech, webový/PWA i desktopový
 frontend a sestavení Windows EXE a NSIS instalátoru 0.1.7. Automatický výběr

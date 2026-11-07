@@ -28,8 +28,8 @@ describe('culling dependency boundary', () => {
         if (!match[1].startsWith('.')) {
           // Desktop confirmation uses in-process IPC to a native dialog.
           const allowed = ['react', 'exifr', '@tauri-apps/api/core', '@tauri-apps/plugin-dialog'];
-          if (file.endsWith('cullingSubject.ts')) allowed.push('onnxruntime-web/webgpu',
-            'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url', 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url');
+          if (file.endsWith('cullingSubject.ts')) allowed.push('onnxruntime-web/wasm',
+            'onnxruntime-web/ort-wasm-simd-threaded.wasm?url', 'onnxruntime-web/ort-wasm-simd-threaded.mjs?url');
           expect(allowed).toContain(match[1]); continue;
         }
         const base = resolve(dirname(file), match[1].split('?')[0]);
