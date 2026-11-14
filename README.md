@@ -27,7 +27,7 @@ vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může z
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
 Uživatel nepotřebuje Git, Node.js ani Rust. Instalátor obsahuje offline instalační
-program WebView2 pro počítače, kde runtime chybí; proto má přibližně 230 MB.
+program WebView2 pro počítače, kde runtime chybí; proto má přibližně 238 MB.
 Instalace je pro současného uživatele; aplikace má zástupce a standardní odinstalaci.
 Pro přípravu klientského vydání je nutný důvěryhodný podpis vydavatele.
 Podpis ověřuje původ a integritu souboru; sám negarantuje okamžité odstranění

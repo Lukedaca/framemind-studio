@@ -27,7 +27,7 @@ development preview. Do not distribute it to clients. Windows may show SmartScre
 or block installation; disabling protection is not part of the installation instructions.
 
 Users do not need Git, Node.js or Rust. The installer includes an offline WebView2
-installer for computers without the runtime, making it about 230 MB.
+installer for computers without the runtime, making it about 238 MB.
 Installation is per user, with shortcuts and standard uninstallation.
 Preparing a client release requires a trusted publisher signature. Signing verifies
 file origin and integrity; it does not guarantee immediate SmartScreen reputation.
