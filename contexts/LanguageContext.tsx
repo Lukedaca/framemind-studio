@@ -703,6 +703,7 @@ const translations = {
     radial_quick_actions: "Rychlé akce",
     // --- Zjednodušené studio (2026-09) ---
     nav_overview: "Přehled",
+    nav_step_done: "hotovo",
     nav_studio_section: "Studio",
     nav_gemini_key: "Gemini API klíč (volitelný)",
     nav_local_note: "Retuš a úpravy běží ve vašem počítači",
@@ -1533,6 +1534,7 @@ const translations = {
     radial_quick_actions: "Quick actions",
     // --- Simplified studio (2026-09) ---
     nav_overview: "Overview",
+    nav_step_done: "done",
     nav_studio_section: "Studio",
     nav_gemini_key: "Gemini API key (optional)",
     nav_local_note: "Retouching and edits run on your computer",

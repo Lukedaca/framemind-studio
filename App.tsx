@@ -389,11 +389,12 @@ function App() {
         currentView={view}
         activeAction={activeAction}
         fileCount={files.length}
+        culledCount={files.filter(file => file.culling?.analysisStatus === 'done').length}
         hasWorkspace={files.length > 0 || history.past.length > 0 || history.future.length > 0}
         onClearWorkspace={handleClearWorkspace}
         clearPending={clearPending}
       />
-      <main className="flex min-w-0 flex-1 flex-col lg:pl-60">
+      <main className="flex min-w-0 flex-1 flex-col lg:pl-72">
         <Suspense fallback={<Loading />}>{renderView()}</Suspense>
       </main>
 
