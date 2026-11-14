@@ -1,12 +1,24 @@
 // Pure local scoring and grouping; browser I/O belongs to cullingSession/worker.
 import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, CullingNativeMetrics, CullingResult,
-  CullingScoreBreakdown, CullingScorePart, CullingSignature, CullingVerdictSource, CullingIntent, CullingFocusMeasurement } from '../types';
+  CullingScoreBreakdown, CullingScorePart, CullingSignature, CullingVerdictSource, CullingIntent, CullingFocusMeasurement,
+  CullingOutputTarget } from '../types';
 import { clamp01 } from './cullingMetrics';
 import { compareAlignedSignatures, compareSignatures, isValidSignature, type SimilarityComparison } from './cullingSimilarity';
 import { comparableFocus, focusMeasurements, focusSharpness, severelySoftFocus, validFocusEvidence } from './cullingRegions';
 import { validAutomaticEvidence } from './cullingAutomatic';
+import { OUTPUT_SHARP, opticalSharpness, opticsVerdict, outputScale, reliableOptics, sharpestTile, type OpticsVerdict } from './cullingOptics';
 
-export const CULLING_ENGINE_VERSION = 'local-1.9';
+export const CULLING_ENGINE_VERSION = 'local-2.0';
+
+/**
+ * Optical evidence for one delivery size. Only without a photographer-chosen focus
+ * area: the salient object is the model's guess, the chosen area is the intent.
+ */
+function optics(metrics: CullingMetrics, target: CullingOutputTarget): OpticsVerdict | undefined {
+  if (focusMeasurements(metrics).length || !reliableOptics(metrics.optics)) return undefined;
+  const verdict = opticsVerdict(metrics.optics, target);
+  return verdict.kind === 'unmeasured' ? undefined : verdict;
+}
 export const CULLING_INTENTS: CullingIntent[] = ['standard', 'detail', 'motion', 'creative', 'stack'];
 export const SIMILARITY_EXACT_LIMIT = 320;
 export const MAX_SERIES_SIZE = 48;
@@ -34,7 +46,8 @@ const referenceDetail = (native: CullingNativeMetrics) => native.fixedMaxLaplaci
 const referenceSamples = (native: CullingNativeMetrics) => native.fixedInformativeSamples ?? native.informativeSamples;
 const referenceSharpness = (native: CullingNativeMetrics) => native.fixedMaxSharpnessScore ?? native.maxSharpnessScore;
 
-export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGenre | null, intent: CullingIntent = 'standard'): CullingScoreBreakdown {
+export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGenre | null, intent: CullingIntent = 'standard',
+  target: CullingOutputTarget = 'full'): CullingScoreBreakdown {
   const technical = metrics.technical;
   const weights = [...(profiles[genre ?? 'other'] ?? profiles.other)];
   if (intent === 'motion') { weights[0] = 0; weights[5] = 0; }
@@ -46,7 +59,15 @@ export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGen
   const confidence = [selected.length ? Math.min(...selected.map(f => f.technical.detailConfidence)) :
     auto?.samples.length ? Math.max(...auto.samples.map(f => f.technical.detailConfidence)) : technical?.detailConfidence ?? 0,
     1, 1, technical?.noiseConfidence ?? 0, 1, technical?.motionConfidence ?? 0];
-  const values = [nativeSharpness(metrics), metrics.exposureScore,
+  // Blur in pixels is independent of texture; it replaces texture energy when measured.
+  const optical = optics(metrics, target);
+  if (optical?.outputBlur !== undefined) confidence[0] = 1;
+  // Sharpness away from the detected object: either a missed focus or the object is not the subject.
+  // The score stays between the two readings; the review risk carries the question.
+  const opticalScore = optical?.outputBlur === undefined ? undefined : optical.kind === 'focus-elsewhere'
+    ? (opticalSharpness(optical.outputBlur) + opticalSharpness(metrics.optics!.frameBlur! * outputScale(target, metrics.optics!.sourceWidth, metrics.optics!.sourceHeight))) / 2
+    : opticalSharpness(optical.outputBlur);
+  const values = [opticalScore ?? nativeSharpness(metrics), metrics.exposureScore,
     1 - Math.min(1, (metrics.highlightClipping + metrics.shadowClipping) * 1.5),
     metrics.noiseScore, metrics.contrastScore, 1 - (technical?.motionBlurEstimate ?? 0)];
   return Object.fromEntries(PARTS.map((part, i) => {
@@ -58,11 +79,15 @@ export function computeScoreBreakdown(metrics: CullingMetrics, genre: CullingGen
   })) as CullingScoreBreakdown;
 }
 
-export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre | null, intent: CullingIntent = 'standard'): number {
-  return Math.round(Object.values(computeScoreBreakdown(metrics, genre, intent)).reduce((sum, item) => sum + item.contribution, 0));
+export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre | null, intent: CullingIntent = 'standard',
+  target: CullingOutputTarget = 'full'): number {
+  return Math.round(Object.values(computeScoreBreakdown(metrics, genre, intent, target)).reduce((sum, item) => sum + item.contribution, 0));
 }
 
-type DecisionContext = Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence' | 'relativeNativeSharpness' | 'referenceNativeSharpness' | 'duplicateVerified' | 'intent' | 'focusComparisonVerified' | 'relativeFocusSharpness' | 'referenceFocusSharpness'>;
+type DecisionContext = Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence' | 'relativeNativeSharpness' | 'referenceNativeSharpness' | 'duplicateVerified' | 'intent' | 'focusComparisonVerified' | 'relativeFocusSharpness' | 'referenceFocusSharpness' | 'target'>;
+// Texture-energy blur signals. Measured edge blur in pixels supersedes them.
+const TEXTURE_SOFT_RISKS = ['cull_risk_auto_soft', 'cull_risk_native_soft', 'cull_risk_preview_soft', 'cull_risk_detail_outside_grid', 'cull_risk_soft_vs_series', 'cull_risk_low_detail'];
+const TEXTURE_BLUR_REJECTS = ['cull_reason_native_blur', 'cull_reason_auto_blur', 'cull_reason_soft_alternative'];
 export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: number,
   context: DecisionContext = {}):
   { decision: CullingDecision; reasons: string[]; risks: string[]; rejectionKind?: CullingResult['rejectionKind'] } {
@@ -157,7 +182,22 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
     auto.summary && auto.summary.informativeSamples >= 3 && auto.summary.sampleCount >= 3 &&
     auto.summary.maxSharpnessScore < .6 && auto.summary.maxLaplacianVariance < 8 &&
     auto.summary.maxEdgeAcutance < .012 && auto.summary.maxNoiseEstimate < 3;
+  const optical = assessBlur ? optics(metrics, context.target ?? 'full') : undefined;
+  const opticallySharp = optical?.kind === 'subject-sharp' || optical?.kind === 'frame-sharp';
+  if (opticallySharp) {
+    // Texture energy cannot tell plain surfaces from blur; sharp measured edges can.
+    for (let i = risks.length - 1; i >= 0; i--) if (TEXTURE_SOFT_RISKS.includes(risks[i])) risks.splice(i, 1);
+    reasons.push('cull_reason_optics_sharp');
+  } else if (optical) risks.push(optical.kind === 'focus-elsewhere' ? 'cull_risk_optics_focus_elsewhere' : 'cull_risk_optics_soft');
+  // Every measured area blurred, including the single sharpest tile: nothing in the frame is in focus.
+  // Detail finer than the isolation distance (fine print, mesh) has no isolated edges, so any
+  // sharp texture measurement still vetoes the rejection.
+  const scale = metrics.optics ? outputScale(context.target ?? 'full', metrics.optics.sourceWidth, metrics.optics.sourceHeight) : 1;
+  const textureDetail = nativeSharpness(metrics) >= 0.6 || (metrics.native?.maxSharpnessScore ?? 0) >= 0.6 ||
+    risks.includes('cull_risk_detail_outside_grid') || (auto?.summary?.maxSharpnessScore ?? 0) >= 0.6;
+  const opticalBlur = optical?.kind === 'frame-blurred' && sharpestTile(metrics.optics!) * scale > OUTPUT_SHARP && !textureDetail;
   const rejectReasons = protectedSet ? [] : [
+    ...(opticalBlur ? ['cull_reason_optics_blur'] : []),
     ...(emptyClippedPreview ? ['cull_reason_empty_clipped'] : []),
     ...(assessBlur && severelySoftNative ? ['cull_reason_native_blur'] : []),
     ...(softSelectedRegion ? ['cull_reason_focus_blur'] : []),
@@ -165,7 +205,7 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
     ...(redundantCopy ? ['cull_reason_redundant_copy'] : []),
     ...(assessBlur && (muchSofterAlternative || muchSofterNativeAlternative) ? ['cull_reason_soft_alternative'] : []),
     ...(softerSelectedAlternative ? ['cull_reason_focus_alternative'] : []),
-  ];
+  ].filter(reason => !optical || !TEXTURE_BLUR_REJECTS.includes(reason) || !opticallySharp);
   if (intent !== 'standard') reasons.push('cull_reason_intent_' + intent);
   const decision = rejectReasons.length ? 'reject' : risks.length || finalScore < 75 ? 'review' : 'keep';
   reasons.unshift(...rejectReasons);
@@ -183,17 +223,19 @@ export interface PhotoAnalysis {
   exif?: CullingExif;
 }
 
-export function buildCullingResult(analysis: PhotoAnalysis, genre: CullingGenre | null, intent: CullingIntent = 'standard'): CullingResult {
-  const finalScore = computeFinalScore(analysis.metrics, genre, intent);
-  return { ...analysis, intent, finalScore, ...deriveTechnicalDecision(analysis.metrics, finalScore, { intent }), genre: genre ?? undefined,
-    scoreBreakdown: computeScoreBreakdown(analysis.metrics, genre, intent), engineVersion: CULLING_ENGINE_VERSION, analysisStatus: 'done' };
+export function buildCullingResult(analysis: PhotoAnalysis, genre: CullingGenre | null, intent: CullingIntent = 'standard',
+  target: CullingOutputTarget = 'full'): CullingResult {
+  const finalScore = computeFinalScore(analysis.metrics, genre, intent, target);
+  return { ...analysis, intent, target, finalScore, ...deriveTechnicalDecision(analysis.metrics, finalScore, { intent, target }), genre: genre ?? undefined,
+    scoreBreakdown: computeScoreBreakdown(analysis.metrics, genre, intent, target), engineVersion: CULLING_ENGINE_VERSION, analysisStatus: 'done' };
 }
 
-export function rescoreCullingResult(result: CullingResult, genre: CullingGenre | null): CullingResult {
+/** Delivery size is a judgement, not a measurement: changing it never needs the pixels again. */
+export function rescoreCullingResult(result: CullingResult, genre: CullingGenre | null, target: CullingOutputTarget = result.target ?? 'full'): CullingResult {
   if (result.engineVersion !== CULLING_ENGINE_VERSION || result.analysisStatus === 'error') return result;
-  const finalScore = computeFinalScore(result.metrics, genre, result.intent);
-  return { ...result, finalScore, genre: genre ?? undefined, scoreBreakdown: computeScoreBreakdown(result.metrics, genre, result.intent),
-    ...deriveTechnicalDecision(result.metrics, finalScore, result) };
+  const finalScore = computeFinalScore(result.metrics, genre, result.intent, target);
+  return { ...result, target, finalScore, genre: genre ?? undefined, scoreBreakdown: computeScoreBreakdown(result.metrics, genre, result.intent, target),
+    ...deriveTechnicalDecision(result.metrics, finalScore, { ...result, target }) };
 }
 
 export function getEffectiveDecision(result: CullingResult | undefined): CullingDecision | null {

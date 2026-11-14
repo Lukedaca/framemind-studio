@@ -7,7 +7,32 @@ import { inspectionRect, type CullingInspection } from '../utils/cullingInspecti
 import { validateFocusRegions } from '../utils/cullingRegions';
 import { CULLING_SUBJECT_MODEL } from '../utils/cullingAutomatic';
 import { automaticRegions } from './cullingSubject';
+import { opticsPlan, summarizeOptics, tileBlur, tileLuma, type MeasuredTile } from '../utils/cullingOptics';
 let automaticWarningShown = false;
+
+/** Blur in source pixels on a bounded lattice. Reads one small tile at a time from the decoded original. */
+function measureOptics(bitmap: ImageBitmap, mask: Uint8Array | null) {
+  const plan = opticsPlan(bitmap.width, bitmap.height, mask);
+  if (!plan.tiles.length) return undefined;
+  const n = plan.tile, measured: MeasuredTile[] = [];
+  // One small canvas for every tile: only n×n pixels are ever read back.
+  const canvas = new OffscreenCanvas(n, n), context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return undefined;
+  context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
+  for (const tile of plan.tiles) {
+    const blur = tileBlur(level => {
+      const side = n * level;
+      if (side > bitmap.width || side > bitmap.height) return null;
+      // A coarser level widens the footprint around the same centre; the canvas averages it down.
+      const x = Math.max(0, Math.min(bitmap.width - side, Math.round(tile.x + n / 2 - side / 2)));
+      const y = Math.max(0, Math.min(bitmap.height - side, Math.round(tile.y + n / 2 - side / 2)));
+      context.drawImage(bitmap, x, y, side, side, 0, 0, n, n);
+      return tileLuma(context.getImageData(0, 0, n, n).data, n);
+    }, n);
+    if (blur) measured.push({ ...tile, ...blur });
+  }
+  return summarizeOptics(measured, bitmap.width, bitmap.height, n, plan.tiles.length);
+}
 
 async function readExif(file: File): Promise<CullingExif | undefined> {
   try {
@@ -67,9 +92,11 @@ async function analyze(request: Extract<CullingRequest, { kind: 'analyze' }>): P
     metrics.focusRegions = regions.map(region => measureRegion(region, true).measurement);
     const first = metrics.focusRegions[0];
     metrics.focus = first ? { region: first.region, technical: first.technical, sharpnessScore: first.sharpnessScore } : undefined;
+    let mask: Uint8Array | null = null;
     if (!regions.length && request.automatic !== false) {
       try {
         const plan = await automaticRegions(bitmap), measured = plan.regions.map(region => measureRegion(region, false));
+        mask = plan.mask;
         metrics.automatic = { model: CULLING_SUBJECT_MODEL, status: measured.length ? 'measured' : 'no-region', coverage: plan.coverage,
           samples: measured.map(m => m.measurement), summary: measured.length ? { ...summarizeNativeSamples(measured.map(m => m.metrics), bitmap.width, bitmap.height), sampleSize: 128 } : undefined };
       } catch (error) {
@@ -78,6 +105,9 @@ async function analyze(request: Extract<CullingRequest, { kind: 'analyze' }>): P
         metrics.automatic = { model: CULLING_SUBJECT_MODEL, status: 'unavailable', coverage: 0, samples: [] };
       }
     }
+    // Missing optics only removes this evidence; the existing measurements still decide.
+    try { metrics.optics = measureOptics(bitmap, mask); }
+    catch (error) { console.warn('[Culling] Optical blur measurement failed:', error instanceof Error ? error.message : String(error)); }
     return { metrics, focusRegion: metrics.focus?.region, focusRegions: metrics.focusRegions.map(f => f.region),
       aspectRatio: bitmap.width / bitmap.height, source: request.source, exif: await readExif(request.metadataFile) };
   } finally { bitmap.close(); }
@@ -132,7 +162,7 @@ self.onmessage = async ({ data }: MessageEvent<CullingRequest>) => {
       : data.kind === 'inspect' ? await inspect(data)
       : data.kind === 'verify-duplicate' ? await verifyDuplicate(data.file, data.reference, data.bytesOnly)
       : data.kind === 'group' ? [...computeSimilarityGroups(data.items)]
-      : buildCullingResult(data.analysis, data.genre, data.intent);
+      : buildCullingResult(data.analysis, data.genre, data.intent, data.target);
     self.postMessage({ id: data.id, value });
   } catch (error) {
     self.postMessage({ id: data.id, error: error instanceof Error ? error.message : String(error) });

@@ -6,8 +6,8 @@ saved projects and disk originals. Adaptive retouching, clone/heal brushes, full
 originals and culling engine `local-1.6` remain available.
 See [clearing behavior and verification](releases/0.1.6.md).
 
-Current source: **0.1.7 / local-1.9**, with bundled local U²-NetP object-region
-measurement, automatic blur suggestions, optional manual regions and per-photo
+Current source: **0.1.7 / local-2.0**, with bundled local U²-NetP object-region
+measurement, edge blur in pixels judged per output size, automatic blur suggestions, optional manual regions and per-photo
 intent, and confirmed selection-to-editor handoff with Undo. The local Windows
 installer is prepared but has not been installed or published. TypeScript, 234
 tests, both frontend builds and web/native automatic-selection checks passed.

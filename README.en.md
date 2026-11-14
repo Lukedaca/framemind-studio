@@ -144,9 +144,11 @@ scores and series references use fixed positions; extra sharp detail can veto
 rejection and require review. Samples are processed sequentially. This does not
 identify subjects by itself, and important detail can still be missed.
 
-Source version **0.1.7 / local-1.9** automatically finds salient objects with a
+Source version **0.1.7 / local-2.0** automatically finds salient objects with a
 bundled U²-NetP model. Up to twelve 128 × 128 px crops are measured at native
 resolution; strong blur evidence can automatically flag a photo for rejection.
+Edge blur is now measured in pixels across the frame and on the object, and judged
+for the chosen output (100% / A4 print / web); the photo detail shows a blur map.
 Manual marking is optional. The model does not recognize eyes or decisive moments
 and can miss important detail. The published 0.1.6 installer contains **local-1.6**.
 [Unreleased changes](docs/releases/unreleased.md) also add four manual regions,

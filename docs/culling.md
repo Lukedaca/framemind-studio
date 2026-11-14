@@ -1,9 +1,9 @@
 # Lokální culling ve Studiu
 
 Výběr fotografií běží ve vašem počítači bez API klíče a odesílání fotografií.
-Engine `local-1.9` používá přibalený lokální model U²-NetP pro nalezení výrazných
-objektů a vlastní technická měření pro automatické označení ponechat, zkontrolovat
-nebo vyřadit. Ruční rozhodnutí fotografa mají přednost.
+Engine `local-2.0` používá přibalený lokální model U²-NetP pro nalezení výrazných
+objektů, měření rozmazání hran v pixelech a vlastní technická měření pro automatické
+označení ponechat, zkontrolovat nebo vyřadit. Ruční rozhodnutí fotografa mají přednost.
 Tento návod popisuje [změny po vydání 0.1.6](releases/unreleased.md).
 Tyto změny zatím nejsou součástí publikovaného instalátoru.
 
@@ -141,6 +141,76 @@ U RAW se měří a prohlíží **vložený JPEG náhled**, nikoli senzorová dat
 Kontrola detailu používá obrazový zdroj z importu, nikoli pozdější úpravy nebo retuš.
 Celé Studio není plně offline: modely retuše a písma se stahují a dvě volitelné
 funkce editoru používají Gemini. [Připojení a data](../README.md#připojení-a-data).
+
+## Změny local-2.0 — 14. listopadu 2026: optická ostrost
+
+Dosavadní ostrost vycházela z energie Laplaceova operátoru. Ta neodliší hladký
+povrch (dres, pleť, obloha) od rozmazaného: na kalibrační sadě poslala ke kontrole
+desítky ostrých snímků a jeden zjevně rozmazaný ponechala.
+
+Nový modul `utils/cullingOptics.ts` měří **poloměr rozmazání hran v pixelech**.
+Přes hranu má gradient tvar Gaussovy křivky, jejíž šířka je rozmazání; šířka se čte
+z tvaru profilu (vážená parabola přes logaritmus pěti vzorků), takže kontrast hrany
+ani množství textury výsledek nemění. Počítají se jen rovné, osamocené hrany:
+dva body podél hrany musí nést tutéž hranu a protilehlá hrana nesmí ležet blíž
+než šest kroků. Tenké čáry, tečky potisku a šum by jinak vycházely ostřejší,
+než skutečně jsou. Silné rozmazání se dočte ze zprůměrovaných pixelů (2× a 4×);
+zprůměrované pixely ale nikdy nesmí ohlásit ostrost.
+
+Měří se pravidelná mřížka 12 dlaždic 128 × 128 px přes celý záběr a až 24 hustších
+dlaždic uvnitř objektu nalezeného modelem. Objekt i pozadí zastupuje druhá
+nejostřejší dlaždice, aby jedna náhodná hrana ani jedna rozmazaná končetina
+nerozhodovaly. Ploché dlaždice (obloha, stěna) se přeskočí.
+
+**Výstup 100 % / Tisk A4 / Web** určuje, pro jakou velikost se ostrost posuzuje
+(originál, 3600 px, 2048 px na delší straně). Stejný snímek může být na webu ostrý
+a ve 100 % vadný. Přepnutí jen přepočítá verdikty, nepřeměřuje fotografie.
+
+Pravidla (bez ručně označené oblasti; ta má vždy přednost):
+
+- Objekt ostrý pro zvolený výstup (≤ 1,0 px): důvod „Hrany objektu jsou ostré“,
+  ruší rizika z energie textury a **blokuje** návrhy vyřazení z texturových pravidel.
+- Objekt měkký, jinde ostré místo: kontrola „Ostrost leží jinde než na nalezeném
+  objektu“. Nikdy vyřazení: model nemusí najít zamýšlený subjekt.
+- Objekt měkký a nic ostrého: kontrola.
+- Vyřazení jen tehdy, když je rozmazané vše: i druhá nejostřejší a zároveň
+  nejostřejší jednotlivá dlaždice celého záběru (> 1,4 px, resp. > 1,0 px).
+- Ve skóre nahrazuje změřené rozmazání ostrost z textury; u „ostrost jinde“ se
+  použije průměr objektu a nejostřejšího místa.
+
+Detail snímku ukazuje mapu rozmazání přes náhled (zelená ostré, oranžová měkké,
+červená rozmazané, bílý okraj = dlaždice objektu) a hodnoty v pixelech výstupu,
+včetně údaje „Ostré do“ (největší delší strana, při které snímek ještě působí ostře).
+
+Analýza běží na strojích se šesti a více vlákny ve dvou souběžných workerech
+(každý drží jeden dekódovaný originál, u 21 MP asi 85 MB).
+
+### Ověření
+
+- Prahy jsou kalibrované na 24 fotografiích s vizuálně posouzenými výřezy 1:1
+  (Canon 5616 × 3744, sport): ostré objekty 0–0,9 px, měkké od 1,1 px.
+  Jedna sada a jeden fotoaparát nestačí pro obecné závěry.
+- Syntetické testy: známé Gaussovo rozmazání 0 / 1 / 1,5 px se změří
+  v tolerancích, výsledek nezávisí na kontrastu ani hustotě hran, pohyb je
+  vidět v orientaci.
+- Kalibrační sada 114 JPEGů: `local-1.9` 81 ponechat / 28 kontrola / 5 vyřadit,
+  `local-2.0` 92 / 18 / 4. Z kontroly odešlo 21 ostrých snímků (např. 9888, 9891,
+  9947, 9951, 9953, 9955), ke kontrole přibyl rozmazaný 9945, který starší
+  engine ponechal. Vyřazení 9913, 9922, 9933 a 9962 zůstala; 9917 je změřeně
+  ostrý (0,85 px), proto už vyřazený není. Při výstupu Web: 105 / 9 / 0.
+- Tvrdý test falešného vyřazení: 18 publikovaných snímků ze zápasu Sigma –
+  Mladá Boleslav = 18 ponechat, 0 vyřadit. Jsou to oříznuté exporty s doostřením
+  z Digital Photo Professional; doostření zužuje hrany, proto u nich měření
+  často ukazuje 0 px.
+- Originály beze změny (SHA-256), žádné externí požadavky, žádné chyby stránky.
+- Čas na 114 fotek, i5-11400H: auditní skript s jedním workerem
+  `local-1.9` 215 s, `local-2.0` 265 s; běh v rozhraní `local-2.0` se dvěma
+  workery 166 s (1,46 s na snímek). Optické měření samo trvá zhruba 0,2–0,4 s
+  na snímek.
+
+Měření neví, který objekt je pro fotografa důležitý, nerozezná záměrné
+rozostření od chyby (pro to slouží záměr Pohyb / Kreativní) a u silně
+doostřených exportů nedokáže rozlišit ostré od doostřeného měkkého.
 
 ## Změny local-1.9 — 7. listopadu 2026
 

@@ -1,6 +1,18 @@
 # Changes after 0.1.6
 
-Local development: application `0.1.7`, culling engine `local-1.9`.
+Local development: application `0.1.7`, culling engine `local-2.0`.
+
+14 November: optical sharpness (`local-2.0`). Blur radius in pixels measured at
+straight, isolated edges on a bounded tile lattice over the whole frame plus a
+denser lattice inside the detected object, independent of edge contrast and
+texture. A sharp measured object removes texture-energy soft risks and vetoes
+texture-based blur rejections; a soft object beside a sharp area is flagged
+for review, never rejected; rejection needs every measured area blurred. New
+**Output 100% / A4 print / Web** judges blur at the delivery size and only
+rescores. The detail panel shows a blur map and values in output pixels.
+Analysis uses two concurrent workers on machines with six or more threads.
+Calibration set: 81/28/5 → 92/18/4; 18 published frames are all kept. Existing
+analyses require remeasurement. See [culling](../culling.md#změny-local-20--14-listopadu-2026-optická-ostrost).
 An unsigned Windows x64 NSIS installer has been built locally. These changes
 have not been installed into the user's working application or
 published. The published installer documented in this repository remains 0.1.6.

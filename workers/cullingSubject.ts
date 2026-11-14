@@ -2,7 +2,7 @@ import * as ort from 'onnxruntime-web/wasm';
 import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 import wasmModuleUrl from 'onnxruntime-web/ort-wasm-simd-threaded.mjs?url';
 import modelUrl from '../assets/culling/u2netp.onnx?url';
-import { automaticSamplePlan, subjectInput, SUBJECT_INPUT_SIZE } from '../utils/cullingAutomatic';
+import { automaticSamplePlan, subjectInput, subjectMask, SUBJECT_INPUT_SIZE } from '../utils/cullingAutomatic';
 
 const MODEL_SHA256 = '309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8';
 let session: Promise<ort.InferenceSession> | undefined;
@@ -35,7 +35,10 @@ export async function automaticRegions(bitmap: ImageBitmap) {
   const input = new ort.Tensor('float32', subjectInput(context.getImageData(0, 0, SUBJECT_INPUT_SIZE, SUBJECT_INPUT_SIZE).data), [1, 3, SUBJECT_INPUT_SIZE, SUBJECT_INPUT_SIZE]);
   try {
     const output = await model.run({ [model.inputNames[0]]: input }, [model.outputNames[0]]);
-    try { return automaticSamplePlan(output[model.outputNames[0]].data as Float32Array, bitmap.width, bitmap.height); }
+    try {
+      const prediction = output[model.outputNames[0]].data as Float32Array;
+      return { ...automaticSamplePlan(prediction, bitmap.width, bitmap.height), mask: subjectMask(prediction) };
+    }
     finally { Object.values(output).forEach(tensor => tensor.dispose()); }
   } finally { input.dispose(); }
 }

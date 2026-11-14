@@ -29,6 +29,22 @@ export function subjectInput(data: Uint8ClampedArray): Float32Array {
   return input;
 }
 
+/** The same salient foreground the sample plan uses, as a 320×320 mask. Null when the map has no usable object. */
+export function subjectMask(prediction: Float32Array): Uint8Array | null {
+  const count = SUBJECT_INPUT_SIZE ** 2;
+  if (prediction.length !== count) throw new Error('Invalid subject map');
+  let minimum = 1, maximum = 0;
+  for (const value of prediction) {
+    if (!Number.isFinite(value) || value < 0 || value > 1.00001) throw new Error('Invalid subject map');
+    minimum = Math.min(minimum, value); maximum = Math.max(maximum, value);
+  }
+  if (maximum < .7 || maximum - minimum < .25) return null;
+  const mask = new Uint8Array(count);
+  let foreground = 0;
+  for (let i = 0; i < count; i++) if ((prediction[i] - minimum) / (maximum - minimum) >= .65) { mask[i] = 1; foreground++; }
+  return foreground / count < .0025 || foreground / count > .65 ? null : mask;
+}
+
 /** Connected foreground components, then bounded interior 1:1 samples. No center/person assumption. */
 export function automaticSamplePlan(prediction: Float32Array, width: number, height: number): { regions: CullingFocusRegion[]; coverage: number } {
   const size = SUBJECT_INPUT_SIZE, count = size ** 2;
