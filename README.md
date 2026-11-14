@@ -306,8 +306,8 @@ Při odinstalaci je odstranění dat samostatná volba.
 - Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
 - Aktuální ověření: TypeScript, 267 testů, oba frontendové buildy a Windows balíček prošly.
   Sedm browserových kontrol zahrnuje automatický výběr, editor, Zpět a ukládání.
-  Výběr fotku po fotce včetně systémových potvrzení prošel také ve skutečném
-  Windows EXE s odděleným profilem. Instalace na čistých Windows není ověřená.
+  Výběr fotku po fotce i automatický výběr včetně systémových potvrzení prošly také
+  ve skutečném Windows EXE s oddělenými profily. Instalace na čistých Windows není ověřená.
 - Aktuální kontroly popisuje [vydání 0.1.7](docs/releases/0.1.7.md);
   historické kontroly jsou v [poznámkách k 0.1.6](docs/releases/0.1.6.md).
   Syntetické kontroly a místní fotografické sady neprokazují obecnou přesnost

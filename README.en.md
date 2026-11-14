@@ -308,8 +308,8 @@ is a separate uninstall option.
 - There are no user accounts, server storage or synchronization.
 - Current checks passed: TypeScript, 267 tests, both frontend builds and Windows packaging.
   Seven browser checks cover automatic selection, editor handoff, Undo and storage.
-  Photo-by-photo review and native confirmation also passed in the actual Windows
-  executable with an isolated profile. Clean Windows installation remains unverified.
+  Photo-by-photo review, automatic selection and native confirmation also passed in
+  the actual Windows executable with isolated profiles. Clean Windows installation remains unverified.
 - [Release 0.1.7](docs/releases/0.1.7.md) describes current verification;
   [release 0.1.6 notes](docs/releases/0.1.6.md) retain historical evidence.
   Synthetic checks and local photo sets do not establish general accuracy across

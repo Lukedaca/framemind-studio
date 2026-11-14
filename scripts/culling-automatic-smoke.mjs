@@ -13,7 +13,8 @@ const desktop = process.env.DESKTOP_SMOKE_CDP, pid = process.env.DESKTOP_SMOKE_P
 assert.ok(!desktop || pid, 'Native QA requires its owned process ID');
 const base = desktop ? 'https://tauri.localhost' : process.env.CULLING_SMOKE_URL ?? 'http://127.0.0.1:3100';
 const browser = desktop ? await chromium.connectOverCDP(desktop, { timeout: 15000 }) : await chromium.launch({ headless: true });
-const context = desktop ? browser.contexts()[0] : await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+// This check targets the application workflow shared with native builds, not PWA updates.
+const context = desktop ? browser.contexts()[0] : await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
 const page = desktop ? context.pages().find(p => p.url().startsWith(base)) : await context.newPage();
 assert.ok(page, 'No QA window'); page.setDefaultTimeout(60000);
 const errors = [], external = [], label = desktop ? 'native-culling-automatic' : 'culling-automatic';
