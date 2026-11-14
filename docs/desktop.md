@@ -7,18 +7,18 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 ## Instalace a aktualizace
 
 Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
-`FrameMind-Studio_0.1.6_x64-setup.exe` je v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.6); není určen klientům.
+`FrameMind-Studio_0.1.7_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.7); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
 
-Instalátor 0.1.6 má přibližně 230 MB. Obsahuje offline instalační program WebView2,
+Instalátor obsahuje offline instalační program WebView2,
 který použije, pokud runtime není nainstalovaný. Připojení není potřeba pro
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.6 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+Instalátor 0.1.7 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
 SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
@@ -44,10 +44,9 @@ Výstupy:
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
 - `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.7_x64-setup.exe`: instalátor aktuálních zdrojů.
 
-Místní sestavení 0.1.7 s cullingem local-1.9 ze 7. listopadu 2026 není zveřejněné ani nainstalované.
-Jeho běžné EXE prošlo v odděleném profilu testem automatického cullingu,
-systémového potvrzení, přechodu do editoru a obnovení přes Zpět.
-Podrobnosti a hranice ověření: [změny po 0.1.6](releases/unreleased.md).
+Aktuální vydání 0.1.7 používá culling local-2.0 a nové rozhraní výběru fotku po fotce.
+Podrobnosti, provedené kontroly a jejich hranice: [vydání 0.1.7](releases/0.1.7.md).
+Starší nativní kontroly níže jsou datované a neprokazují stav nového sestavení.
 
 Název souboru zveřejněného na GitHubu používá `FrameMind-Studio` s pomlčkou;
 obsah je totožný s místním instalátorem se jménem `FrameMind Studio`.
@@ -146,8 +145,8 @@ bez úspěšného opakování se tento starší stav může po restartu obnovit.
 
 ## Připojení a omezení
 
-Culling ve zdrojové verzi 0.1.7 používá lokální přibalený model U²-NetP bez
-klíčů a stahování modelu za běhu. Publikovaná 0.1.6 jej ještě neobsahuje. Zabalení do desktopu
+Culling ve vydání 0.1.7 používá lokální přibalený model U²-NetP bez
+klíčů a stahování modelu za běhu. Zabalení do desktopu
 nemění jiné části editoru: retuš a klikací laso stále poprvé stahují modely
 z Hugging Face, písma používají Google Fonts a dvě funkce editoru stále používají
 Gemini s vlastním klíčem. Přesný rozpis je v [README](../README.md#připojení-a-data).

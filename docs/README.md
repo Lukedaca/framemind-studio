@@ -1,26 +1,21 @@
 # FrameMind Studio documentation
 
-Latest published development release: **0.1.6**, Windows x64, unsigned preview.
-It adds confirmed clearing of the working photo set and its history while keeping
-saved projects and disk originals. Adaptive retouching, clone/heal brushes, full
-originals and culling engine `local-1.6` remain available.
-See [clearing behavior and verification](releases/0.1.6.md).
-
-Current source: **0.1.7 / local-2.0**, with bundled local U²-NetP object-region
-measurement, edge blur in pixels judged per output size, automatic blur suggestions, optional manual regions and per-photo
-intent, and confirmed selection-to-editor handoff with Undo. The local Windows
-installer is prepared but has not been installed or published. TypeScript, 234
-tests, both frontend builds and web/native automatic-selection checks passed.
-See [current development changes and verification](releases/unreleased.md).
+Latest published development release and current source: **0.1.7 / local-2.0**,
+Windows x64, unsigned preview. It includes bundled local U²-NetP object-region
+measurement, edge blur judged per output size, photo-by-photo review with K/R/X,
+a whole-set grid and confirmed selection-to-editor handoff with Undo.
+The overview uses real working-set counts; import and editor surfaces are refreshed.
+See [release notes and verification limits](releases/0.1.7.md).
 
 - [Český přehled funkcí, dat a omezení](../README.md)
 - [English feature, data and limitation guide](../README.en.md)
 - [Windows installation, updates and native verification](desktop.md)
 - [Local culling: full originals, zoom, comparison and shortcuts (Czech)](culling.md)
+- [Release 0.1.7: local automatic analysis and photo-by-photo review](releases/0.1.7.md)
 - [Release 0.1.6: clear the working photo set](releases/0.1.6.md)
 - [Release 0.1.5: model reuse and brush response](releases/0.1.5.md)
 - [Release 0.1.4: retouching, subject regions and verified duplicates](releases/0.1.4.md)
-- [Current 0.1.7 development changes and verification](releases/unreleased.md)
+- [Unreleased status and archived implementation history](releases/unreleased.md)
 - [Current interface screenshots](../demo-screenshots/README.md)
 - [Previous release 0.1.3](releases/0.1.3.md)
 - [Previous release 0.1.2](releases/0.1.2.md)

@@ -23,6 +23,11 @@ page.on('requestfailed', request => diagnostics.push({ type: 'requestfailed', ur
 page.on('worker', worker => worker.on('close', () => diagnostics.push({ type: 'workerclosed', url: worker.url() })));
 const output = new URL('../output/playwright/', import.meta.url); await mkdir(output, { recursive: true });
 const fixtureBytes = await Promise.all([sharpPath, blurredPath].map(path => readFile(path)));
+const fixture = (index, number) => {
+  const buffer = fixtureBytes[index];
+  const jpeg = buffer[0] === 0xff && buffer[1] === 0xd8;
+  return { name: `PUBLIC_000${number}.${jpeg ? 'jpeg' : 'png'}`, mimeType: jpeg ? 'image/jpeg' : 'image/png', buffer };
+};
 const hashes = fixtureBytes.map(bytes => createHash('sha256').update(bytes).digest('hex'));
 const reply = action => promisify(execFile)('pwsh', ['-NoProfile', '-File', fileURLToPath(new URL('windows-dialog-smoke.ps1', import.meta.url)),
   '-AppProcessId', pid, '-Action', action], { windowsHide: true, timeout: 25000 });
@@ -39,9 +44,7 @@ try {
   if (desktop) assert.equal(await page.evaluate(() => !!window.__TAURI_INTERNALS__), true);
   await page.getByRole('button', { name: 'Import 01', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles([
-    { name: 'PUBLIC_0001.png', mimeType: 'image/png', buffer: fixtureBytes[0] },
-    { name: 'PUBLIC_0002.png', mimeType: 'image/png', buffer: fixtureBytes[0] },
-    { name: 'PUBLIC_0003.png', mimeType: 'image/png', buffer: fixtureBytes[1] },
+    fixture(0, 1), fixture(0, 2), fixture(1, 3),
   ]);
   await page.getByRole('heading', { name: 'Lokální culling', exact: true }).waitFor();
   external.length = 0;
@@ -89,7 +92,10 @@ try {
   await writeFile(new URL(`${label}.json`, output), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
-  await writeFile(new URL(`${label}-failure.json`, output), JSON.stringify({ errors, external, diagnostics }, null, 2));
-  await writeFile(new URL(`${label}-failure.txt`, output), await page.locator('body').ariaSnapshot());
-  await page.screenshot({ path: fileURLToPath(new URL(`${label}-failure.png`, output)), fullPage: true }); throw error;
+  await writeFile(new URL(`${label}-failure.json`, output), JSON.stringify({ error: String(error), errors, external, diagnostics }, null, 2));
+  if (!page.isClosed()) {
+    await writeFile(new URL(`${label}-failure.txt`, output), await page.locator('body').ariaSnapshot()).catch(() => {});
+    await page.screenshot({ path: fileURLToPath(new URL(`${label}-failure.png`, output)), fullPage: true }).catch(() => {});
+  }
+  throw error;
 } finally { await context.unrouteAll({ behavior: 'wait' }); await browser.close(); }
