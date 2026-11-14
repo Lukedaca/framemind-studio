@@ -147,7 +147,7 @@ body::after {
 }
 
 .fm-panel {
-  background: var(--ink-900);
+  background: linear-gradient(180deg, #15171e, #101217);
   border-left: 1px solid var(--hair);
 }
 @media (max-width: 1023px) {
@@ -397,7 +397,7 @@ body::after {
 
 .fm-thumb {
   flex-shrink: 0;
-  width: 56px;
+  width: 84px;
   height: 56px;
   border-radius: 8px;
   overflow: hidden;

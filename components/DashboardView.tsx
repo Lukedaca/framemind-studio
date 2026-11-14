@@ -1,55 +1,26 @@
 import React from 'react';
 import { useTranslation } from '../contexts/LanguageContext';
 import { useProject } from '../contexts/ProjectContext';
-import type { View } from '../types';
-import FmMark from './common/FmMark';
-
-// Clonová řada f-čísel — stupnice objektivu kolem značky (clona je srdce loga).
-const F_STOPS = ['1.4', '2', '2.8', '4', '5.6', '8', '11', '16', '22'];
-
-const LensStage: React.FC = () => (
-  <div className="fm-lens-wrap relative mx-auto">
-    <div className="fm-halo" />
-    <div className="fm-lens">
-      <svg viewBox="0 0 200 200" className="fm-lens-scale" aria-hidden>
-        <defs>
-          <path id="fm-lens-arc" d="M100,100 m-86,0 a86,86 0 1,1 172,0 a86,86 0 1,1 -172,0" />
-        </defs>
-        {Array.from({ length: 72 }, (_, i) => (
-          <line
-            key={i}
-            x1="100"
-            y1={i % 8 === 0 ? 3.5 : 5.5}
-            x2="100"
-            y2="8"
-            stroke="rgba(255,255,255,0.22)"
-            strokeWidth={i % 8 === 0 ? 0.7 : 0.4}
-            transform={`rotate(${i * 5} 100 100)`}
-          />
-        ))}
-        <text fill="rgba(200,200,214,0.55)" fontSize="6.2" letterSpacing="1.2" fontFamily="'Geist Mono', monospace">
-          <textPath href="#fm-lens-arc">
-            {F_STOPS.map((f) => `f/${f}`).join('   ·   ')}
-          </textPath>
-        </text>
-      </svg>
-      <div className="absolute inset-[24%] flex items-center justify-center">
-        <FmMark title="FrameMind" className="w-full drop-shadow-[0_10px_40px_rgba(90,68,240,0.45)]" />
-      </div>
-    </div>
-  </div>
-);
+import type { View, UploadedFile } from '../types';
+import { getEffectiveDecision } from '../utils/cullingEngine';
 
 interface DashboardViewProps {
   onNavigate: (payload: { view: View; action?: string; id?: string }) => void;
   onToggleSidebar: () => void;
-  fileCount: number;
+  files: UploadedFile[];
 }
 
-const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onToggleSidebar, fileCount }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onToggleSidebar, files }) => {
   const { t, language } = useTranslation();
   const { projects } = useProject();
   const recent = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 4);
+  const fileCount = files.length;
+  const counts = { keep: 0, review: 0, reject: 0 };
+  for (const file of files) {
+    const decision = getEffectiveDecision(file.culling);
+    if (decision) counts[decision]++;
+  }
+  const continueWork = () => onNavigate({ view: fileCount > counts.keep + counts.review + counts.reject ? 'culling' : 'editor', action: 'base-edit' });
 
   const steps: { n: string; title: string; desc: string; view: View; action?: string; needsFiles?: boolean }[] = [
     { n: '01', title: t.pipeline_step_import, desc: t.dash_step_import, view: 'upload' },
@@ -68,34 +39,36 @@ const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onToggleSideb
       </div>
 
       <div className="fm-page">
-        {/* Úvod: vlevo co appka dělá, vpravo značka v objektivu se clonovou stupnicí */}
-        <section className="grid items-center gap-[clamp(32px,5vw,96px)] lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="animate-fade-in">
-            <p className="fm-eyebrow">FrameMind Studio</p>
-            <h1 className="fm-hero-title mt-5 font-display leading-[1.04] text-ink-50">
-              {t.dash_title_1}
-              <br />
-              <span className="fm-gradient-text">{t.dash_title_2}</span>
-            </h1>
-            <p className="fm-hero-lead mt-6 max-w-[34em] leading-[1.65] text-ink-300">{t.dash_lead}</p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <button onClick={() => onNavigate({ view: 'upload' })} className="fm-btn-primary h-12 px-6 text-[14px]">
-                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M10 13V3m0 0L6 7m4-4 4 4M3.5 13v2.5a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V13" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                {t.dash_import}
-              </button>
-              {fileCount > 0 && (
-                <button onClick={() => onNavigate({ view: 'editor', action: 'base-edit' })} className="fm-btn-ghost h-12 px-6 text-[14px]">
-                  {t.dash_continue} · {fileCount}
-                </button>
-              )}
+        <h1 className="font-display text-[clamp(30px,3vw,44px)] text-ink-50">{t.nav_overview}</h1>
+        <section className={`mt-8 grid gap-5 ${fileCount ? 'xl:grid-cols-[1.6fr_1fr]' : ''}`}>
+          {fileCount > 0 && <div className="fm-surface grid gap-6 rounded-3xl p-7 sm:grid-cols-[1fr_1.2fr]">
+            <div className="relative min-h-[190px]" aria-hidden>
+              {files.slice(0, 3).map((file, index) => <img key={file.id} src={file.previewUrl} alt=""
+                className="absolute top-5 h-[145px] w-[75%] rounded-xl border border-white/20 object-cover shadow-2xl"
+                style={{ left: index * 10 + '%', transform: `rotate(${(index - 1) * 9}deg) translateY(${index * 6}px)` }} />)}
             </div>
+            <div className="flex flex-col items-start justify-center">
+              <h2 className="font-display text-2xl text-ink-50">{t.dash_current_set}</h2>
+              <p className="mt-2 text-sm text-ink-400">{fileCount} {t.dash_photos}</p>
+              <dl className="my-5 flex flex-wrap gap-4 text-sm">
+                {(['keep', 'review', 'reject'] as const).map(d => <div key={d}>
+                  <dt className="text-xs text-ink-400">{t[`cull_decision_${d}`]}</dt>
+                  <dd className={`mt-1 font-display text-xl ${d === 'keep' ? 'text-fm-green' : d === 'review' ? 'text-amber-400' : 'text-fm-red'}`}>{counts[d]}</dd>
+                </div>)}
+              </dl>
+              <button onClick={continueWork} className="fm-btn-primary px-6">{t.dash_continue} →</button>
+            </div>
+          </div>}
+          <div className="flex flex-col items-start justify-center rounded-3xl border border-dashed border-white/20 bg-ink-900/50 p-8">
+            <span className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-hairline text-2xl text-ink-200" aria-hidden>+</span>
+            <h2 className="font-display text-2xl text-ink-50">{t.dash_new_set}</h2>
+            <p className="mt-2 max-w-sm text-sm leading-relaxed text-ink-400">{t.dash_new_set_hint}</p>
+            <button onClick={() => onNavigate({ view: 'upload' })} className="fm-btn-primary mt-6 px-6">{t.dash_import}</button>
           </div>
-
-          <LensStage />
         </section>
 
         {/* Postup práce */}
-        <section className="mt-[clamp(48px,9vh,112px)]">
+        <section className="mt-10">
           <div className="mb-5 flex items-end justify-between">
             <h2 className="fm-eyebrow">{t.dash_workflow}</h2>
             <span className="text-[12px] text-ink-500">{t.dash_local_badge}</span>
