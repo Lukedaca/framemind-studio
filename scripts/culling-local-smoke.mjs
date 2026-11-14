@@ -167,7 +167,7 @@ try {
     } finally { session.close(); }
   }, images.image);
   if (report.worker) {
-  assert.equal(report.worker.version, 'local-1.9'); assert.equal(report.worker.originalUnchanged, true);
+  assert.equal(report.worker.version, 'local-2.0'); assert.equal(report.worker.originalUnchanged, true);
   assert.equal(report.worker.remoteAiPresent, false); assert.equal(report.worker.signatureLength, 1024);
   }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);

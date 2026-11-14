@@ -4,7 +4,8 @@ import { CULLING_ENGINE_VERSION, CULLING_GENRES, buildCullingResult, computeFina
   type SimilarityInput } from '../utils/cullingEngine';
 import { PREVIEW_MAX_SIDE, readMetrics } from '../utils/cullingMetrics';
 import { compareAlignedSignatures, compareSignatures, isValidSignature } from '../utils/cullingSimilarity';
-import type { CullingMetrics } from '../types';
+import type { CullingMetrics, CullingOutputTarget } from '../types';
+import { summarizeOptics } from '../utils/cullingOptics';
 
 const WIDTH = 128, HEIGHT = 96;
 function pixels(pixel: (x: number, y: number) => number | number[]): Uint8ClampedArray {
@@ -295,4 +296,68 @@ describe('local series without hash-only or transitive grouping', () => {
     expect(result.size).toBe(400); expect([...result.values()].every(r => (r.groupRank ?? 0) <= 48)).toBe(true);
     expect(result).toEqual(computeSimilarityGroups([...items].reverse()));
   }, 15_000);
+});
+
+describe('optical blur evidence', () => {
+  // Thirty background tiles plus six inside the salient object, on a 5616 × 3744 original.
+  const withOptics = (metrics: CullingMetrics, subjectBlur: number, backgroundBlur: number): CullingMetrics => {
+    const tiles = [
+      ...Array.from({ length: 30 }, (_, i) => ({ x: 64 + (i % 10) * 512, y: 64 + Math.floor(i / 10) * 1200, blur: backgroundBlur, subject: 0 })),
+      ...Array.from({ length: 6 }, (_, i) => ({ x: 2400 + i * 128, y: 1800, blur: subjectBlur, subject: 1 })),
+    ];
+    return { ...metrics, optics: summarizeOptics(tiles.map(t => ({ ...t, edges: 200, level: 1 as const, noise: 0.5, bins: [t.blur, t.blur, t.blur, t.blur] })),
+      5616, 3744, 128, 96) };
+  };
+  const decide = (metrics: CullingMetrics, target: CullingOutputTarget = 'full') =>
+    buildCullingResult({ metrics, aspectRatio: 1.5, source: 'image' }, 'sport', 'standard', target);
+
+  it('lets a sharp measured object veto texture-based soft risks', () => {
+    const plain = readMetrics(pixels(() => 120), WIDTH, HEIGHT);
+    const result = decide(withOptics(plain, 0.4, 1.8));
+    expect(result.reasons).toContain('cull_reason_optics_sharp');
+    expect(result.risks.filter(r => /soft|low_detail/.test(r))).toEqual([]);
+  });
+
+  it('rejects only when every measured area is blurred, and judges it at the delivery size', () => {
+    // A plain preview: no texture measurement contradicts the blurred edges.
+    const blurred = withOptics(readMetrics(pixels(() => 120), WIDTH, HEIGHT), 2.2, 2.4);
+    expect(decide(blurred).decision).toBe('reject');
+    expect(decide(blurred).reasons).toContain('cull_reason_optics_blur');
+    // The same pixels are sharp enough for a 2048 px web gallery.
+    expect(decide(blurred, 'web').reasons).not.toContain('cull_reason_optics_blur');
+    expect(decide(blurred, 'web').reasons).toContain('cull_reason_optics_sharp');
+  });
+
+  it('lets sharp fine texture veto a rejection that isolated edges alone would make', () => {
+    // Detail finer than the isolation distance has no isolated edges; texture evidence must still count.
+    const textured = readMetrics(detailedScene(), WIDTH, HEIGHT);
+    expect(textured.sharpnessScore).toBeGreaterThanOrEqual(0.6);
+    expect(decide(withOptics(textured, 2.2, 2.4)).reasons).not.toContain('cull_reason_optics_blur');
+  });
+
+  it('flags a soft object beside a sharp area for review, never rejects on it', () => {
+    const result = decide(withOptics(scene(), 2.4, 0.4));
+    expect(result.risks).toContain('cull_risk_optics_focus_elsewhere');
+    expect(result.reasons).not.toContain('cull_reason_optics_blur');
+    expect(result.decision).toBe('review');
+  });
+
+  it('leaves a photographer-chosen focus area in charge', () => {
+    const metrics = withOptics(scene(), 2.2, 2.4);
+    const chosen = readMetrics(detailedScene(), WIDTH, HEIGHT);
+    const focused = { ...metrics, focusRegions: [{ region: { x: 0.4, y: 0.4, width: 0.02, height: 0.03 }, technical: chosen.technical!,
+      sharpnessScore: chosen.sharpnessScore, sourceWidth: 5616, sourceHeight: 3744 }] };
+    const result = decide(focused);
+    expect(result.reasons).not.toContain('cull_reason_optics_blur');
+    expect(result.risks.some(r => r.startsWith('cull_risk_optics'))).toBe(false);
+  });
+
+  it('rescoring for another output needs no new measurement', () => {
+    const result = decide(withOptics(readMetrics(pixels(() => 120), WIDTH, HEIGHT), 2.2, 2.4));
+    expect(result.decision).toBe('reject');
+    const web = rescoreCullingResult(result, 'sport', 'web');
+    expect(web.target).toBe('web');
+    expect(web.decision).not.toBe('reject');
+    expect(web.metrics.optics).toBe(result.metrics.optics);
+  });
 });

@@ -1,4 +1,4 @@
-import type { UploadedFile, CullingGenre, CullingResult, CullingFocusRegion, CullingIntent } from '../types';
+import type { UploadedFile, CullingGenre, CullingResult, CullingFocusRegion, CullingIntent, CullingOutputTarget } from '../types';
 import { validateFocusRegions } from '../utils/cullingRegions';
 import type { PhotoAnalysis, SimilarityInput, SimilarityAssignment } from '../utils/cullingEngine';
 import type { CullingRequest, CullingResponse } from '../utils/cullingProtocol';
@@ -77,7 +77,9 @@ export class CullingSession {
     reverse.set(a, identical); duplicateProofs.set(b, reverse);
     return identical;
   }
-  score(analysis: PhotoAnalysis, genre: CullingGenre | null, intent?: CullingIntent): Promise<CullingResult> { return this.request({ kind: 'score', analysis, genre, intent }); }
+  score(analysis: PhotoAnalysis, genre: CullingGenre | null, intent?: CullingIntent, target?: CullingOutputTarget): Promise<CullingResult> {
+    return this.request({ kind: 'score', analysis, genre, intent, target });
+  }
   async group(items: SimilarityInput[]): Promise<Map<string, SimilarityAssignment>> {
     return new Map(await this.request<[string, SimilarityAssignment][]>({ kind: 'group', items }));
   }

@@ -110,7 +110,31 @@ export type CullingGenre =
   | 'event'
   | 'other';
 
+/** Delivery size the blur is judged against: source pixels, an A4 print or a web gallery. */
+export type CullingOutputTarget = 'full' | 'print' | 'web';
+
+/** Blur radius in source pixels, measured at edges on a bounded tile lattice. */
+export interface CullingOptics {
+  version: 1;
+  sourceWidth: number;
+  sourceHeight: number;
+  tile: number; // tile side in source pixels
+  planned: number; // tiles sampled; those without measurable edges are absent from the map
+  map: number[]; // per measured tile: centre x, centre y (0-1), blur (px), share inside the salient mask
+  subjectTiles: number;
+  backgroundTiles: number;
+  subjectBlur?: number; // three sharpest tiles inside the salient mask
+  backgroundBlur?: number; // three sharpest tiles clearly outside it
+  frameBlur?: number; // three sharpest tiles anywhere
+  noise: number; // median luminance noise of measured tiles
+  // Blur per gradient orientation (0°, 45°, 90°, 135°). Recorded evidence; not used for verdicts yet.
+  subjectDirection?: number[];
+  backgroundDirection?: number[];
+  focus?: { x: number; y: number; subject: number }; // centre of the sharpest tile
+}
+
 export interface CullingMetrics {
+  optics?: CullingOptics;
   automatic?: {
     model: 'u2netp-309c8469';
     status: 'measured' | 'no-region' | 'unavailable';
@@ -154,6 +178,7 @@ export interface CullingResult {
   focusRegion?: CullingFocusRegion;
   focusRegions?: CullingFocusRegion[];
   intent?: CullingIntent;
+  target?: CullingOutputTarget;
   focusComparisonVerified?: boolean;
   relativeFocusSharpness?: number;
   referenceFocusSharpness?: number;

@@ -142,9 +142,12 @@ mřížku. Bez ručních či automatických oblastí vychází skóre a referenc
 doplňkový ostrý detail může zabránit vyřazení a poslat snímek ke kontrole.
 Výřezy se měří postupně. Samotná mřížka neurčuje subjekt a důležitý detail lze minout.
 
-Verze zdrojů **0.1.7 / local-1.9** přidává automatické hledání výrazných objektů
+Verze zdrojů **0.1.7 / local-2.0** přidává automatické hledání výrazných objektů
 přibaleným modelem U²-NetP. Až 12 výřezů 128 × 128 px se měří v původním rozlišení;
-silné známky rozmazání mohou automaticky označit snímek k vyřazení. Ruční označení
+silné známky rozmazání mohou automaticky označit snímek k vyřazení. Nově se měří
+rozmazání hran v pixelech po celém záběru i na objektu a posuzuje se pro zvolený
+výstup (100 % / tisk A4 / web); detail snímku ukazuje mapu rozmazání.
+[Optická ostrost a ověření](docs/culling.md#změny-local-20--14-listopadu-2026-optická-ostrost). Ruční označení
 není potřeba. Model nerozpoznává oči ani rozhodující moment a může minout důležitý
 detail. Zveřejněný instalátor 0.1.6 obsahuje **local-1.6**.
 [Nevydané změny](docs/releases/unreleased.md) zahrnují také čtyři ruční oblasti,
