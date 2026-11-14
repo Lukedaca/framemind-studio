@@ -1,18 +1,17 @@
 # FrameMind Studio 0.1.7 interface
 
-Captured on 1 November 2026 from current Studio builds in isolated profiles.
-The overview was refreshed from the actual Windows application; the other screens
-were captured using `scripts/capture-release-ui.mjs` in Chromium. The images use
-already-public demonstration photographs, with no private client records.
-These show development source 0.1.7 / local-1.8; the public installer remains 0.1.6.
-Browser captures are interface evidence. Native runtime verification is documented
-in [the current change notes](../docs/releases/unreleased.md).
+Captured on 14 November 2026 using `scripts/capture-release-ui.mjs` in Chromium
+with an isolated profile and already-public demonstration photographs. No private
+client records are used. The images show release source 0.1.7 / local-2.0.
+Browser captures are interface evidence; Windows runtime checks and their limits
+are documented in [the release notes](../docs/releases/0.1.7.md).
 
-![Automatic local culling](studio-v017-20261101-culling.webp)
+![Photo-by-photo local culling](studio-v017-20261114-culling.webp)
 
-![Original-resolution comparison and subject-region controls](studio-v017-20261101-compare.webp)
+![Original-resolution comparison and subject-region controls](studio-v017-20261114-compare.webp)
 
-Other screens: [overview](studio-v017-20261101-home-v2.webp),
-[import](studio-v017-20261101-import.webp), [editor](studio-v017-20261101-edit.webp),
-[retouching](studio-v017-20261101-retouch.webp), [export](studio-v017-20261101-export.webp),
-[projects](studio-v017-20261101-projects.webp), [clients](studio-v017-20261101-clients.webp).
+Other screens: [overview](studio-v017-20261114-home.webp),
+[import](studio-v017-20261114-import.webp), [whole set](studio-v017-20261114-grid.webp),
+[editor](studio-v017-20261114-edit.webp), [retouching](studio-v017-20261114-retouch.webp),
+[export](studio-v017-20261114-export.webp), [projects](studio-v017-20261114-projects.webp),
+[clients](studio-v017-20261114-clients.webp).

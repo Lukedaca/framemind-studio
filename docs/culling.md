@@ -4,24 +4,30 @@ Výběr fotografií běží ve vašem počítači bez API klíče a odesílání
 Engine `local-2.0` používá přibalený lokální model U²-NetP pro nalezení výrazných
 objektů, měření rozmazání hran v pixelech a vlastní technická měření pro automatické
 označení ponechat, zkontrolovat nebo vyřadit. Ruční rozhodnutí fotografa mají přednost.
-Tento návod popisuje [změny po vydání 0.1.6](releases/unreleased.md).
-Tyto změny zatím nejsou součástí publikovaného instalátoru.
+Tento návod popisuje [vydání 0.1.7](releases/0.1.7.md).
 
 ## Výběr a prohlížení originálů
 
 1. Importujte fotografie a otevřete **Výběr**. Spusťte lokální culling;
    výchozí automatika nepotřebuje ruční označování motivů. Volitelný technický profil
    mění váhy metrik, nikoli výstup modelu.
-2. Prohlížejte celé záběry, skóre a důvody návrhů. **K** znamená ponechat,
-   **R** zkontrolovat a **X** vyřadit. Ruční volby přežijí další běh i změnu profilu.
-3. Kliknutím na fotografii nebo tlačítkem **Otevřít celou fotografii** otevřete celý
+2. Po měření se otevře **Fotka po fotce**. **K** znamená ponechat,
+   **R** zkontrolovat a **X** vyřadit. Volba se uloží a posune na další snímek;
+   opakovaná stejná volba ji neruší. Šipky procházejí všechny snímky, fronta vpravo
+   přejde přímo na fotografii. Poslední rozhodnutí ukáže shrnutí; **Projít znovu**
+   zachová ruční volby. Volby přežijí další běh i změnu profilu.
+3. **Odevzdám jako** v hlavičce nastavuje 100 %, tisk A4 nebo web a pouze přepočítá
+   návrhy. **Kde je ostro** ukáže mapu, pokud je optické měření dostupné.
+   **Detail 1:1** otevře celý originál rovnou na 100 %.
+4. Přepínač **Celá sada** otevře mřížku s profilem a záměrem. Kliknutím na fotografii
+   nebo tlačítkem **Otevřít celou fotografii** otevřete celý
    původní obrazový soubor. Náhled jej nepřevádí ani znovu nekomprimuje.
    Pro souběžnou kontrolu označte tlačítkem **+** až čtyři fotografie a zvolte
    **Porovnat výběr**. Porovnání funguje i mezi snímky mimo automaticky nalezenou sérii.
-4. Výchozí pohled **Celý snímek** přizpůsobí fotografii oknu bez ořezu. Klikněte
+5. Při otevření z mřížky výchozí pohled **Celý snímek** přizpůsobí fotografii oknu bez ořezu. Klikněte
    do snímku pro zobrazení na 100 %, použijte kolečko nebo tlačítka 100 / 200 / 400 %.
    Přiblíženou fotografii posunete tažením nebo šipkami; každou fotografii samostatně.
-5. **0** vrátí celý záběr, **1** nastaví 100 % a **Esc** náhled zavře.
+6. **0** vrátí celý záběr, **1** nastaví 100 % a **Esc** náhled zavře.
    Kliknutím vyberete aktivní snímek, ke kterému se vztahují **K / R / X**.
 
 **100 %** zobrazí jeden pixel snímku na jeden fyzický pixel displeje a zohledňuje
@@ -247,8 +253,8 @@ Uložený běh nové automatiky na 251 RAW náhledech našel použitelné automa
 oblasti u 246 snímků, bez nedostupného modelu: 196 ponechat, 40 kontrola,
 15 vyřadit. Originální soubory měly stejné kontrolní součty. Jde o jednu
 neoznačkovanou sadu, nikoli obecnou přesnost nebo shodu s výběrem fotografa.
-Instalátor je místní, dosud nezveřejněný a nenainstalovaný. Celé poznámky:
-[připravená 0.1.7](releases/unreleased.md). Rozhraní:
+Aktuální stav distribuce a rozsah ověření:
+[vydání 0.1.7](releases/0.1.7.md). Rozhraní:
 [aktuální snímky](../demo-screenshots/README.md).
 
 ## Historické ověření enginu local-1.5

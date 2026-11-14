@@ -31,20 +31,21 @@ const ClientsView: React.FC<ClientsViewProps> = ({ title, onToggleSidebar, onOpe
       <div className="fm-page w-full space-y-8 animate-fade-in">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="text-3xl font-black text-white">{t.crm_clients_title}</h2>
+            <h2 className="font-display text-3xl text-ink-50">{t.crm_clients_title}</h2>
             <p className="text-sm text-text-secondary">{t.crm_clients_desc}</p>
           </div>
           <button
             onClick={() => setIsClientModalOpen(true)}
-            className="px-5 py-2.5 border border-accent bg-accent text-sm font-semibold text-void transition-none"
+            className="fm-btn-primary px-5"
           >
             {t.crm_new_client}
           </button>
         </div>
 
         {clients.length === 0 ? (
-          <div className="bg-surface/40 border border-border-subtle rounded-3xl p-12 text-center text-text-secondary">
-            {t.crm_no_clients}
+          <div className="rounded-3xl border border-dashed border-white/20 bg-ink-900/40 px-6 py-16 text-center">
+            <h3 className="font-display text-2xl text-ink-100">{t.crm_no_clients}</h3>
+            <button onClick={() => setIsClientModalOpen(true)} className="fm-btn-primary mt-6 px-6">{t.crm_new_client}</button>
           </div>
         ) : (
           <div className="fm-grid-cards">

@@ -42,7 +42,7 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({ title, onToggleSidebar, onO
       <div className="fm-page w-full space-y-8 animate-fade-in">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="text-3xl font-black text-white">{t.crm_projects_title}</h2>
+            <h2 className="font-display text-3xl text-ink-50">{t.crm_projects_title}</h2>
             <p className="text-sm text-text-secondary">{t.crm_projects_desc}</p>
           </div>
           <div className="flex items-center gap-3">
@@ -54,7 +54,7 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({ title, onToggleSidebar, onO
             </button>
             <button
               onClick={() => setIsProjectModalOpen(true)}
-              className="px-5 py-2.5 border border-accent bg-accent text-sm font-semibold text-void transition-none"
+              className="fm-btn-primary px-5"
             >
               {t.crm_new_project}
             </button>
@@ -78,8 +78,11 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({ title, onToggleSidebar, onO
         </div>
 
         {filteredProjects.length === 0 ? (
-          <div className="bg-surface/40 border border-border-subtle rounded-3xl p-12 text-center text-text-secondary">
-            {t.crm_no_projects}
+          <div className="rounded-3xl border border-dashed border-white/20 bg-ink-900/40 px-6 py-16 text-center">
+            <h3 className="font-display text-2xl text-ink-100">{filter === 'all' ? t.crm_no_projects : t.crm_no_filtered_projects}</h3>
+            <button onClick={() => filter === 'all' ? setIsProjectModalOpen(true) : setFilter('all')} className="fm-btn-primary mt-6 px-6">
+              {filter === 'all' ? t.crm_new_project : t.crm_filter_all}
+            </button>
           </div>
         ) : (
           <div className="fm-grid-cards">

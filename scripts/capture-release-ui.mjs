@@ -37,7 +37,7 @@ try {
   };
   await page.getByRole('button', { name: 'Import 01', exact: true }).waitFor();
   const headline = await page.locator('h1').first().innerText();
-  assert.ok(headline.includes('Vyberte Upravte'));
+  assert.equal(headline, 'Přehled');
   assert.ok(!headline.includes('.'), 'Main slogan must have no full stops');
   await capture('home');
   await page.getByRole('button', { name: 'Projekty', exact: true }).click();
@@ -53,7 +53,11 @@ try {
   await page.locator('input[type=file]').setInputFiles(files);
   await page.getByRole('heading', { name: 'Lokální culling', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Spustit lokální culling', exact: true }).click();
-  await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor({ timeout: 30000 }); await capture('culling');
+  await page.getByRole('navigation', { name: 'Fronta fotek' }).waitFor({ timeout: 60000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('nav[data-queue], [data-queue-id] img')].every(image => !(image instanceof HTMLImageElement) || image.complete));
+  await capture('culling');
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
+  await capture('grid');
   const comparisonChoices = page.getByRole('button', { name: /^Vybrat k porovnání / });
   await comparisonChoices.nth(0).click();
   await comparisonChoices.nth(1).click();
@@ -66,6 +70,9 @@ try {
   });
   await capture('compare');
   await comparison.getByRole('button', { name: 'Zavřít fotografii', exact: true }).click();
+  await page.getByRole('button', { name: 'Přehled', exact: true }).click();
+  await page.getByRole('heading', { name: 'Na čem pracuješ', exact: true }).waitFor();
+  await capture('home');
   await page.getByRole('button', { name: 'Úpravy 03', exact: true }).click();
   await page.getByRole('slider').first().waitFor();
   await page.getByText('Uloženo lokálně', { exact: true }).waitFor(); await capture('edit');
@@ -74,8 +81,8 @@ try {
   await page.getByRole('button', { name: 'Export 05', exact: true }).click();
   await page.getByRole('radio', { name: 'PNG', exact: true }).waitFor(); await capture('export');
   assert.deepEqual(errors, []);
-  await writeFile(new URL('report.json', output), JSON.stringify({ version, prefix, screenshots: 9, isolatedProfile: true, publicDemoImages: true, mainSloganWithoutFullStops: true, pageErrors: errors }, null, 2));
-  console.log('Nine current-interface screenshots captured, including original-resolution comparison; slogan and page-error checks passed.');
+  await writeFile(new URL('report.json', output), JSON.stringify({ version, prefix, screenshots: 10, isolatedProfile: true, publicDemoImages: true, mainSloganWithoutFullStops: true, pageErrors: errors }, null, 2));
+  console.log('Ten current-interface screenshots captured, including focus, grid and original-resolution comparison; heading and page-error checks passed.');
 } finally {
   await browser?.close();
   server.kill();

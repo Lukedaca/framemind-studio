@@ -9,7 +9,7 @@ export const PanelSection: React.FC<{ title: string; action?: React.ReactNode; c
 }) => (
   <section className="border-b border-hairline px-5 py-5 last:border-b-0">
     <div className="mb-4 flex items-center justify-between">
-      <h3 className="fm-eyebrow">{title}</h3>
+      <h3 className="font-display text-[18px] text-ink-100">{title}</h3>
       {action}
     </div>
     <div className="space-y-4">{children}</div>

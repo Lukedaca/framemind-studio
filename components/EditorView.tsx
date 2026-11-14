@@ -853,7 +853,8 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Plátno */}
-        <main className="fm-stage relative min-h-[45vh] flex-1">
+        <main className="fm-stage relative isolate min-h-[45vh] flex-1 overflow-hidden">
+          <img className="fm-backdrop -z-10" src={activeFile.previewUrl} alt="" aria-hidden draggable={false} />
           <CanvasViewport
             ref={viewportRef}
             imageSrc={viewportSrc}
@@ -980,7 +981,7 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
 
       {/* Filmový pás */}
       {files.length > 1 && (
-        <nav className="flex h-[76px] flex-shrink-0 items-center gap-2 overflow-x-auto border-t border-hairline bg-ink-950 px-4 custom-scrollbar" aria-label={t.editor_filmstrip}>
+        <nav className="fm-glass z-10 mx-4 my-3 flex h-[80px] flex-shrink-0 items-center gap-3 self-center max-w-[calc(100%-32px)] overflow-x-auto rounded-2xl px-4 custom-scrollbar" aria-label={t.editor_filmstrip}>
           {files.map((f, i) => (
             <button
               key={f.id}
@@ -988,6 +989,8 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               onClick={() => goTo(i)}
               className={`fm-thumb ${f.id === activeFileId ? 'is-active' : ''}`}
               title={f.file.name}
+              aria-label={f.file.name}
+              aria-current={f.id === activeFileId ? 'true' : undefined}
             >
               <img src={f.previewUrl} alt="" className="h-full w-full object-cover" draggable={false} loading="lazy" />
             </button>

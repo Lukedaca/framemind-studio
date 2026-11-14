@@ -183,7 +183,7 @@ const UploadView: React.FC<UploadViewProps> = ({
           </div>
         ) : (
           <div
-            className={`relative flex w-full max-w-4xl flex-col items-center justify-center overflow-hidden rounded-[28px] border px-6 py-20 text-center transition-all duration-300 sm:px-16 ${
+            className={`relative flex min-h-[440px] w-full max-w-5xl flex-col items-center justify-center overflow-hidden rounded-[28px] border border-dashed px-6 py-20 text-center transition-all duration-300 sm:px-16 ${
               isDragging ? 'border-accent/60 bg-accent/[0.06]' : 'border-hairline bg-ink-900/60'
             }`}
             onDragEnter={handleDragEnter}
@@ -191,11 +191,7 @@ const UploadView: React.FC<UploadViewProps> = ({
             onDragOver={handleDragOver}
             onDrop={handleDrop}
           >
-            {/* Rohy hledáčku místo čárkovaného okraje */}
-            {['left-5 top-5 border-l border-t', 'right-5 top-5 border-r border-t', 'left-5 bottom-5 border-l border-b', 'right-5 bottom-5 border-r border-b'].map((c) => (
-              <span key={c} className={`pointer-events-none absolute h-6 w-6 ${c} ${isDragging ? 'border-accent' : 'border-ink-500'} transition-colors`} />
-            ))}
-            <p className="fm-eyebrow">{t.pipeline_step_import}</p>
+            <span className="fm-glass mb-3 flex h-20 w-20 items-center justify-center rounded-3xl"><UploadIcon className="h-8 w-8 text-ink-200" /></span>
             <h3 className="mt-4 font-display text-[40px] leading-tight text-ink-50 sm:text-[52px]">{t.upload_drag}</h3>
             <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-ink-400" dangerouslySetInnerHTML={{ __html: t.upload_support_detail }} />
             <input ref={fileInputRef} type="file" multiple accept={`image/*,${RAW_EXTENSIONS_STRING}`} onChange={handleFileSelect} className="hidden" />
@@ -203,6 +199,7 @@ const UploadView: React.FC<UploadViewProps> = ({
               <UploadIcon className="h-4 w-4" />
               {t.upload_select_files}
             </button>
+            <p className="mt-6 text-xs text-ink-400">{t.upload_originals_safe}</p>
           </div>
         )}
       </div>

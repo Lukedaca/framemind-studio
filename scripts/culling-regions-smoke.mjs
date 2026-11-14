@@ -92,6 +92,7 @@ try {
   await page.getByRole('button', { name: 'Import 01', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles(fixtures.images.map(f => ({ name: f.name, mimeType: 'image/png', buffer: Buffer.from(f.data, 'base64') })));
   await page.getByRole('button', { name: 'Spustit lokální culling', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor();
   external.length = 0;
   await page.getByRole('checkbox', { name: 'Sbalit série (jeden reprezentant)' }).uncheck();
@@ -132,6 +133,7 @@ try {
   assert.equal(await page.locator('#culling-intent').inputValue(), '');
   await page.locator('#culling-genre').selectOption('landscape');
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Porovnat výběr (2/4)', exact: true }).click();
   assert.equal(await panels.first().getByRole('combobox').inputValue(), 'motion');

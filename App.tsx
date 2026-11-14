@@ -358,7 +358,7 @@ function App() {
           <ClientsView title={t.nav_clients} onToggleSidebar={toggleSidebar} onOpenClient={(id) => handleNavigate({ view: 'client-detail', id })} />
         );
       default:
-        return <DashboardView onNavigate={handleNavigate} onToggleSidebar={toggleSidebar} fileCount={files.length} />;
+        return <DashboardView onNavigate={handleNavigate} onToggleSidebar={toggleSidebar} files={files} />;
     }
   };
 
@@ -389,17 +389,18 @@ function App() {
         currentView={view}
         activeAction={activeAction}
         fileCount={files.length}
+        culledCount={files.filter(file => file.culling?.analysisStatus === 'done').length}
         hasWorkspace={files.length > 0 || history.past.length > 0 || history.future.length > 0}
         onClearWorkspace={handleClearWorkspace}
         clearPending={clearPending}
       />
-      <main className="flex min-w-0 flex-1 flex-col lg:pl-60">
+      <main className="flex min-w-0 flex-1 flex-col lg:pl-72">
         <Suspense fallback={<Loading />}>{renderView()}</Suspense>
       </main>
 
       <ApiKeyModal isOpen={showApiKeyModal} onClose={() => setShowApiKeyModal(false)} />
 
-      <div className="fixed right-4 top-4 z-[250] w-[calc(100%-2rem)] max-w-sm space-y-2" aria-live="polite">
+      <div className="pointer-events-none fixed bottom-4 right-4 z-[250] w-[calc(100%-2rem)] max-w-sm space-y-2" aria-live="polite">
         {notifications.map((n) => (
           <div
             key={n.id}
@@ -411,7 +412,7 @@ function App() {
             <span className="flex-1 leading-relaxed">{n.message}</span>
             <button
               onClick={() => setNotifications((current) => current.filter((item) => item.id !== n.id))}
-              className="-mr-1 text-ink-500 hover:text-ink-100"
+              className="pointer-events-auto -mr-1 text-ink-500 hover:text-ink-100"
               aria-label="×"
             >
               ×

@@ -10,8 +10,8 @@ FrameMind Studio is an open-source application run locally on your own computer.
 GitHub hosts the source, backup and contributions; the application is not deployed.
 The author and maintainer is [Lukáš Drštička (Lukedaca)](https://github.com/Lukedaca).
 
-**Culling runs locally:** the development version bundles a salient-object model,
-without an API key or photo uploads. Published version 0.1.6 does not include it.
+**Culling runs locally:** release 0.1.7 bundles a salient-object model,
+without an API key or photo uploads.
 The entire Studio is not fully offline yet: the editor still has two cloud features,
 and retouch models and fonts are downloaded. See [Connections and data](#connections-and-data).
 
@@ -21,13 +21,13 @@ The desktop version uses **Tauri 2, Rust and Microsoft WebView2**. The React
 interface runs in a dedicated application window. The installed application
 does not require Vite, a terminal or an external browser.
 
-**A client release is not available yet.** The 0.1.6 package on
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.6) is an unsigned
+**A client release is not available yet.** The 0.1.7 package on
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.7) is an unsigned
 development preview. Do not distribute it to clients. Windows may show SmartScreen
 or block installation; disabling protection is not part of the installation instructions.
 
 Users do not need Git, Node.js or Rust. The installer includes an offline WebView2
-installer for computers without the runtime, making it about 230 MB.
+installer for computers without the runtime, making it about 238 MB.
 Installation is per user, with shortcuts and standard uninstallation.
 Preparing a client release requires a trusted publisher signature. Signing verifies
 file origin and integrity; it does not guarantee immediate SmartScreen reputation.
@@ -35,10 +35,11 @@ file origin and integrity; it does not guarantee immediate SmartScreen reputatio
 macOS and Linux packages have not been built or verified.
 
 Build, storage and verification details: [docs/desktop.md](docs/desktop.md).
-Published development release: [0.1.6 — clearing the working photo set](docs/releases/0.1.6.md).
+Published development release: [0.1.7 — local automatic analysis and photo-by-photo review](docs/releases/0.1.7.md).
 
-[Current development 0.1.7 screenshots](demo-screenshots/README.md) show the new
-automatic culling and comparison interface, separately from the published 0.1.6 installer.
+[Current 0.1.7 screenshots](demo-screenshots/README.md) show the working-set overview,
+photo-by-photo review, whole-set grid, comparison and editor. These are browser
+captures of the same source; they do not replace native Windows runtime verification.
 Includes adaptive retouching, clone and heal brushes, full originals and manual subject selection.
 Documentation index: [docs/README.md](docs/README.md).
 
@@ -132,7 +133,7 @@ until the write succeeds, restarting may restore the last successfully saved sta
 
 ## Local automatic culling
 
-Analysis processes one image at a time in a dedicated worker. It measures a preview
+Analysis runs in dedicated workers, with at most two concurrent lanes. It measures a preview
 whose longer side is at most 768 px: luminance distribution, clipped highlights,
 shadows, contrast, and detail, noise and directional blur indicators.
 EXIF is read from the original input when available. You select a profile manually;
@@ -144,18 +145,24 @@ scores and series references use fixed positions; extra sharp detail can veto
 rejection and require review. Samples are processed sequentially. This does not
 identify subjects by itself, and important detail can still be missed.
 
-Source version **0.1.7 / local-2.0** automatically finds salient objects with a
+Release **0.1.7 / local-2.0** automatically finds salient objects with a
 bundled U²-NetP model. Up to twelve 128 × 128 px crops are measured at native
 resolution; strong blur evidence can automatically flag a photo for rejection.
 Edge blur is now measured in pixels across the frame and on the object, and judged
 for the chosen output (100% / A4 print / web); the photo detail shows a blur map.
 Manual marking is optional. The model does not recognize eyes or decisive moments
-and can miss important detail. The published 0.1.6 installer contains **local-1.6**.
-[Unreleased changes](docs/releases/unreleased.md) also add four manual regions,
+and can miss important detail. The previous 0.1.6 installer contained **local-1.6**.
+[Release 0.1.7](docs/releases/0.1.7.md) also adds four manual regions,
 verified regional comparison and per-photo intent. **Use selection and open editor**
 confirms removal of rejected photos from the working set and continues to editing.
 **Undo** restores photos, scores, decisions and explanations. Disk originals are kept.
-Click a photograph to open the whole
+After measurement, **Photo by photo** opens. K/R/X saves a choice and advances;
+repeating a choice keeps it set. Arrows navigate all photos and the queue selects
+a photo directly. The final decision opens a summary; **Review again** preserves
+choices. **Detail 1:1** opens the original at 100%. **Deliver as** in the header
+rescores for 100%, A4 print or web without remeasurement. **Whole set** opens the
+grid, profile, intent and comparison controls.
+Click a photograph in the grid to open the whole
 original image file without another conversion or compression. Select up to four
 frames with `+` for comparison. The initial view fits the entire frame; 100%, 200%
 and 400% reveal detail. Scroll to zoom and drag to pan. The 100% scale accounts
@@ -164,7 +171,7 @@ for display pixel density. K/R/X change the active frame's manual choice,
 its embedded JPEG rather than developed sensor data.
 
 In comparison, **Mark the main subject** lets you select a 128 / 256 / 384 px
-region. The development engine supports up to four regions and copying their
+region. Up to four regions are supported, including copying their
 positions to compared photos. Original-scale detail contributes to the score;
 uncertain detail requires review. Selected-detail priority permits rejection
 suggestions for strong measured blur. Intentional motion, creative freedom and
@@ -206,7 +213,7 @@ Preview metrics do not assess eyes, expression, decisive moments, composition or
 focus on a particular subject. The directional indicator does not prove motion blur.
 The new automatic path was checked on a local set of 251 RAW files and sharp /
 artificially blurred portrait, animal and product controls. This does not establish
-accuracy across genres and cameras; see the unreleased notes for evidence and limits.
+accuracy across genres and cameras; see the 0.1.7 release notes for evidence and limits.
 
 RAW analysis measures the embedded JPEG, not sensor data. Camera processing affects
 those measurements. Older automatic results require fresh analysis; manual choices take precedence.
@@ -299,11 +306,11 @@ is a separate uninstall option.
 - RAW import extracts a preview; it does not perform demosaicing or full RAW development.
   Files without a usable embedded JPEG may fail to import.
 - There are no user accounts, server storage or synchronization.
-- Current checks passed: TypeScript, 234 tests, web and Windows builds.
-  Automatic selection, confirmation, editor handoff and Undo passed in the web
-  production build and actual Windows 0.1.7 executable with isolated profiles.
-  A local 0.1.7 installer is prepared; it has not been installed or published.
-- [Unreleased changes](docs/releases/unreleased.md) describe current verification;
+- Current checks passed: TypeScript, 267 tests, both frontend builds and Windows packaging.
+  Seven browser checks cover automatic selection, editor handoff, Undo and storage.
+  Photo-by-photo review, automatic selection and native confirmation also passed in
+  the actual Windows executable with isolated profiles. Clean Windows installation remains unverified.
+- [Release 0.1.7](docs/releases/0.1.7.md) describes current verification;
   [release 0.1.6 notes](docs/releases/0.1.6.md) retain historical evidence.
   Synthetic checks and local photo sets do not establish general accuracy across
   genres, cameras and RAW files.

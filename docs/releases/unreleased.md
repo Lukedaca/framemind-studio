@@ -1,4 +1,13 @@
-# Changes after 0.1.6
+# Unreleased
+
+The changes below are included in [release 0.1.7](0.1.7.md).
+There are no additional documented changes after that release.
+
+## Archived development log before 0.1.7
+
+The dated observations below describe development before publication. Statements
+about an unpublished or uninstalled package are historical; use the release notes
+above for current distribution and verification status.
 
 Local development: application `0.1.7`, culling engine `local-2.0`.
 
