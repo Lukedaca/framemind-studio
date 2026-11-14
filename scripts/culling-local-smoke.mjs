@@ -80,6 +80,7 @@ try {
   assert.equal(await page.getByRole('button', { name: /Gemini API/ }).count(), 0);
   external.length = 0;
   await page.getByRole('button', { name: 'Spustit lokální culling', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor({ timeout: 30000 });
   mark('measured');
   assert.equal(await page.getByText('Chyba čtení / obnov import', { exact: true }).count(), 0);
@@ -110,6 +111,7 @@ try {
   await page.keyboard.press('x');
   assert.equal(await card().getByText('Ručně', { exact: true }).count(), 1);
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor({ timeout: 30000 });
   assert.equal(await card().getByText('Ručně', { exact: true }).count(), 1, 'Manual choice lost on rerun');
   assert.equal(await namedCard('IMG_0002.jpg').getByText('Ručně', { exact: true }).count(), 1, 'Manual keep override lost on rerun');
@@ -135,6 +137,7 @@ try {
   await writeFile(new URL('culling-local-snapshot.txt', output), await page.locator('body').ariaSnapshot());
   await page.getByRole('button', { name: 'Import 01', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles(Array.from({ length: 60 }, (_, i) => file('BURST_' + (i + 10) + '.jpg')));
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('heading', { name: 'Lokální culling', exact: true }).waitFor();
   await page.getByRole('button', { name: /Spustit (znovu|lokální culling)/ }).click();
   await page.getByRole('button', { name: 'Zastavit', exact: true }).click();

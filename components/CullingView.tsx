@@ -9,6 +9,7 @@ import Header from './Header';
 import { confirmAction } from '../utils/confirmAction';
 import { useTranslation } from '../contexts/LanguageContext';
 import CullingCompare from './CullingCompare';
+import CullingFocus from './CullingFocus';
 
 interface CullingViewProps {
   files: UploadedFile[];
@@ -83,6 +84,8 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
   const [collapseSeries, setCollapseSeries] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [mode, setMode] = useState<'focus' | 'grid'>(() => files.some(file => file.culling) ? 'focus' : 'grid');
+  const [finished, setFinished] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [inspectionIds, setInspectionIds] = useState<string[]>([]);
   const sessionRef = useRef<CullingSession | null>(null);
@@ -210,6 +213,9 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
       if (mountedRef.current && sessionRef.current === session) {
         sessionRef.current = null; setCullingMap(new Map(workMap)); setPhase('done');
         commitToFiles(workMap, tr('cull_history'));
+        if (!rescoreOnly && !cancelledRef.current && !runFailed) {
+          setMode('focus'); setFinished(false); setFocusedId(files[0]?.id ?? null);
+        }
         if (failed) addNotification(failed + ' ' + tr('cull_failed_count'), 'error');
         if (!runFailed) addNotification(cancelledRef.current ? tr('cull_stopped') : tr('cull_complete'), 'info');
       }
@@ -262,6 +268,17 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     }
     setCullingMap(next); commitToFiles(next, tr('cull_series_winner'));
   };
+  const decide = (id: string, decision: CullingDecision) => {
+    if (sessionRef.current) return;
+    const next = new Map(mapRef.current), current = next.get(id);
+    if (!current) return;
+    next.set(id, { ...current, manualDecision: decision });
+    mapRef.current = next;
+    setCullingMap(next); commitToFiles(next, tr('cull_manual_decision'));
+    const index = files.findIndex(file => file.id === id);
+    if (index === files.length - 1) setFinished(true);
+    else setFocusedId(files[index + 1].id);
+  };
   const handleGenreChange = (value: string) => {
     const nextGenre = value as CullingGenre; setGenre(nextGenre);
     if (mapRef.current.size) void runCulling(nextGenre, true);
@@ -290,6 +307,8 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
   }, [files, cullingMap]);
 
   const scored = files.length - counts.none;
+  const showFocus = mode === 'focus' && !isRunning && scored > 0;
+  const currentId = files.find(file => file.id === focusedId)?.id ?? files[0]?.id;
 
   const visibleFiles = useMemo(() => {
     return files.filter(file => {
@@ -326,14 +345,15 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (sessionRef.current || inspectionIds.length) return;
+      if (sessionRef.current || inspectionIds.length || (showFocus && finished) || event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
 
-      const ids = visibleFiles.map(f => f.id);
+      const ids = (showFocus ? files : visibleFiles).map(f => f.id);
       if (ids.length === 0) return;
-      const currentIndex = focusedId ? ids.indexOf(focusedId) : -1;
+      const selectedId = showFocus ? currentId : focusedId;
+      const currentIndex = selectedId ? ids.indexOf(selectedId) : -1;
 
       if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
         event.preventDefault();
@@ -341,12 +361,13 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
       } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
         event.preventDefault();
         setFocusedId(ids[Math.max(0, currentIndex - 1)] ?? ids[0]);
-      } else if (focusedId) {
+      } else if (selectedId) {
         const key = event.key.toLowerCase();
         const decision: CullingDecision | null = key === 'k' ? 'keep' : key === 'r' ? 'review' : key === 'x' ? 'reject' : null;
         if (decision) {
           event.preventDefault();
-          setManualDecision(focusedId, decision);
+          if (showFocus) { decide(selectedId, decision); return; }
+          setManualDecision(selectedId, decision);
           const nextId = ids[Math.min(ids.length - 1, Math.max(0, currentIndex) + 1)];
           if (nextId) setFocusedId(nextId);
         }
@@ -354,7 +375,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [visibleFiles, focusedId, inspectionIds]);
+  }, [visibleFiles, files, focusedId, currentId, inspectionIds, showFocus, finished, commitToFiles]);
 
   const phaseLabel = phase === 'analyzing' ? tr('cull_phase_local') : phase === 'grouping' ? tr('cull_phase_grouping') : null;
 
@@ -469,9 +490,31 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
 
   return (
     <div className="w-full h-full flex flex-col text-white overflow-hidden">
-      <Header title={title} onToggleSidebar={onToggleSidebar} />
+      <Header title={title} onToggleSidebar={onToggleSidebar} actions={<>
+        <div className="fm-seg" role="group" aria-label={tr('cull_title')}>
+          {(['focus', 'grid'] as const).map(value => <button key={value} aria-pressed={mode === value}
+            disabled={isRunning || !scored} className={mode === value ? 'is-active' : ''}
+            onClick={() => setMode(value)}>{tr('cull_mode_' + value)}</button>)}
+        </div>
+        <span id="culling-target-label" className="text-xs text-ink-400">{tr('cull_target_label')}</span>
+        <div role="radiogroup" aria-labelledby="culling-target-label" className="fm-seg">
+          {CULLING_TARGETS.map(value => <button key={value} role="radio" aria-checked={target === value} disabled={isRunning}
+            className={target === value ? 'is-active' : ''} onClick={() => {
+              if (value === target) return;
+              setTarget(value);
+              if (mapRef.current.size) void runCulling(genre, true, false, undefined, value);
+            }}>{tr('cull_target_' + value)}</button>)}
+        </div>
+      </>} />
 
-      <div className="flex-1 flex overflow-hidden">
+      {showFocus && currentId ? <div className="flex min-h-0 flex-1 p-4">
+        <CullingFocus files={files} results={cullingMap} currentId={currentId} target={target} busy={isRunning}
+          finished={finished} tr={tr} onSelect={id => { setFocusedId(id); setFinished(false); }} onDecide={decide}
+          onBack={() => setFocusedId(files[Math.max(0, files.findIndex(file => file.id === currentId) - 1)].id)}
+          onInspect={id => setInspectionIds([id])} onRestart={() => { setFinished(false); setFocusedId(files[0].id); }}
+          onShowGrid={() => setMode('grid')} onContinue={onDone ? async () => { if (await removeRejects()) onDone(); } : undefined}
+          continueLabel={tr(counts.reject ? 'cull_apply_editor' : 'cull_continue_editor')} />
+      </div> : <div className="flex-1 flex overflow-hidden">
         {/* LEVÝ PANEL */}
         <div className="w-80 flex-shrink-0 bg-surface/70 backdrop-blur-xl border-r border-border-subtle p-5 flex flex-col gap-5 overflow-y-auto custom-scrollbar z-10">
 
@@ -502,21 +545,6 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
             </select>
             <p className="text-[11px] text-gray-400 leading-relaxed">{tr('cull_intent_hint')}</p>
           </div>
-          <div className="space-y-2">
-            <span id="culling-target-label" className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">{tr('cull_target_label')}</span>
-            <div role="radiogroup" aria-labelledby="culling-target-label" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-elevated border border-border-subtle">
-              {CULLING_TARGETS.map(value => <button key={value} type="button" role="radio" aria-checked={target === value} disabled={isRunning}
-                onClick={() => {
-                  if (value === target) return;
-                  setTarget(value);
-                  if (mapRef.current.size) void runCulling(genre, true, false, undefined, value);
-                }}
-                className={`rounded-lg px-1.5 py-2 text-[11px] font-semibold leading-tight transition-colors disabled:opacity-50 ${target === value ? 'bg-fm-blue text-white shadow-[0_0_12px_rgba(47,111,224,0.4)]' : 'text-gray-300 hover:text-white hover:bg-white/5'}`}>
-                {tr('cull_target_' + value)}
-              </button>)}
-            </div>
-            <p className="text-[11px] text-gray-400 leading-relaxed">{tr('cull_target_hint')}</p>
-          </div>
           <p className="text-[11px] text-gray-400 leading-relaxed border border-border-subtle rounded-xl p-3">{tr('cull_limits')}</p>
 
           {/* Spuštění */}
@@ -524,7 +552,7 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
             <button
               onClick={() => void runCulling()}
               disabled={files.length === 0}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-fm-magenta via-fm-blue to-fm-green text-white text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 transition-all hover:shadow-[0_0_20px_rgba(47,111,224,0.45)] disabled:opacity-40 disabled:cursor-not-allowed"
+              className="fm-btn-primary w-full py-3 px-4 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <SparklesIcon className="w-4 h-4" />
               {scored > 0 ? tr('cull_run_again') : tr('cull_run')}
@@ -743,7 +771,9 @@ const CullingView: React.FC<CullingViewProps> = ({ files, onSetFiles, addNotific
           )}
         </div>
       </div>
+      }
       {inspectionFiles.length > 0 && <CullingCompare key={inspectionIds.join('|')} files={inspectionFiles} results={cullingMap}
+        initialZoom={mode === 'focus' ? 1 : 'fit'}
         onDecision={setManualDecision} onFocusRegions={(ids, regions) => { void updateSelection(ids, regions); }}
         onIntentChange={(id, value) => { void updateSelection([id], undefined, value); }} busy={isRunning} onClose={() => setInspectionIds([])} />}
     </div>

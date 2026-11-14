@@ -14,6 +14,7 @@ interface Props {
   onFocusRegions?: (ids: string[], regions: CullingFocusRegion[]) => void;
   onIntentChange?: (id: string, intent: CullingIntent) => void;
   busy?: boolean;
+  initialZoom?: number | 'fit';
 }
 type Point = { x: number; y: number };
 type Size = { width: number; height: number };
@@ -21,7 +22,7 @@ const DECISIONS: CullingDecision[] = ['keep', 'review', 'reject'];
 const LETTERS = { keep: 'K', review: 'R', reject: 'X' };
 const ZOOM_STEPS = [0.125, 0.25, 0.5, 1, 2, 4];
 
-export default function CullingCompare({ files, results, onDecision, onClose, onFocusRegions, onIntentChange, busy = false }: Props) {
+export default function CullingCompare({ files, results, onDecision, onClose, onFocusRegions, onIntentChange, busy = false, initialZoom = 'fit' }: Props) {
   const { t } = useTranslation();
   const tr = (key: string) => (t as unknown as Record<string, string>)[key] ?? key;
   const [sources] = useState(() => files.slice(0, 4));
@@ -29,7 +30,7 @@ export default function CullingCompare({ files, results, onDecision, onClose, on
   const [sizes, setSizes] = useState<Record<string, Size>>({});
   const [errors, setErrors] = useState<string[]>([]);
   const [activeId, setActiveId] = useState(sources[0]?.id);
-  const [zoom, setZoom] = useState<number | 'fit'>('fit');
+  const [zoom, setZoom] = useState<number | 'fit'>(initialZoom);
   const [focusMode, setFocusMode] = useState(false);
   const [focusSize, setFocusSize] = useState(256);
   const [appendFocus, setAppendFocus] = useState(false);

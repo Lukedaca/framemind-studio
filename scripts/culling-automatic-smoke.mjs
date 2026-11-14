@@ -46,6 +46,7 @@ try {
   await page.getByRole('heading', { name: 'Lokální culling', exact: true }).waitFor();
   external.length = 0;
   await page.getByRole('button', { name: 'Spustit lokální culling', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor();
   await page.getByRole('checkbox', { name: 'Sbalit série (jeden reprezentant)' }).uncheck();
   const cards = page.locator('.fm-grid-photos > div');
@@ -66,11 +67,13 @@ try {
   const editorUndo = page.locator('button[title$="(Ctrl+Z)"]');
   await editorUndo.waitFor();
   await page.getByRole('button', { name: 'Výběr 02', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   assert.equal(await cards.count(), 1, 'Rejected frames must be absent after the editor handoff');
   assert.equal(await page.getByText('PUBLIC_0001.jpeg', { exact: true }).count(), 1);
   await page.getByRole('button', { name: 'Úpravy 03', exact: true }).click();
   await editorUndo.click();
   await page.getByRole('button', { name: 'Výběr 02', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Sbalit série (jeden reprezentant)' }).uncheck();
   await page.waitForFunction(() => document.querySelectorAll('.fm-grid-photos > div').length === 3);
   const reopened = page.getByRole('button', { name: 'Použít výběr a otevřít editor', exact: true });

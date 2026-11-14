@@ -43,6 +43,7 @@ try {
   await page.getByRole('heading', { name: 'Lokální culling', exact: true }).waitFor();
   external.length = 0;
   await page.getByRole('button', { name: 'Spustit lokální culling', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor();
   await page.getByRole('checkbox', { name: 'Sbalit série (jeden reprezentant)' }).uncheck();
   assert.equal(await page.locator('.fm-grid-photos > div').count(), 5);
@@ -98,6 +99,7 @@ try {
   await page.screenshot({ path: fileURLToPath(new URL(`${label}.png`, output)), fullPage: true });
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).click();
+  await page.getByRole('button', { name: 'Celá sada', exact: true }).click();
   await page.getByRole('button', { name: 'Spustit znovu', exact: true }).waitFor();
   const card = page.locator('.fm-grid-photos > div').filter({ has: page.getByText('FOCUS_0002.jpeg', { exact: true }) });
   assert.equal(await card.getByText('Ručně', { exact: true }).count(), 1);
