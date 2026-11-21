@@ -1,45 +1,7 @@
 # Unreleased
 
-Changes on `main` after [release 0.1.7](0.1.7.md) (source only; the latest published
-Windows installer remains `0.1.7`).
-
-## 21 November 2026 — adaptive strictness, optical defect rejection and darkroom UX
-
-### Local culling engine (`local-2.0`, 100% local)
-- **Automatic batch-adaptive strictness (`Auto`) + manual override (`Conservative / Balanced / Strict`)**:
-  `recommendCullingStrictness` inspects the set's optical blur baseline, sharp share, noise level and
-  series density to pick the right strictness automatically — without a fixed reject quota (an all-sharp
-  set still rejects 0 photos). Switching strictness rescores immediately without remeasurement.
-- **Directional motion blur (`subjectDirection`)**: `opticalMotionBlur` reads the four orientation bins
-  already measured by `cullingOptics.ts` so linear motion blur is caught instead of masked by sharp edges
-  parallel to the movement. Intentional motion, creative and stacking intents remain protected.
-- **Back-focus / out-of-focus subject & higher-ISO tolerance**: distinguishes mild softness (`Review`)
-  from strongly out-of-focus subjects (`Reject`) even beside a sharp background, removes false texture
-  vetoes on blurry high-contrast frames, and raises the blur-evidence noise ceiling for realistic higher-ISO
-  shooting while keeping extreme noise protected.
-- **Optical series comparison**: verified burst series prefer optically sharper subjects and reject
-  substantially softer alternatives directly against a sharp representative.
-
-### Culling workflow & application intuitiveness
-- **Photo-by-photo focus mode**: queue filter (`All / Review / Reject / Keep / Undecided`) with live
-  counts, inline series indicator and one-click/shortcut series comparison (`C`), direct editor handoff
-  button, shortcuts (`Z` or click for 1:1 on the detected subject/focus point, `M` for blur map,
-  `Backspace` for step back, `Ctrl+Z` for Undo, `?` for shortcut help), and photographic EXIF strip
-  (`1/1600 s · f/2.8 · ISO 800 · 200 mm`).
-- **Whole-set Contact Sheet (Light Table)**: unobstructed photos with a 2 px top status bar and matte
-  metadata footer below the image; expanded series open at the top of the viewport; live ETA during
-  analysis; unified amber color for `Review`.
-- **Darkroom UI & cross-app flow**: quiet obsidian active sidebar state with spectral edge hairline,
-  non-clipping segmented controls, single-row editor header, non-overlapping top-right notifications,
-  explicit *Add to current set / Start new set* choice on import, smart culling restore on launch, and
-  *Apply to whole set* in `AdjustPanel` with edited indicators on the filmstrip.
-
-### Verification (21 November 2026)
-- TypeScript (`npm run typecheck`): passed with 0 errors.
-- Unit tests (`vitest run`): **32 files, 277 tests passed** (including 9 new tests in
-  `tests/cullingStrictness.test.ts` covering motion blur, back-focus, high-ISO blur, optical series
-  ranking, strictness levels and `recommendCullingStrictness`).
-- Desktop NSIS packaging was not run in this update; published Windows preview remains `0.1.7`.
+No unpublished application changes on `main` after [release 0.1.8](0.1.8.md).
+The latest published Windows development preview is `0.1.8` (`local-2.0`).
 
 ## Archived development log before 0.1.7
 

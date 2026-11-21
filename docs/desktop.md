@@ -7,8 +7,8 @@ Jde o instalovatelnou aplikaci s vlastním oknem; rozhraní není přepsané do 
 ## Instalace a aktualizace
 
 Klientské vydání zatím není dostupné. Nepodepsaný vývojový náhled
-`FrameMind-Studio_0.1.7_x64-setup.exe` je v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.7); není určen klientům.
+`FrameMind-Studio_0.1.8_x64-setup.exe` je v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.8); není určen klientům.
 Instalátor NSIS nabízí češtinu a angličtinu, licenci MIT, volbu složky a zástupce.
 Instaluje pro aktuálního uživatele, výchozí složka je
 `%LOCALAPPDATA%\FrameMind Studio\`. Uživatel nepotřebuje vývojové nástroje.
@@ -18,7 +18,7 @@ který použije, pokud runtime není nainstalovaný. Připojení není potřeba 
 stažení tohoto předpokladu během instalace. Instalace na čistém Windows bez
 WebView2 dosud nebyla ověřena; místní test používá už přítomný runtime.
 
-Instalátor 0.1.7 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
+Instalátor 0.1.8 není podepsaný certifikátem vydavatele. Nepožadujeme vypnutí
 SmartScreen, odblokování souborů ani instalaci vlastních důvěryhodných certifikátů.
 Automatický updater není implementovaný. Další verze se instalují ručně.
 Odinstalace je v nastavení aplikací Windows. Volba odstranění místních dat je
@@ -42,10 +42,10 @@ Výstupy:
 
 - `dist-desktop/`: zabalený frontend bez PWA a service workeru.
 - `src-tauri/target/release/framemind-studio.exe`: vlastní aplikace.
-- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.7_x64-setup.exe`: instalátor aktuálních zdrojů.
+- `src-tauri/target/release/bundle/nsis/FrameMind Studio_0.1.8_x64-setup.exe`: instalátor aktuálních zdrojů.
 
-Aktuální vydání 0.1.7 používá culling local-2.0 a nové rozhraní výběru fotku po fotce.
-Podrobnosti, provedené kontroly a jejich hranice: [vydání 0.1.7](releases/0.1.7.md).
+Aktuální vydání 0.1.8 používá culling local-2.0 s automatickou přísností, směrovým pohybovým rozmazáním, kontaktním archem a vylepšeným výběrem fotku po fotce.
+Podrobnosti, provedené kontroly a jejich hranice: [vydání 0.1.8](releases/0.1.8.md).
 Starší nativní kontroly níže jsou datované a neprokazují stav nového sestavení.
 
 Název souboru zveřejněného na GitHubu používá `FrameMind-Studio` s pomlčkou;
@@ -145,7 +145,7 @@ bez úspěšného opakování se tento starší stav může po restartu obnovit.
 
 ## Připojení a omezení
 
-Culling ve vydání 0.1.7 používá lokální přibalený model U²-NetP bez
+Culling ve vydání 0.1.8 používá lokální přibalený model U²-NetP bez
 klíčů a stahování modelu za běhu. Zabalení do desktopu
 nemění jiné části editoru: retuš a klikací laso stále poprvé stahují modely
 z Hugging Face, písma používají Google Fonts a dvě funkce editoru stále používají

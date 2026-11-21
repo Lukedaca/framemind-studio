@@ -4,7 +4,7 @@ Výběr fotografií běží ve vašem počítači bez API klíče a odesílání
 Engine `local-2.0` používá přibalený lokální model U²-NetP pro nalezení výrazných
 objektů, měření rozmazání hran v pixelech a vlastní technická měření pro automatické
 označení ponechat, zkontrolovat nebo vyřadit. Ruční rozhodnutí fotografa mají přednost.
-Tento návod popisuje vydání [0.1.7](releases/0.1.7.md) a navazující změny v aktuálních zdrojích ([unreleased](releases/unreleased.md)).
+Tento návod popisuje vydání [0.1.8](releases/0.1.8.md) (navazující na [0.1.7](releases/0.1.7.md)).
 
 ## Výběr a prohlížení originálů
 

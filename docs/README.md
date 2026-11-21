@@ -1,15 +1,16 @@
 # FrameMind Studio documentation
 
-Latest published Windows development release: **0.1.7 / local-2.0** (Windows x64, unsigned preview).
-Current `main` source adds batch-adaptive culling strictness (`Auto` / Conservative / Balanced / Strict),
+Latest published Windows development release: **0.1.8 / local-2.0** (Windows x64, unsigned preview).
+Release 0.1.8 adds batch-adaptive culling strictness (`Auto` / Conservative / Balanced / Strict),
 directional motion-blur and back-focus rejection, optical series ranking, photo-by-photo queue filters,
 EXIF micro-strip, subject-centered 1:1 inspection, Contact Sheet light-table grid, batch adjustment sync,
-and darkroom UI polish. See [unreleased source changes](releases/unreleased.md) and [release 0.1.7](releases/0.1.7.md).
+and darkroom UI polish. See [release 0.1.8](releases/0.1.8.md) and [previous release 0.1.7](releases/0.1.7.md).
 
 - [Český přehled funkcí, dat a omezení](../README.md)
 - [English feature, data and limitation guide](../README.en.md)
 - [Windows installation, updates and native verification](desktop.md)
 - [Local culling: full originals, zoom, comparison and shortcuts (Czech)](culling.md)
+- [Release 0.1.8: adaptive strictness, optical defect rejection and darkroom UX](releases/0.1.8.md)
 - [Release 0.1.7: local automatic analysis and photo-by-photo review](releases/0.1.7.md)
 - [Release 0.1.6: clear the working photo set](releases/0.1.6.md)
 - [Release 0.1.5: model reuse and brush response](releases/0.1.5.md)

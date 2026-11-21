@@ -10,7 +10,7 @@ FrameMind Studio je open-source aplikace pro lokální provoz na vlastním poč�
 GitHub slouží pro zdrojový kód, zálohu a příspěvky; aplikaci nikam nenasazujeme.
 Autorem a správcem je [Lukáš Drštička (Lukedaca)](https://github.com/Lukedaca).
 
-**Culling běží lokálně:** vydání 0.1.7 obsahuje přibalený model pro nalezení výrazných
+**Culling běží lokálně:** vydání 0.1.8 obsahuje přibalený model pro nalezení výrazných
 objektů, bez API klíče a odesílání fotografií.
 Celé Studio zatím není plně offline: editor stále obsahuje dvě cloudové funkce
 a modely retuše i písma se stahují. Přesný stav je v části [Připojení a data](#připojení-a-data).
@@ -21,13 +21,13 @@ Desktopová verze používá **Tauri 2, Rust a Microsoft WebView2**. Rozhraní v
 je zabalené v samostatném okně aplikace. Instalovaná aplikace nepotřebuje spouštět
 Vite, terminál ani externí prohlížeč.
 
-**Klientské vydání zatím není dostupné.** Balíček 0.1.7 v
-[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.7) je nepodepsaný
+**Klientské vydání zatím není dostupné.** Balíček 0.1.8 v
+[GitHub Releases](https://github.com/Lukedaca/framemind-studio/releases/tag/v0.1.8) je nepodepsaný
 vývojový náhled. Nedoporučujeme jej distribuovat klientům. Windows může zobrazit
 SmartScreen nebo instalaci zablokovat; vypínání ochrany není součástí instalačního postupu.
 
 Uživatel nepotřebuje Git, Node.js ani Rust. Instalátor obsahuje offline instalační
-program WebView2 pro počítače, kde runtime chybí; proto má přibližně 238 MB.
+program WebView2 pro počítače, kde runtime chybí; proto má přibližně 318 MB.
 Instalace je pro současného uživatele; aplikace má zástupce a standardní odinstalaci.
 Pro přípravu klientského vydání je nutný důvěryhodný podpis vydavatele.
 Podpis ověřuje původ a integritu souboru; sám negarantuje okamžité odstranění
@@ -35,12 +35,12 @@ varování SmartScreen. [Oficiální vysvětlení Microsoftu](https://learn.micr
 Vydání pro macOS a Linux nebyla sestavena ani ověřena.
 
 Podrobnosti o sestavení, datech a ověření: [docs/desktop.md](docs/desktop.md).
-Zveřejněné vývojové vydání: [0.1.7 — lokální automatika a výběr fotku po fotce](docs/releases/0.1.7.md).
-Obsahuje adaptivní retuš, klonovací a hojivý štětec, celé originály a označení hlavního motivu.
+Zveřejněné vývojové vydání: [0.1.8 — adaptivní přísnost, optické vady a temná komora](docs/releases/0.1.8.md).
+Navazuje na [0.1.7](docs/releases/0.1.7.md) (lokální automatika a výběr fotku po fotce), adaptivní retuš, klonovací a hojivý štětec, celé originály a označení hlavního motivu.
 Přehled dokumentace: [docs/README.md](docs/README.md).
 
-[Aktuální snímky 0.1.7](demo-screenshots/README.md) ukazují přehled pracovní sady,
-výběr fotku po fotce, celou sadu, porovnání a editor. Jde o browserové snímky
+[Aktuální snímky 0.1.8](demo-screenshots/README.md) ukazují přehled pracovní sady,
+výběr fotku po fotce, kontaktní arch celé sady, porovnání a editor. Jde o browserové snímky
 rozhraní stejného zdrojového kódu; nenahrazují nativní ověření Windows aplikace.
 
 ## Vývoj a spuštění ze zdrojů
@@ -143,15 +143,17 @@ mřížku. Bez ručních či automatických oblastí vychází skóre a referenc
 doplňkový ostrý detail může zabránit vyřazení a poslat snímek ke kontrole.
 Výřezy se měří postupně. Samotná mřížka neurčuje subjekt a důležitý detail lze minout.
 
-Vydání **0.1.7 / local-2.0** přidává automatické hledání výrazných objektů
-přibaleným modelem U²-NetP. Až 12 výřezů 128 × 128 px se měří v původním rozlišení;
-silné známky rozmazání mohou automaticky označit snímek k vyřazení. Nově se měří
-rozmazání hran v pixelech po celém záběru i na objektu a posuzuje se pro zvolený
-výstup (100 % / tisk A4 / web); detail snímku ukazuje mapu rozmazání.
+Vydání **0.1.8 / local-2.0** navazuje na 0.1.7: automaticky hledá výrazné objekty
+přibaleným modelem U²-NetP, měří až 12 výřezů 128 × 128 px v původním rozlišení
+a rozmazání hran v pixelech po celém záběru i na objektu pro zvolený výstup
+(100 % / tisk A4 / web). Přidává automatickou přísnost (**Auto / Opatrný / Vyvážený / Přísný**),
+vyhodnocení směrového pohybového rozmazání, silného back-focusu i optické porovnání sérií,
+filtr fronty a EXIF proužek ve výběru fotku po fotce, 1:1 lupu na motiv (`Z`), mapu ostrosti (`M`),
+porovnání série (`C`) a čistý kontaktní arch celé sady.
 [Optická ostrost a ověření](docs/culling.md#změny-local-20--14-listopadu-2026-optická-ostrost). Ruční označení
 není potřeba. Model nerozpoznává oči ani rozhodující moment a může minout důležitý
-detail. Předchozí instalátor 0.1.6 obsahoval **local-1.6**.
-[Změny 0.1.7](docs/releases/0.1.7.md) zahrnují také čtyři ruční oblasti,
+detail. Předchozí instalátor 0.1.7 zavedl základ **local-2.0**.
+[Změny 0.1.8](docs/releases/0.1.8.md) a [0.1.7](docs/releases/0.1.7.md) zahrnují také čtyři ruční oblasti,
 jejich ověřené porovnání a fotografický záměr po snímcích. **Použít výběr a otevřít
 editor** po potvrzení odebere vyřazené z pracovní sady a pokračuje do úprav;
 **Zpět** obnoví snímky, skóre, verdikty i vysvětlení. Originály na disku se nemažou.
@@ -304,11 +306,9 @@ Při odinstalaci je odstranění dat samostatná volba.
 - RAW import extrahuje náhled; nejde o demosaicing ani plné vyvolání RAW.
   Soubor bez použitelného vloženého JPEG nemusí jít importovat.
 - Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
-- Aktuální ověření zdrojů na `main` (21. 11. 2026): TypeScript (`tsc --noEmit`) a 277 testů ve 32 souborech prošly ([unreleased](docs/releases/unreleased.md)).
-  Zveřejněný Windows balíček 0.1.7 prošel 267 testy, oběma frontendovými buildy, sedmi browserovými kontrolami a ověřením ve skutečném Windows EXE s oddělenými profily. Instalace na čistých Windows není ověřená.
-- Aktuální kontroly popisuje [vydání 0.1.7](docs/releases/0.1.7.md);
-  historické kontroly jsou v [poznámkách k 0.1.6](docs/releases/0.1.6.md).
-  Syntetické kontroly a místní fotografické sady neprokazují obecnou přesnost
+- Ověření vydání 0.1.8 (21. 11. 2026): TypeScript (`tsc --noEmit`), 277 testů ve 32 souborech, webový i desktopový frontend build, 10 browserových snímků aktuálního rozhraní (s nulovými chybami stránky) a lokální sestavení Windows NSIS balíčku ([vydání 0.1.8](docs/releases/0.1.8.md)).
+  Předchozí nativní a browserové kontroly popisují [poznámky k 0.1.7](docs/releases/0.1.7.md) a [0.1.6](docs/releases/0.1.6.md). Instalace na čistých Windows není ověřená.
+- Syntetické kontroly a místní fotografické sady neprokazují obecnou přesnost
   napříč žánry, fotoaparáty a RAW soubory.
 - Kompletní ověření retuše ve všech prohlížečích a na všech GPU nebylo provedeno.
 
