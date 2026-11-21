@@ -93,7 +93,7 @@ interface SegmentedProps<T extends string | number> {
 
 export function Segmented<T extends string | number>({ value, options, onChange, size = 'md' }: SegmentedProps<T>) {
   return (
-    <div className={`fm-seg ${size === 'sm' ? 'fm-seg--sm' : ''}`} role="radiogroup">
+    <div className={`fm-seg fm-seg--stretch ${size === 'sm' ? 'fm-seg--sm' : ''}`} role="radiogroup">
       {options.map((o) => (
         <button
           key={String(o.value)}

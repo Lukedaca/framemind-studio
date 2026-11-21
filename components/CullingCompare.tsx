@@ -22,6 +22,25 @@ const DECISIONS: CullingDecision[] = ['keep', 'review', 'reject'];
 const LETTERS = { keep: 'K', review: 'R', reject: 'X' };
 const ZOOM_STEPS = [0.125, 0.25, 0.5, 1, 2, 4];
 
+/** Best initial 1:1 inspection point: chosen region, detected subject or sharpest optical tile. */
+function smartFocusPoint(result: CullingResult | undefined): Point {
+  const manual = result?.focusRegions?.[0] ?? result?.focusRegion;
+  if (manual) return { x: manual.x + manual.width / 2, y: manual.y + manual.height / 2 };
+  const optics = result?.metrics.optics;
+  if (optics?.map?.length) {
+    let best: { x: number; y: number; blur: number } | undefined;
+    for (let i = 0; i < optics.map.length; i += 4) {
+      const [x, y, blur, subject] = optics.map.slice(i, i + 4);
+      if (subject >= 0.5 && (!best || blur < best.blur)) best = { x, y, blur };
+    }
+    if (best) return { x: best.x, y: best.y };
+  }
+  const auto = result?.metrics.automatic?.samples?.[0]?.region;
+  if (auto) return { x: auto.x + auto.width / 2, y: auto.y + auto.height / 2 };
+  if (optics?.focus) return { x: optics.focus.x, y: optics.focus.y };
+  return { x: 0.5, y: 0.5 };
+}
+
 export default function CullingCompare({ files, results, onDecision, onClose, onFocusRegions, onIntentChange, busy = false, initialZoom = 'fit' }: Props) {
   const { t } = useTranslation();
   const tr = (key: string) => (t as unknown as Record<string, string>)[key] ?? key;
@@ -63,7 +82,7 @@ export default function CullingCompare({ files, results, onDecision, onClose, on
 
   const changeZoom = (value: number | 'fit', focusId?: string, point?: Point) => {
     for (const [id, area] of areas.current) {
-      centers.current.set(id, id === focusId && point ? point : zoom === 'fit' ? { x: 0.5, y: 0.5 } : {
+      centers.current.set(id, id === focusId && point ? point : zoom === 'fit' ? smartFocusPoint(results.get(id)) : {
         x: (area.scrollLeft + area.clientWidth / 2) / area.scrollWidth,
         y: (area.scrollTop + area.clientHeight / 2) / area.scrollHeight,
       });
@@ -77,7 +96,7 @@ export default function CullingCompare({ files, results, onDecision, onClose, on
       if (area) area.scrollTo(area.scrollWidth * point.x - area.clientWidth / 2, area.scrollHeight * point.y - area.clientHeight / 2);
     }
     centers.current.clear();
-  }, [zoom, dpr]);
+  }, [zoom, dpr, sizes]);
 
   const imagePoint = (id: string, clientX: number, clientY: number): Point | undefined => {
     const area = areas.current.get(id), size = sizes[id];
@@ -193,6 +212,7 @@ export default function CullingCompare({ files, results, onDecision, onClose, on
                   width: pixels?.width ?? '100%', height: pixels?.height ?? '100%', minWidth: 0, minHeight: 0, maxWidth: 'none', maxHeight: 'none', objectFit: 'contain' }}
                 onLoad={event => {
                   const image = event.currentTarget;
+                  if (zoom !== 'fit') centers.current.set(file.id, smartFocusPoint(results.get(file.id)));
                   setSizes(previous => ({ ...previous, [file.id]: { width: image.naturalWidth, height: image.naturalHeight } }));
                 }} onError={() => setErrors(previous => [...previous, file.id])} />
               {focusRegions.length > 0 && size && <svg viewBox={`0 0 ${size.width} ${size.height}`} preserveAspectRatio="xMidYMid meet" className="pointer-events-none absolute" style={{ width: pixels?.width ?? '100%', height: pixels?.height ?? '100%', left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }} aria-hidden>
@@ -215,11 +235,16 @@ export default function CullingCompare({ files, results, onDecision, onClose, on
               {tr('cull_focus_region')} {i + 1} · {Math.round((results.get(file.id)?.metrics.focusRegions?.[i]?.sharpnessScore ?? results.get(file.id)?.metrics.focus?.sharpnessScore ?? 0) * 100)} / 100 ×
             </button>)}
             <div className="flex gap-1">
-              {DECISIONS.map(value => <button key={value} onClick={() => { setActiveId(file.id); onDecision(file.id, value); }}
-                aria-pressed={results.get(file.id)?.manualDecision === value} disabled={busy || !results.has(file.id)}
-                className={`rounded border px-3 py-1.5 text-xs font-bold disabled:opacity-40 ${decision === value ? 'border-fm-blue text-white bg-fm-blue/20' : 'border-border-subtle text-gray-400'}`}>
-                {LETTERS[value]} · {tr('cull_decision_' + value)}
-              </button>)}
+              {DECISIONS.map(value => {
+                const activeTone = value === 'keep' ? 'border-fm-green text-fm-green bg-fm-green/15'
+                  : value === 'review' ? 'border-amber-400 text-amber-300 bg-amber-400/15'
+                    : 'border-fm-red text-fm-red bg-fm-red/15';
+                return <button key={value} onClick={() => { setActiveId(file.id); onDecision(file.id, value); }}
+                  aria-pressed={results.get(file.id)?.manualDecision === value} disabled={busy || !results.has(file.id)}
+                  className={`rounded border px-3 py-1.5 text-xs font-bold disabled:opacity-40 ${decision === value ? activeTone : 'border-border-subtle text-gray-400'}`}>
+                  {LETTERS[value]} · {tr('cull_decision_' + value)}
+                </button>;
+              })}
             </div>
           </div>
         </section>;

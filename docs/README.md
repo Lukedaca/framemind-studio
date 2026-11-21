@@ -1,11 +1,10 @@
 # FrameMind Studio documentation
 
-Latest published development release and current source: **0.1.7 / local-2.0**,
-Windows x64, unsigned preview. It includes bundled local U²-NetP object-region
-measurement, edge blur judged per output size, photo-by-photo review with K/R/X,
-a whole-set grid and confirmed selection-to-editor handoff with Undo.
-The overview uses real working-set counts; import and editor surfaces are refreshed.
-See [release notes and verification limits](releases/0.1.7.md).
+Latest published Windows development release: **0.1.7 / local-2.0** (Windows x64, unsigned preview).
+Current `main` source adds batch-adaptive culling strictness (`Auto` / Conservative / Balanced / Strict),
+directional motion-blur and back-focus rejection, optical series ranking, photo-by-photo queue filters,
+EXIF micro-strip, subject-centered 1:1 inspection, Contact Sheet light-table grid, batch adjustment sync,
+and darkroom UI polish. See [unreleased source changes](releases/unreleased.md) and [release 0.1.7](releases/0.1.7.md).
 
 - [Český přehled funkcí, dat a omezení](../README.md)
 - [English feature, data and limitation guide](../README.en.md)

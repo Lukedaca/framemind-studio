@@ -144,7 +144,7 @@ const Sidebar = ({ isOpen, onClose, onNavigate, onOpenApiKeyModal, currentView, 
             {storageStatus === 'error' && <button onClick={retryStorage} className="mt-1 block underline">{t.storage_retry}</button>}
           </div>}
           <div className="flex items-center gap-2">
-            <div className="fm-seg flex-1">
+            <div className="fm-seg fm-seg--stretch flex-1">
               <button className={language === 'cs' ? 'is-active' : ''} onClick={() => setLanguage('cs')}>CZ</button>
               <button className={language === 'en' ? 'is-active' : ''} onClick={() => setLanguage('en')}>EN</button>
             </div>

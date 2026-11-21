@@ -113,6 +113,24 @@ export type CullingGenre =
 /** Delivery size the blur is judged against: source pixels, an A4 print or a web gallery. */
 export type CullingOutputTarget = 'full' | 'print' | 'web';
 
+/** Resolved culling strictness level. */
+export type CullingStrictnessLevel = 'conservative' | 'balanced' | 'strict';
+/** User-facing strictness mode: automatic (batch-adaptive) or manual override. */
+export type CullingStrictnessMode = 'auto' | CullingStrictnessLevel;
+
+export interface CullingStrictnessRecommendation {
+  level: CullingStrictnessLevel;
+  reason: string;
+  stats: {
+    measured: number;
+    opticalCoverage: number;
+    sharpShare: number;
+    seriesShare: number;
+    medianNoise: number;
+    baselineBlur?: number;
+  };
+}
+
 /** Blur radius in source pixels, measured at edges on a bounded tile lattice. */
 export interface CullingOptics {
   version: 1;
@@ -179,6 +197,10 @@ export interface CullingResult {
   focusRegions?: CullingFocusRegion[];
   intent?: CullingIntent;
   target?: CullingOutputTarget;
+  strictness?: CullingStrictnessLevel;
+  opticalSeriesBlur?: number;
+  referenceOpticalBlur?: number;
+  opticalSeriesRatio?: number;
   focusComparisonVerified?: boolean;
   relativeFocusSharpness?: number;
   referenceFocusSharpness?: number;

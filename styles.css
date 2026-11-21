@@ -263,41 +263,50 @@ body::after {
   background: rgba(79, 111, 240, 0.22);
 }
 
-/* Segmentový přepínač — zapuštěná kolejnice, aktivní dílek vystupuje. */
+/* Segmentový přepínač — zapuštěná kolejnice, aktivní dílek vystupuje bez ořezu textu. */
 .fm-seg {
-  display: flex;
+  display: inline-flex;
+  align-items: center;
   gap: 2px;
   padding: 3px;
   border-radius: 12px;
   background: #07070a;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.65);
 }
 .fm-seg > button {
-  flex: 1;
-  min-width: 0;
+  flex: 0 0 auto;
   height: 30px;
-  padding: 0 0.85rem;
+  padding: 0 0.78rem;
   border-radius: 9px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   color: #a3a3b6;
   white-space: nowrap;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s, box-shadow 0.15s;
 }
-.fm-seg > button:hover {
-  color: #e6e6ee;
+.fm-seg--stretch {
+  display: flex;
+  width: 100%;
+}
+.fm-seg--stretch > button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.fm-seg > button:hover:not(:disabled) {
+  color: #f0f0f6;
 }
 .fm-seg > button.is-active {
   color: #0b0c10;
-  background: linear-gradient(180deg, #ffffff, #dde1e9);
+  font-weight: 600;
+  background: linear-gradient(180deg, #f7f8fb, #dce0e8);
   box-shadow:
     inset 0 1px 0 #ffffff,
     0 1px 3px rgba(0, 0, 0, 0.6);
 }
 .fm-seg--sm > button {
   height: 26px;
-  padding: 0 0.5rem;
+  padding: 0 0.55rem;
   font-size: 12px;
 }
 
@@ -439,55 +448,122 @@ body::after {
   user-select: none;
 }
 
-/* Boční menu: velké položky, krok jako číslo v kroužku, hotový krok s fajfkou. */
+/* Boční menu: klidná temná komora, aktivní krok drží spektrální rysku místo oslňující bílé plochy. */
 .fm-nav-item {
   position: relative;
   display: flex;
   width: 100%;
-  min-height: 52px;
+  min-height: 48px;
   align-items: center;
-  gap: 14px;
+  gap: 13px;
   padding: 0 14px;
-  border-radius: 16px;
-  font-size: 15px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  font-size: 14.5px;
   font-weight: 500;
-  color: #b9b9c8;
+  color: #a6a6b8;
   text-align: left;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 .fm-nav-item:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.045);
-  color: #ffffff;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f5f5f8;
 }
 .fm-nav-item.is-active {
-  color: #0b0c10;
-  background: linear-gradient(180deg, #ffffff, #dde1e9);
-  box-shadow: inset 0 1px 0 #ffffff, 0 10px 26px -14px rgba(255, 255, 255, 0.45);
+  color: #f8f8fb;
+  font-weight: 600;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.03));
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 8px 20px -12px rgba(0, 0, 0, 0.9);
+}
+.fm-nav-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 2.5px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #c026ff 0%, #2f6fe0 55%, #1fc06b 100%);
 }
 .fm-nav-item:disabled {
-  opacity: 0.38;
+  opacity: 0.36;
   cursor: default;
 }
 .fm-nav-num {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 27px;
+  height: 27px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-size: 12px;
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.07);
-  color: #d4d4de;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
+  color: #c4c4d2;
 }
 .fm-nav-item.is-done .fm-nav-num {
-  background: rgba(31, 192, 107, 0.16);
+  background: rgba(31, 192, 107, 0.14);
   color: #2fd17d;
 }
 .fm-nav-item.is-active .fm-nav-num {
-  background: #0b0c10;
-  color: #ffffff;
+  background: #f5f5f8;
+  color: #0b0c10;
+  font-weight: 700;
+}
+
+/* Přístrojový rám jeviště a kontaktní arch */
+.fm-stage-frame {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 24px 64px -24px rgba(0, 0, 0, 0.95);
+}
+.fm-stage-frame::before,
+.fm-stage-frame::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+  width: 12px;
+  height: 12px;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.fm-stage-frame::before {
+  top: 10px;
+  left: 10px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+.fm-stage-frame::after {
+  bottom: 10px;
+  right: 10px;
+  border-bottom: 1px solid;
+  border-right: 1px solid;
+}
+
+.fm-contact-card {
+  background: linear-gradient(180deg, #13141c 0%, #0e0f15 100%);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px -16px rgba(0, 0, 0, 0.85);
+}
+
+.fm-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e6e6ee;
 }
 
 .fm-progress {

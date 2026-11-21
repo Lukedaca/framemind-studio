@@ -68,7 +68,12 @@ function App() {
       setActiveFileId(workspace.activeFileId);
       const project = projects.find(item => item.id === workspace.projectId);
       if (project) setCurrentProject(project);
-      if (workspace.history.present.state.length || workspace.history.past.length || workspace.history.future.length) setView('editor');
+      const restoredFiles = workspace.history.present.state;
+      if (restoredFiles.length || workspace.history.past.length || workspace.history.future.length) {
+        const hasEdits = restoredFiles.some(f => f.edits && Object.entries(f.edits).some(([k, v]) => k !== 'watermark' && v !== 0 && v !== undefined));
+        const needsCulling = restoredFiles.length > 1 && !hasEdits && restoredFiles.some(f => !f.culling || f.culling.analysisStatus !== 'done');
+        setView(needsCulling ? 'culling' : 'editor');
+      }
     }
     setWorkspaceReady(true);
   }, [storageReady, workspaceReady, workspace, projects, setCurrentProject]);
@@ -257,7 +262,7 @@ function App() {
   }, [addNotification, t.editor_no_image, projects, setCurrentProject, loadProjectWorkspace]);
 
   // Po importu: víc fotek → nejdřív výběr, jedna fotka → rovnou úpravy.
-  const handleFilesSelected = useCallback(async (selectedFiles: File[]) => {
+  const handleFilesSelected = useCallback(async (selectedFiles: File[], importMode: 'append' | 'replace' = 'append') => {
     const generation = workspaceGeneration.current;
     const validFiles = await prepareUploadedFiles(selectedFiles);
     if (generation !== workspaceGeneration.current) {
@@ -265,10 +270,18 @@ function App() {
       return;
     }
     if (validFiles.length === 0) return;
-    const total = filesRef.current.length + validFiles.length;
-    setFiles((current) => [...current, ...validFiles], `Import ${validFiles.length}`);
+    const replacing = importMode === 'replace' && filesRef.current.length > 0;
+    const total = replacing ? validFiles.length : filesRef.current.length + validFiles.length;
+    if (replacing) {
+      setWorkspaceProjectId(null);
+      setCurrentProject(null);
+      window.history.pushState({}, '', '/');
+      setFiles(() => validFiles, `Import ${validFiles.length}`);
+    } else {
+      setFiles((current) => [...current, ...validFiles], `Import ${validFiles.length}`);
+    }
     addNotification(`${validFiles.length} ${t.notify_upload_success}`, 'info');
-    syncFilesToCurrentProject(validFiles, `${validFiles.length} ${t.notify_upload_success}`);
+    if (!replacing) syncFilesToCurrentProject(validFiles, `${validFiles.length} ${t.notify_upload_success}`);
     if (total > 1) {
       setView('culling');
       setActiveAction(null);
@@ -277,7 +290,7 @@ function App() {
       setView('editor');
       setActiveAction({ action: 'base-edit', timestamp: Date.now() });
     }
-  }, [addNotification, prepareUploadedFiles, setFiles, syncFilesToCurrentProject, t.notify_upload_success]);
+  }, [addNotification, prepareUploadedFiles, setCurrentProject, setFiles, syncFilesToCurrentProject, t.notify_upload_success]);
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
   const openApiKey = () => setShowApiKeyModal(true);
@@ -285,7 +298,17 @@ function App() {
   const renderView = () => {
     switch (view) {
       case 'upload':
-        return <UploadView title={t.nav_upload} onToggleSidebar={toggleSidebar} onFilesSelected={handleFilesSelected} addNotification={addNotification} projectName={currentProject?.name} />;
+        return (
+          <UploadView
+            title={t.nav_upload}
+            onToggleSidebar={toggleSidebar}
+            onFilesSelected={handleFilesSelected}
+            addNotification={addNotification}
+            projectName={currentProject?.name}
+            existingCount={files.length}
+            defaultImportMode={activeAction?.action === 'new-set' ? 'replace' : 'append'}
+          />
+        );
       case 'editor':
         return (
           <EditorView
@@ -311,6 +334,8 @@ function App() {
             files={files}
             onSetFiles={setFiles}
             addNotification={addNotification}
+            onUndo={() => dispatchHistory({ type: 'UNDO' })}
+            canUndo={history.past.length > 0}
             onDone={() => {
               setView('editor');
               setActiveAction({ action: 'base-edit', timestamp: Date.now() });
@@ -400,7 +425,7 @@ function App() {
 
       <ApiKeyModal isOpen={showApiKeyModal} onClose={() => setShowApiKeyModal(false)} />
 
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[250] w-[calc(100%-2rem)] max-w-sm space-y-2" aria-live="polite">
+      <div className="pointer-events-none fixed right-4 top-[84px] z-[250] w-[calc(100%-2rem)] max-w-sm space-y-2" aria-live="polite">
         {notifications.map((n) => (
           <div
             key={n.id}

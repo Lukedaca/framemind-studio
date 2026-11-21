@@ -1,14 +1,16 @@
 // Pure local scoring and grouping; browser I/O belongs to cullingSession/worker.
-import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, CullingNativeMetrics, CullingResult,
+import type { CullingDecision, CullingExif, CullingGenre, CullingMetrics, CullingNativeMetrics, CullingOptics, CullingResult,
   CullingScoreBreakdown, CullingScorePart, CullingSignature, CullingVerdictSource, CullingIntent, CullingFocusMeasurement,
-  CullingOutputTarget } from '../types';
+  CullingOutputTarget, CullingStrictnessLevel, CullingStrictnessMode, CullingStrictnessRecommendation } from '../types';
 import { clamp01 } from './cullingMetrics';
 import { compareAlignedSignatures, compareSignatures, isValidSignature, type SimilarityComparison } from './cullingSimilarity';
 import { comparableFocus, focusMeasurements, focusSharpness, severelySoftFocus, validFocusEvidence } from './cullingRegions';
 import { validAutomaticEvidence } from './cullingAutomatic';
-import { OUTPUT_SHARP, opticalSharpness, opticsVerdict, outputScale, reliableOptics, sharpestTile, type OpticsVerdict } from './cullingOptics';
+import { OUTPUT_SHARP, opticalMotionBlur, opticalSharpness, opticsVerdict, outputScale, reliableOptics, sharpestTile, type OpticsVerdict } from './cullingOptics';
 
 export const CULLING_ENGINE_VERSION = 'local-2.0';
+export const CULLING_STRICTNESS_LEVELS: CullingStrictnessLevel[] = ['conservative', 'balanced', 'strict'];
+export const CULLING_STRICTNESS_MODES: CullingStrictnessMode[] = ['auto', 'conservative', 'balanced', 'strict'];
 
 /**
  * Optical evidence for one delivery size. Only without a photographer-chosen focus
@@ -84,7 +86,7 @@ export function computeFinalScore(metrics: CullingMetrics, genre: CullingGenre |
   return Math.round(Object.values(computeScoreBreakdown(metrics, genre, intent, target)).reduce((sum, item) => sum + item.contribution, 0));
 }
 
-type DecisionContext = Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence' | 'relativeNativeSharpness' | 'referenceNativeSharpness' | 'duplicateVerified' | 'intent' | 'focusComparisonVerified' | 'relativeFocusSharpness' | 'referenceFocusSharpness' | 'target'>;
+type DecisionContext = Pick<CullingResult, 'duplicateGroupId' | 'isBestInGroup' | 'groupKind' | 'similarityToBest' | 'relativeSharpness' | 'scoreGap' | 'referenceDetailConfidence' | 'relativeNativeSharpness' | 'referenceNativeSharpness' | 'duplicateVerified' | 'intent' | 'focusComparisonVerified' | 'relativeFocusSharpness' | 'referenceFocusSharpness' | 'target' | 'strictness' | 'opticalSeriesBlur' | 'referenceOpticalBlur' | 'opticalSeriesRatio'>;
 // Texture-energy blur signals. Measured edge blur in pixels supersedes them.
 const TEXTURE_SOFT_RISKS = ['cull_risk_auto_soft', 'cull_risk_native_soft', 'cull_risk_preview_soft', 'cull_risk_detail_outside_grid', 'cull_risk_soft_vs_series', 'cull_risk_low_detail'];
 const TEXTURE_BLUR_REJECTS = ['cull_reason_native_blur', 'cull_reason_auto_blur', 'cull_reason_soft_alternative'];
@@ -102,6 +104,9 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
   const auto = !selected.length && metrics.automatic?.status === 'measured' ? metrics.automatic : undefined;
   const focus = selected[0] ?? auto?.samples[0];
   const intent = context.intent ?? 'standard', assessBlur = !['motion', 'creative', 'stack'].includes(intent);
+  const strictness: CullingStrictnessLevel = context.strictness ?? 'balanced';
+  const maxBlurNoise = strictness === 'conservative' ? 5 : 8;
+  const target = context.target ?? 'full';
   if (selected.length && assessBlur) {
     if (selected.some(f => f.technical.detailConfidence < 0.15 || f.sharpnessScore < 0.6)) risks.push('cull_risk_focus_soft');
     else reasons.push('cull_reason_focus_detail');
@@ -147,10 +152,10 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
       [...selected, ...(auto?.samples ?? [])].every(f => f.technical.dynamicRange <= 8 && f.technical.entropy < 1);
   const native = metrics.native;
   // Broad, measurable edges but almost no fine detail across the 1:1 sample grid.
-  // Low texture, noisy samples and any observed sharp patch veto this suggestion.
+  // Low texture, extreme noise and any observed sharp patch veto this suggestion.
   const severelySoftNative = !focus && native && (native.fixedSampleCount ?? native.sampleCount) >= 9 && referenceSamples(native) >= 5 &&
     native.maxSharpnessScore < 0.56 && native.maxLaplacianVariance < 8 &&
-    native.maxEdgeAcutance < 0.012 && native.maxNoiseEstimate < 3;
+    native.maxEdgeAcutance < 0.012 && native.maxNoiseEstimate < maxBlurNoise;
   const alternative = !!context.duplicateGroupId && context.isBestInGroup === false;
   const redundantCopy = alternative && context.groupKind === 'near-duplicate' &&
     (context.similarityToBest ?? 0) >= 0.965 && context.duplicateVerified === true;
@@ -166,39 +171,93 @@ export function deriveTechnicalDecision(metrics: CullingMetrics, finalScore: num
     (context.referenceDetailConfidence ?? 0) >= 0.35 && referenceScore >= 75;
   // Downscaling can hide defocus or even reverse the preview's ranking. A native
   // deficit is usable only with matching resolutions, a genuinely sharp reference,
-  // and independently soft, informative, quiet samples in the candidate itself.
+  // and independently soft, informative, non-noisy samples in the candidate itself.
   // A sharp sampled patch still vetoes rejection even when the other frame is sharper.
   const muchSofterNativeAlternative = !focus && alternative && (context.groupKind === 'burst' || context.groupKind === 'near-duplicate') &&
     (context.similarityToBest ?? 0) >= 0.84 && (context.referenceDetailConfidence ?? 0) >= 0.6 &&
     Number.isFinite(context.relativeNativeSharpness) && (context.relativeNativeSharpness ?? 1) >= 0 &&
     (context.relativeNativeSharpness ?? 1) < 0.25 && (context.referenceNativeSharpness ?? 0) >= 0.7 &&
     Number.isFinite(context.relativeSharpness) && (context.relativeSharpness ?? 2) <= 1.2 &&
-    native && referenceSamples(native) >= 5 && native.maxSharpnessScore < 0.6 && native.maxNoiseEstimate < 3;
-  const softSelectedRegion = intent === 'detail' && selected.some(severelySoftFocus);
+    native && referenceSamples(native) >= 5 && native.maxSharpnessScore < 0.6 && native.maxNoiseEstimate < maxBlurNoise;
+  const softSelectedRegion = intent === 'detail' && selected.some(f => severelySoftFocus(f, maxBlurNoise));
   const softerSelectedAlternative = assessBlur && alternative && context.focusComparisonVerified === true &&
-    (context.relativeFocusSharpness ?? 1) < 0.25 && (context.referenceFocusSharpness ?? 0) >= 0.7 && selected.some(severelySoftFocus);
+    (context.relativeFocusSharpness ?? 1) < 0.25 && (context.referenceFocusSharpness ?? 0) >= 0.7 && selected.some(f => severelySoftFocus(f, maxBlurNoise));
   const protectedSet = intent === 'stack' || intent === 'creative';
   const automaticBlur = assessBlur && auto && auto.coverage >= .0025 && auto.coverage <= .65 &&
     auto.summary && auto.summary.informativeSamples >= 3 && auto.summary.sampleCount >= 3 &&
     auto.summary.maxSharpnessScore < .6 && auto.summary.maxLaplacianVariance < 8 &&
-    auto.summary.maxEdgeAcutance < .012 && auto.summary.maxNoiseEstimate < 3;
-  const optical = assessBlur ? optics(metrics, context.target ?? 'full') : undefined;
-  const opticallySharp = optical?.kind === 'subject-sharp' || optical?.kind === 'frame-sharp';
+    auto.summary.maxEdgeAcutance < .012 && auto.summary.maxNoiseEstimate < maxBlurNoise;
+  const optical = assessBlur ? optics(metrics, target) : undefined;
+  const scale = metrics.optics ? outputScale(target, metrics.optics.sourceWidth, metrics.optics.sourceHeight) : 1;
+  // Directional motion blur: edges parallel to camera/subject motion stay sharp while
+  // perpendicular edges smear. The 4-orientation optical bins expose this directly.
+  const motion = assessBlur && !selected.length && reliableOptics(metrics.optics) ? opticalMotionBlur(metrics.optics, target) : undefined;
+  const opticalMotionReject = !!motion && (
+    strictness === 'strict' ? motion.maxBlur >= 1.6 && motion.ratio >= 1.8
+      : strictness === 'balanced' ? motion.maxBlur >= 2.2 && motion.ratio >= 2.0
+        : false);
+  const opticalMotionReview = !!motion && !opticalMotionReject && (
+    strictness === 'strict' ? motion.maxBlur >= 1.3 && motion.ratio >= 1.5
+      : strictness === 'balanced' ? motion.maxBlur >= 1.5 && motion.ratio >= 1.7
+        : motion.maxBlur >= 2.4 && motion.ratio >= 2.2);
+  if (opticalMotionReject || opticalMotionReview) risks.push('cull_risk_optics_motion');
+  const opticallySharp = (optical?.kind === 'subject-sharp' || optical?.kind === 'frame-sharp') && !opticalMotionReject && !opticalMotionReview;
   if (opticallySharp) {
     // Texture energy cannot tell plain surfaces from blur; sharp measured edges can.
     for (let i = risks.length - 1; i >= 0; i--) if (TEXTURE_SOFT_RISKS.includes(risks[i])) risks.splice(i, 1);
-    reasons.push('cull_reason_optics_sharp');
-  } else if (optical) risks.push(optical.kind === 'focus-elsewhere' ? 'cull_risk_optics_focus_elsewhere' : 'cull_risk_optics_soft');
-  // Every measured area blurred, including the single sharpest tile: nothing in the frame is in focus.
-  // Detail finer than the isolation distance (fine print, mesh) has no isolated edges, so any
-  // sharp texture measurement still vetoes the rejection.
-  const scale = metrics.optics ? outputScale(context.target ?? 'full', metrics.optics.sourceWidth, metrics.optics.sourceHeight) : 1;
+    // A few sharp edges in a salient mask can belong to background or another
+    // object. Strong contradictory object samples require review, not approval.
+    // Downscaling genuinely soft detail to a sharp delivery size is not a conflict.
+    const nativeOptical = optics(metrics, 'full');
+    if (automaticBlur && (nativeOptical?.kind === 'subject-sharp' || nativeOptical?.kind === 'frame-sharp'))
+      risks.push('cull_risk_sharpness_conflict');
+    else reasons.push('cull_reason_optics_sharp');
+  } else if (optical && !opticalMotionReject && !opticalMotionReview) {
+    risks.push(optical.kind === 'focus-elsewhere' ? 'cull_risk_optics_focus_elsewhere' : 'cull_risk_optics_soft');
+  }
+  // Fine print or dense mesh has no isolated step edges; only genuinely crisp fine texture
+  // (high Laplacian variance + acutance) vetoes an optical blur verdict in balanced/strict modes.
   const textureDetail = nativeSharpness(metrics) >= 0.6 || (metrics.native?.maxSharpnessScore ?? 0) >= 0.6 ||
     risks.includes('cull_risk_detail_outside_grid') || (auto?.summary?.maxSharpnessScore ?? 0) >= 0.6;
-  const opticalBlur = optical?.kind === 'frame-blurred' && sharpestTile(metrics.optics!) * scale > OUTPUT_SHARP && !textureDetail;
+  const strongFineTexture =
+    (!metrics.native && metrics.sharpnessScore >= 0.72 && technical.laplacianVariance >= 45) ||
+    (!!metrics.native && metrics.native.maxSharpnessScore >= 0.72 && metrics.native.maxLaplacianVariance >= 45 && metrics.native.maxEdgeAcutance >= 0.02) ||
+    (!!auto?.summary && auto.summary.maxSharpnessScore >= 0.72 && auto.summary.maxLaplacianVariance >= 45 && auto.summary.maxEdgeAcutance >= 0.02);
+  const opticalBlur = strictness === 'conservative'
+    ? optical?.kind === 'frame-blurred' && sharpestTile(metrics.optics!) * scale > OUTPUT_SHARP && !textureDetail
+    : strictness === 'strict'
+      ? (optical?.kind === 'frame-blurred' || (optical?.kind === 'frame-soft' && (optical.outputBlur ?? 0) >= 1.3)) && !strongFineTexture
+      : optical?.kind === 'frame-blurred' && !strongFineTexture;
+  // Out-of-focus main object (including back-focus onto a sharp background).
+  const subjectSharpTexture = !!auto?.summary && auto.summary.maxSharpnessScore >= 0.72 &&
+    auto.summary.maxLaplacianVariance >= 45 && auto.summary.maxEdgeAcutance >= 0.02;
+  const subjectCoverageOk = (metrics.automatic?.coverage ?? 0.2) <= 0.65;
+  const subjectOut = reliableOptics(metrics.optics) && metrics.optics.subjectBlur !== undefined ? metrics.optics.subjectBlur * scale : undefined;
+  const opticalSubjectBlur = assessBlur && !selected.length && !opticalBlur && subjectOut !== undefined &&
+    (metrics.optics?.subjectTiles ?? 0) >= 4 && subjectCoverageOk && !subjectSharpTexture && (
+      strictness === 'strict' ? subjectOut >= 1.55
+        : strictness === 'balanced' ? subjectOut >= 2.2
+          : false);
+  // Optically softer alternative inside a verified burst/similar series with a sharp winner.
+  const opticalSeriesBlurReject = assessBlur && !selected.length && alternative &&
+    context.opticalSeriesBlur !== undefined && context.referenceOpticalBlur !== undefined &&
+    context.opticalSeriesRatio !== undefined && (context.referenceOpticalBlur * scale) <= OUTPUT_SHARP && (
+      strictness === 'strict' ? context.opticalSeriesBlur * scale >= 1.25 && context.opticalSeriesRatio >= 1.35
+        : strictness === 'balanced' ? context.opticalSeriesBlur * scale >= 1.55 && context.opticalSeriesRatio >= 1.55
+          : context.opticalSeriesBlur * scale >= 2.0 && context.opticalSeriesRatio >= 2.0);
+  // Ruined exposure blowout/blackout confirmed by optical or native measurement (protects sparse high/low-key subjects).
+  const hasFullScaleEvidence = reliableOptics(metrics.optics) || !!metrics.native;
+  const hasSharpSubject = opticallySharp || (metrics.native?.maxSharpnessScore ?? 0) >= 0.55;
+  const severeExposure = strictness !== 'conservative' && hasFullScaleEvidence && !hasSharpSubject && (
+    (metrics.highlightClipping >= (strictness === 'strict' ? 0.75 : 0.88) && technical.p5 >= 210) ||
+    (metrics.shadowClipping >= (strictness === 'strict' ? 0.85 : 0.92) && technical.p95 <= 28));
   const rejectReasons = protectedSet ? [] : [
     ...(opticalBlur ? ['cull_reason_optics_blur'] : []),
+    ...(opticalSubjectBlur ? ['cull_reason_optics_subject_blur'] : []),
+    ...(opticalMotionReject ? ['cull_reason_optics_motion_blur'] : []),
+    ...(opticalSeriesBlurReject ? ['cull_reason_optics_series_blur'] : []),
     ...(emptyClippedPreview ? ['cull_reason_empty_clipped'] : []),
+    ...(severeExposure ? ['cull_reason_severe_exposure'] : []),
     ...(assessBlur && severelySoftNative ? ['cull_reason_native_blur'] : []),
     ...(softSelectedRegion ? ['cull_reason_focus_blur'] : []),
     ...(automaticBlur ? ['cull_reason_auto_blur'] : []),
@@ -224,18 +283,78 @@ export interface PhotoAnalysis {
 }
 
 export function buildCullingResult(analysis: PhotoAnalysis, genre: CullingGenre | null, intent: CullingIntent = 'standard',
-  target: CullingOutputTarget = 'full'): CullingResult {
+  target: CullingOutputTarget = 'full', strictness: CullingStrictnessLevel = 'balanced'): CullingResult {
   const finalScore = computeFinalScore(analysis.metrics, genre, intent, target);
-  return { ...analysis, intent, target, finalScore, ...deriveTechnicalDecision(analysis.metrics, finalScore, { intent, target }), genre: genre ?? undefined,
+  return { ...analysis, intent, target, strictness, finalScore,
+    ...deriveTechnicalDecision(analysis.metrics, finalScore, { intent, target, strictness }), genre: genre ?? undefined,
     scoreBreakdown: computeScoreBreakdown(analysis.metrics, genre, intent, target), engineVersion: CULLING_ENGINE_VERSION, analysisStatus: 'done' };
 }
 
-/** Delivery size is a judgement, not a measurement: changing it never needs the pixels again. */
-export function rescoreCullingResult(result: CullingResult, genre: CullingGenre | null, target: CullingOutputTarget = result.target ?? 'full'): CullingResult {
+/** Delivery size and strictness are judgements, not measurements: changing them never needs the pixels again. */
+export function rescoreCullingResult(result: CullingResult, genre: CullingGenre | null, target: CullingOutputTarget = result.target ?? 'full',
+  strictness: CullingStrictnessLevel = result.strictness ?? 'balanced'): CullingResult {
   if (result.engineVersion !== CULLING_ENGINE_VERSION || result.analysisStatus === 'error') return result;
   const finalScore = computeFinalScore(result.metrics, genre, result.intent, target);
-  return { ...result, target, finalScore, genre: genre ?? undefined, scoreBreakdown: computeScoreBreakdown(result.metrics, genre, result.intent, target),
-    ...deriveTechnicalDecision(result.metrics, finalScore, { ...result, target }) };
+  return { ...result, target, strictness, finalScore, genre: genre ?? undefined, scoreBreakdown: computeScoreBreakdown(result.metrics, genre, result.intent, target),
+    ...deriveTechnicalDecision(result.metrics, finalScore, { ...result, target, strictness }) };
+}
+
+/**
+ * Automatically selects conservative, balanced or strict culling thresholds from the
+ * batch's measured optical quality, noise level and burst structure. Deterministic and
+ * local — never imposes a fixed reject quota (an all-sharp gallery still rejects 0).
+ */
+export function recommendCullingStrictness(results: CullingResult[], target: CullingOutputTarget = 'full'): CullingStrictnessRecommendation {
+  const valid = results.filter(r => r.engineVersion === CULLING_ENGINE_VERSION && r.analysisStatus === 'done');
+  if (!valid.length) {
+    return { level: 'balanced', reason: 'cull_strict_auto_balanced', stats: { measured: 0, opticalCoverage: 0, sharpShare: 0, seriesShare: 0, medianNoise: 0 } };
+  }
+  const opticalBlurs: number[] = [];
+  const noises: number[] = [];
+  let sharpCount = 0;
+  let seriesCount = 0;
+  for (const r of valid) {
+    if (r.duplicateGroupId) seriesCount++;
+    const opt = r.metrics.optics;
+    if (reliableOptics(opt)) {
+      const rawBlur = opt.subjectBlur ?? opt.frameBlur;
+      if (rawBlur !== undefined) {
+        const scale = outputScale(target, opt.sourceWidth, opt.sourceHeight);
+        const outBlur = rawBlur * scale;
+        const motion = opticalMotionBlur(opt, target);
+        const motionBlurred = !!motion && motion.maxBlur >= 2.2 && motion.ratio >= 2.0;
+        opticalBlurs.push(outBlur);
+        if (outBlur <= OUTPUT_SHARP && !motionBlurred) sharpCount++;
+      }
+      noises.push(opt.noise);
+    } else if (r.metrics.technical) {
+      noises.push(r.metrics.technical.noiseEstimate);
+    }
+  }
+  const opticalCoverage = opticalBlurs.length / valid.length;
+  const sharpShare = opticalBlurs.length ? sharpCount / opticalBlurs.length : 0;
+  const seriesShare = seriesCount / valid.length;
+  noises.sort((a, b) => a - b);
+  const medianNoise = noises.length ? noises[Math.floor(noises.length / 2)] : 0;
+  opticalBlurs.sort((a, b) => a - b);
+  const baselineBlur = opticalBlurs.length ? opticalBlurs[Math.floor((opticalBlurs.length - 1) * 0.25)] : undefined;
+  const stats = { measured: valid.length, opticalCoverage, sharpShare, seriesShare, medianNoise, baselineBlur };
+
+  if (medianNoise >= 7.5) {
+    return { level: 'conservative', reason: 'cull_strict_auto_conservative_noise', stats };
+  }
+  if (valid.length < 6 && seriesCount === 0) {
+    return { level: 'conservative', reason: 'cull_strict_auto_conservative_small', stats };
+  }
+  if (opticalCoverage < 0.4 || (baselineBlur !== undefined && baselineBlur > 1.05) || sharpShare < 0.30) {
+    return { level: 'conservative', reason: 'cull_strict_auto_conservative_soft', stats };
+  }
+  if (valid.length >= 12 && opticalCoverage >= 0.6 && medianNoise < 4.5 &&
+      baselineBlur !== undefined && baselineBlur <= 0.80 &&
+      (sharpShare >= 0.55 || (sharpShare >= 0.45 && seriesShare >= 0.25))) {
+    return { level: 'strict', reason: 'cull_strict_auto_strict', stats };
+  }
+  return { level: 'balanced', reason: 'cull_strict_auto_balanced', stats };
 }
 
 export function getEffectiveDecision(result: CullingResult | undefined): CullingDecision | null {
@@ -257,6 +376,8 @@ export interface SimilarityInput {
   sharpness: number;
   detailConfidence?: number;
   native?: CullingNativeMetrics;
+  optics?: CullingOptics;
+  target?: CullingOutputTarget;
   focusRegions?: CullingFocusMeasurement[];
   intent?: CullingIntent;
   exif?: CullingExif;
@@ -265,6 +386,9 @@ export interface SimilarityAssignment {
   focusComparisonVerified?: boolean;
   relativeFocusSharpness?: number;
   referenceFocusSharpness?: number;
+  opticalSeriesBlur?: number;
+  referenceOpticalBlur?: number;
+  opticalSeriesRatio?: number;
   duplicateGroupId?: string;
   isBestInGroup?: boolean;
   groupRank?: number;
@@ -349,13 +473,27 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
       !['motion', 'creative', 'stack'].includes(item.intent ?? 'standard') &&
       group.slice(0, i + 1).every(other => comparableFocus(item.focusRegions, other.focusRegions)));
     const regionalScore = (item: SimilarityInput) => Math.min(...item.focusRegions!.map(f => f.sharpnessScore));
-    group.sort((a, b) => (regionalRanking ? regionalScore(b) - regionalScore(a) : 0) ||
+    const opticalMemberBlur = (item: SimilarityInput) => {
+      if (!reliableOptics(item.optics)) return undefined;
+      const raw = item.optics.subjectBlur ?? item.optics.frameBlur;
+      return raw === undefined ? undefined : raw * outputScale(item.target ?? 'full', item.optics.sourceWidth, item.optics.sourceHeight);
+    };
+    const opticalCompare = (a: SimilarityInput, b: SimilarityInput) => {
+      const ba = opticalMemberBlur(a), bb = opticalMemberBlur(b);
+      if (ba === undefined || bb === undefined) return 0;
+      const aSharp = ba <= OUTPUT_SHARP, bSharp = bb <= OUTPUT_SHARP;
+      if (aSharp !== bSharp && Math.abs(ba - bb) >= 0.25) return aSharp ? -1 : 1;
+      return 0;
+    };
+    group.sort((a, b) => (regionalRanking ? regionalScore(b) - regionalScore(a) : opticalCompare(a, b)) ||
       b.finalScore - a.finalScore || lexical(a.filename, b.filename) || lexical(a.id, b.id));
     const best = group[0];
     // Reuse the all-pairs evidence collected on admission instead of measuring
     // every pair again. Complete linkage and its scene-change veto are unchanged.
     const nearDuplicate = nearDuplicateGroups.has(index);
     const groupId = `series:${[...group].sort((a, b) => lexical(a.id, b.id))[0].id}`;
+    const bestOptics = reliableOptics(best.optics) ? best.optics : undefined;
+    const bestOpticsRaw = bestOptics ? (bestOptics.subjectBlur ?? bestOptics.frameBlur) : undefined;
     group.forEach((item, rank) => {
       // Compare like resolutions. Never divide a 1:1 measurement by a preview.
       const native = [item, best].every(frame => frame.native && Number.isFinite(referenceDetail(frame.native)) &&
@@ -368,12 +506,19 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
       // requires independently weak native detail, not just a stronger neighbour.
       const extraDetailRatio = native && rank !== 0 ? Math.max(0, item.native!.maxLaplacianVariance) / Math.max(1, reference) : 1;
       const relativeSharpness = native ? Math.max(previewRatio, Math.max(0, sharpness) / Math.max(1, reference), extraDetailRatio) : previewRatio;
+      const itemOptics = reliableOptics(item.optics) ? item.optics : undefined;
+      const opticalComparable = !regionalRanking && !!bestOptics && !!itemOptics && bestOpticsRaw !== undefined &&
+        bestOptics.sourceWidth === itemOptics.sourceWidth && bestOptics.sourceHeight === itemOptics.sourceHeight;
+      const itemOpticsRaw = opticalComparable ? (bestOptics!.subjectBlur !== undefined ? itemOptics!.subjectBlur ?? itemOptics!.frameBlur : itemOptics!.frameBlur) : undefined;
       assignments.set(item.id, {
         focusComparisonVerified: regionalRanking,
         relativeFocusSharpness: regionalRanking ? Math.min(...item.focusRegions!.map((f, i) =>
           f.technical.laplacianVariance / Math.max(1, best.focusRegions![i].technical.laplacianVariance))) : undefined,
-        referenceFocusSharpness: regionalRanking && best.focusRegions!.every(f => f.technical.noiseEstimate < 3 &&
+        referenceFocusSharpness: regionalRanking && best.focusRegions!.every(f => f.technical.noiseEstimate < 8 &&
           f.technical.detailConfidence >= 0.6) ? regionalScore(best) : undefined,
+        opticalSeriesBlur: itemOpticsRaw,
+        referenceOpticalBlur: itemOpticsRaw !== undefined ? bestOpticsRaw : undefined,
+        opticalSeriesRatio: itemOpticsRaw !== undefined && bestOpticsRaw !== undefined ? itemOpticsRaw / Math.max(0.25, bestOpticsRaw) : undefined,
         duplicateGroupId: groupId, isBestInGroup: rank === 0, groupRank: rank + 1,
         groupKind: nearDuplicate ? 'near-duplicate' : 'burst', similarityToBest: pair(item, best)?.score ?? 1,
         relativeSharpness,
@@ -381,7 +526,7 @@ export function computeSimilarityGroups(items: SimilarityInput[]): Map<string, S
         referenceDetailConfidence: item.focusRegions?.length || best.focusRegions?.length ? 0 :
           native ? Math.min(1, referenceSamples(best.native!) / 5) : best.detailConfidence ?? 0,
         relativeNativeSharpness: native ? Math.max(0, sharpness) / Math.max(1, reference) : undefined,
-        referenceNativeSharpness: native && referenceSamples(best.native!) >= 5 && best.native!.maxNoiseEstimate < 3 ? referenceSharpness(best.native!) : undefined,
+        referenceNativeSharpness: native && referenceSamples(best.native!) >= 5 && best.native!.maxNoiseEstimate < 8 ? referenceSharpness(best.native!) : undefined,
       });
     });
   }

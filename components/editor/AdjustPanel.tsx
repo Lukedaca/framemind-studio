@@ -10,6 +10,8 @@ interface AdjustPanelProps {
   onChange: <K extends keyof ManualEdits>(key: K, value: ManualEdits[K]) => void;
   onAuto: () => void;
   onReset: () => void;
+  onApplyToAll?: () => void;
+  fileCount?: number;
   onChangeStart: () => void;
   onChangeEnd: () => void;
   isAutoRunning: boolean;
@@ -23,7 +25,7 @@ const RATIOS: { value: string; ratio: number | undefined; label: string }[] = [
   { value: '16:9', ratio: 16 / 9, label: '16:9' },
 ];
 
-const AdjustPanel: React.FC<AdjustPanelProps> = ({ edits, previewUrl, onChange, onAuto, onReset, isAutoRunning, onChangeStart, onChangeEnd }) => {
+const AdjustPanel: React.FC<AdjustPanelProps> = ({ edits, previewUrl, onChange, onAuto, onReset, onApplyToAll, fileCount = 1, isAutoRunning, onChangeStart, onChangeEnd }) => {
   const { t } = useTranslation();
   const ratioValue = RATIOS.find((r) => r.ratio === edits.aspectRatio)?.value ?? 'orig';
   const gesture = { onChangeStart, onChangeEnd };
@@ -79,6 +81,14 @@ const AdjustPanel: React.FC<AdjustPanelProps> = ({ edits, previewUrl, onChange, 
           options={RATIOS.map((r) => ({ value: r.value, label: r.value === 'orig' ? t.export_original : r.label }))}
         />
       </PanelSection>
+
+      {fileCount > 1 && onApplyToAll && (
+        <div className="px-5 py-5">
+          <button type="button" onClick={onApplyToAll} className="fm-btn-ghost w-full">
+            {t.adjust_apply_all.replace('{count}', String(fileCount))}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

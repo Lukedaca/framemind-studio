@@ -91,8 +91,8 @@ The installer is written to `src-tauri/target/release/bundle/nsis/`.
 | Area | Current behavior |
 |---|---|
 | Import | JPEG, PNG, WebP; supported RAW extensions use an embedded JPEG preview |
-| Culling | Technical metrics, similar frames, full originals with zoom, comparison of up to four frames and K / R / X decisions |
-| Adjustments | Histogram-based auto adjustment, sliders and crop |
+| Culling | Local model and optical edge/motion blur measurements, batch-adaptive strictness (`Auto` / Conservative / Balanced / Strict), photo-by-photo review with queue filters and EXIF or whole-set Contact Sheet grid, 1:1 originals centered on subject, up to four-frame comparison and K / R / X |
+| Adjustments | Histogram-based auto adjustment, sliders, crop and apply-to-whole-set sync |
 | Local retouching | Clone, heal, smart lasso, adaptive crops, variant comparison and local ONNX models |
 | Export | JPEG / PNG, quality, size and watermark; one photo or the set |
 | Projects and clients | Local CRM and gallery preview in the application or browser profile |
@@ -117,8 +117,9 @@ otherwise, individual files are downloaded through the browser.
 
 ## Starting fresh and clearing the photo set
 
-Studio restores the last working photo set and its history at startup. Another
-import adds photos to that set. To start fresh, choose **Clear photo set** below
+Studio restores the last working photo set and its history at startup (returning to culling when selection is still unfinished).
+When importing into an active set, you can choose **Add to current set** or **Start new set (replace)**; the dashboard **New photo set** action preselects replace.
+To clear the workspace completely, choose **Clear photo set** below
 the workflow in the left sidebar and confirm. Studio returns to an empty import
 screen and discards this workspace's Undo/Redo history. Export work outside a
 saved project before clearing it.
@@ -306,10 +307,8 @@ is a separate uninstall option.
 - RAW import extracts a preview; it does not perform demosaicing or full RAW development.
   Files without a usable embedded JPEG may fail to import.
 - There are no user accounts, server storage or synchronization.
-- Current checks passed: TypeScript, 267 tests, both frontend builds and Windows packaging.
-  Seven browser checks cover automatic selection, editor handoff, Undo and storage.
-  Photo-by-photo review, automatic selection and native confirmation also passed in
-  the actual Windows executable with isolated profiles. Clean Windows installation remains unverified.
+- Current `main` source checks (21 November 2026): TypeScript (`tsc --noEmit`) and 277 tests across 32 files passed ([unreleased](docs/releases/unreleased.md)).
+  Published Windows release 0.1.7 passed 267 tests, both frontend builds, seven browser checks and isolated Windows executable verification. Clean Windows installation remains unverified.
 - [Release 0.1.7](docs/releases/0.1.7.md) describes current verification;
   [release 0.1.6 notes](docs/releases/0.1.6.md) retain historical evidence.
   Synthetic checks and local photo sets do not establish general accuracy across

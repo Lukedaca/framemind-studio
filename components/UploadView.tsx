@@ -1,15 +1,17 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { UploadIcon } from './icons';
 import Header from './Header';
 import { isRawFile, processRawFile, RAW_EXTENSIONS_STRING } from '../utils/rawProcessor';
 import { useTranslation } from '../contexts/LanguageContext';
 
 interface UploadViewProps {
-  onFilesSelected: (files: File[]) => void;
+  onFilesSelected: (files: File[], importMode?: 'append' | 'replace') => void;
   projectName?: string;
   title: string;
   onToggleSidebar: () => void;
   addNotification?: (message: string, type: 'info' | 'error') => void;
+  existingCount?: number;
+  defaultImportMode?: 'append' | 'replace';
 }
 
 const UploadView: React.FC<UploadViewProps> = ({ 
@@ -17,9 +19,13 @@ const UploadView: React.FC<UploadViewProps> = ({
   projectName,
   title,
   onToggleSidebar,
-  addNotification
+  addNotification,
+  existingCount = 0,
+  defaultImportMode = 'append',
 }) => {
   const { t } = useTranslation();
+  const [importMode, setImportMode] = useState<'append' | 'replace'>(defaultImportMode);
+  useEffect(() => { setImportMode(defaultImportMode); }, [defaultImportMode]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
@@ -50,9 +56,9 @@ const UploadView: React.FC<UploadViewProps> = ({
       const rawFiles = incomingFiles.filter(f => isRawFile(f));
       const normalFiles = incomingFiles.filter(f => !isRawFile(f));
 
-      // Normální soubory rovnou do editoru
+      // Normální soubory rovnou do editoru/výběru
       if (normalFiles.length > 0) {
-          onFilesSelected(normalFiles);
+          onFilesSelected(normalFiles, existingCount > 0 ? importMode : 'append');
       }
 
       // RAW soubory → mezikrok s volbou (konverze startuje až kliknutím)
@@ -101,7 +107,7 @@ const UploadView: React.FC<UploadViewProps> = ({
                   'info'
               );
           }
-          onFilesSelected(convertedFiles);
+          onFilesSelected(convertedFiles, existingCount > 0 ? importMode : 'append');
       } else if (errors > 0) {
           if (addNotification) {
               addNotification('Konverze RAW souborů selhala.', 'error');
@@ -182,24 +188,39 @@ const UploadView: React.FC<UploadViewProps> = ({
             </div>
           </div>
         ) : (
-          <div
-            className={`relative flex min-h-[440px] w-full max-w-5xl flex-col items-center justify-center overflow-hidden rounded-[28px] border border-dashed px-6 py-20 text-center transition-all duration-300 sm:px-16 ${
-              isDragging ? 'border-accent/60 bg-accent/[0.06]' : 'border-hairline bg-ink-900/60'
-            }`}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-          >
-            <span className="fm-glass mb-3 flex h-20 w-20 items-center justify-center rounded-3xl"><UploadIcon className="h-8 w-8 text-ink-200" /></span>
-            <h3 className="mt-4 font-display text-[40px] leading-tight text-ink-50 sm:text-[52px]">{t.upload_drag}</h3>
-            <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-ink-400" dangerouslySetInnerHTML={{ __html: t.upload_support_detail }} />
-            <input ref={fileInputRef} type="file" multiple accept={`image/*,${RAW_EXTENSIONS_STRING}`} onChange={handleFileSelect} className="hidden" />
-            <button type="button" onClick={onButtonClick} className="fm-btn-primary mt-10 h-12 px-7 text-[14px]">
-              <UploadIcon className="h-4 w-4" />
-              {t.upload_select_files}
-            </button>
-            <p className="mt-6 text-xs text-ink-400">{t.upload_originals_safe}</p>
+          <div className="flex w-full max-w-5xl flex-col gap-4">
+            {existingCount > 0 && (
+              <div className="fm-surface flex flex-wrap items-center justify-between gap-3 rounded-2xl px-5 py-3.5">
+                <p className="text-xs text-ink-300">{t.upload_current_set_banner.replace('{count}', String(existingCount))}</p>
+                <div className="fm-seg" role="radiogroup" aria-label={t.nav_upload}>
+                  <button type="button" role="radio" aria-checked={importMode === 'append'} className={importMode === 'append' ? 'is-active' : ''} onClick={() => setImportMode('append')}>
+                    {t.upload_mode_append.replace('{count}', String(existingCount))}
+                  </button>
+                  <button type="button" role="radio" aria-checked={importMode === 'replace'} className={importMode === 'replace' ? 'is-active' : ''} onClick={() => setImportMode('replace')}>
+                    {t.upload_mode_replace}
+                  </button>
+                </div>
+              </div>
+            )}
+            <div
+              className={`relative flex min-h-[440px] w-full flex-col items-center justify-center overflow-hidden rounded-[28px] border border-dashed px-6 py-20 text-center transition-all duration-300 sm:px-16 ${
+                isDragging ? 'border-accent/60 bg-accent/[0.06]' : 'border-hairline bg-ink-900/60'
+              }`}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+            >
+              <span className="fm-glass mb-3 flex h-20 w-20 items-center justify-center rounded-3xl"><UploadIcon className="h-8 w-8 text-ink-200" /></span>
+              <h3 className="mt-4 font-display text-[40px] leading-tight text-ink-50 sm:text-[52px]">{t.upload_drag}</h3>
+              <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-ink-400" dangerouslySetInnerHTML={{ __html: t.upload_support_detail }} />
+              <input ref={fileInputRef} type="file" multiple accept={`image/*,${RAW_EXTENSIONS_STRING}`} onChange={handleFileSelect} className="hidden" />
+              <button type="button" onClick={onButtonClick} className="fm-btn-primary mt-10 h-12 px-7 text-[14px]">
+                <UploadIcon className="h-4 w-4" />
+                {t.upload_select_files}
+              </button>
+              <p className="mt-6 text-xs text-ink-400">{t.upload_originals_safe}</p>
+            </div>
           </div>
         )}
       </div>

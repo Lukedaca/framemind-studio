@@ -3,6 +3,7 @@ import type { CullingFocusMeasurement, CullingMetrics } from '../types';
 import { automaticSamplePlan, CULLING_SUBJECT_MODEL, SUBJECT_INPUT_SIZE, subjectInput } from '../utils/cullingAutomatic';
 import { buildCullingResult, getEffectiveDecision } from '../utils/cullingEngine';
 import { readMetrics, summarizeNativeSamples } from '../utils/cullingMetrics';
+import { summarizeOptics } from '../utils/cullingOptics';
 
 function measured(soft = false, flat = false) {
   const data = new Uint8ClampedArray(128 ** 2 * 4);
@@ -75,6 +76,26 @@ describe('automatic rejection without marking subjects', () => {
   it('any measured sharp object detail vetoes automatic blur rejection', () => {
     const r = result(withAutomatic([measured(true), measured(true), measured()]));
     expect(r.decision).toBe('keep'); expect(r.reasons).toContain('cull_reason_auto_detail');
+  });
+  it('reviews contradictory sharp edges and consistently blurred object samples', () => {
+    const metrics = withAutomatic(Array.from({ length: 3 }, () => measured(true)));
+    metrics.optics = summarizeOptics([.7, .98, ...Array(22).fill(5)].map((blur, i) => ({
+      x: 400 + (i % 8) * 128, y: 500 + Math.floor(i / 8) * 128, subject: 1, blur, edges: 200, level: 1 as const,
+      noise: .5, bins: [blur, blur, blur, blur],
+    })), 3200, 2400, 128, 96);
+    const r = result(metrics);
+    expect(r.decision).toBe('review');
+    expect(r.risks).toContain('cull_risk_sharpness_conflict');
+    expect(r.reasons).not.toContain('cull_reason_optics_sharp');
+    expect(r.rejectionKind).toBeUndefined();
+    expect(getEffectiveDecision({ ...r, manualDecision: 'keep' })).toBe('keep');
+    for (const intent of ['motion', 'creative', 'stack'] as const)
+      expect(result(metrics, intent).risks).not.toContain('cull_risk_sharpness_conflict');
+    // A genuinely blurred source becoming sharp at web size is consistent.
+    metrics.optics = { ...metrics.optics, subjectBlur: 1.5, frameBlur: 1.5 };
+    const web = buildCullingResult({ metrics, source: 'image', aspectRatio: 4 / 3 }, 'other', 'standard', 'web');
+    expect(web.risks).not.toContain('cull_risk_sharpness_conflict');
+    expect(web.reasons).toContain('cull_reason_optics_sharp');
   });
   it('low texture, insufficient coverage and noisy evidence cannot establish blur rejection', () => {
     const noisy = measured(true); noisy.technical!.noiseEstimate = 20;

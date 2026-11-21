@@ -4,7 +4,7 @@ Výběr fotografií běží ve vašem počítači bez API klíče a odesílání
 Engine `local-2.0` používá přibalený lokální model U²-NetP pro nalezení výrazných
 objektů, měření rozmazání hran v pixelech a vlastní technická měření pro automatické
 označení ponechat, zkontrolovat nebo vyřadit. Ruční rozhodnutí fotografa mají přednost.
-Tento návod popisuje [vydání 0.1.7](releases/0.1.7.md).
+Tento návod popisuje vydání [0.1.7](releases/0.1.7.md) a navazující změny v aktuálních zdrojích ([unreleased](releases/unreleased.md)).
 
 ## Výběr a prohlížení originálů
 
@@ -13,14 +13,21 @@ Tento návod popisuje [vydání 0.1.7](releases/0.1.7.md).
    mění váhy metrik, nikoli výstup modelu.
 2. Po měření se otevře **Fotka po fotce**. **K** znamená ponechat,
    **R** zkontrolovat a **X** vyřadit. Volba se uloží a posune na další snímek;
-   opakovaná stejná volba ji neruší. Šipky procházejí všechny snímky, fronta vpravo
-   přejde přímo na fotografii. Poslední rozhodnutí ukáže shrnutí; **Projít znovu**
-   zachová ruční volby. Volby přežijí další běh i změnu profilu.
-3. **Odevzdám jako** v hlavičce nastavuje 100 %, tisk A4 nebo web a pouze přepočítá
-   návrhy. **Kde je ostro** ukáže mapu, pokud je optické měření dostupné.
+   opakovaná stejná volba ji neruší. Šipky procházejí aktivní frontu, kterou lze vpravo
+   filtrovat (**Vše / Kontrola / Vyřadit / Ponechat / Nerozhodnuté**).
+   Klávesy: **Z** (nebo klik do snímku) otevře **Detail 1:1** rovnou na motiv/bod ostrosti,
+   **M** přepíná mapu ostrosti, **C** porovná aktuální sérii vedle sebe, **Backspace** vrátí krok zpět,
+   **Ctrl+Z** vrátí změnu a **?** ukáže přehled zkratek. Nad fotkou se zobrazují čitelná EXIF data
+   (čas, clona, ISO, ohnisko). Tlačítko **Do editoru** dovolí pokračovat kdykoli; poslední rozhodnutí
+   celé sady otevře shrnutí a **Projít znovu** zachová ruční volby.
+3. **Odevzdám jako** v hlavičce nastavuje 100 %, tisk A4 nebo web a **Přísnost**
+   (**Auto / Opatrný / Vyvážený / Přísný**) řídí prahy vyřazování — obojí okamžitě přepočítá
+   návrhy bez nového měření. Režim **Auto** sám zvolí přísnost podle skutečné ostrosti, šumu a sérií
+   dané sady (bez umělé kvóty vyřazených). **Kde je ostro** ukáže mapu, pokud je optické měření dostupné.
    **Detail 1:1** otevře celý originál rovnou na 100 %.
-4. Přepínač **Celá sada** otevře mřížku s profilem a záměrem. Kliknutím na fotografii
-   nebo tlačítkem **Otevřít celou fotografii** otevřete celý
+4. Přepínač **Celá sada** otevře kontaktní arch (čisté fotografie s patičkou metadat pod obrazem),
+   profil, záměr a sbalitelné technické detaily. Rozbalená série se otevírá nahoře v zorném poli.
+   Kliknutím na fotografii nebo tlačítkem **Otevřít celou fotografii** otevřete celý
    původní obrazový soubor. Náhled jej nepřevádí ani znovu nekomprimuje.
    Pro souběžnou kontrolu označte tlačítkem **+** až čtyři fotografie a zvolte
    **Porovnat výběr**. Porovnání funguje i mezi snímky mimo automaticky nalezenou sérii.
@@ -147,6 +154,26 @@ U RAW se měří a prohlíží **vložený JPEG náhled**, nikoli senzorová dat
 Kontrola detailu používá obrazový zdroj z importu, nikoli pozdější úpravy nebo retuš.
 Celé Studio není plně offline: modely retuše a písma se stahují a dvě volitelné
 funkce editoru používají Gemini. [Připojení a data](../README.md#připojení-a-data).
+
+## Změny v aktuálních zdrojích — 21. listopadu 2026: automatická přísnost a přesnější vyřazování
+
+Dosavadní pravidla `local-2.0` posílala většinu neostrých nebo pohybem mázlých snímků
+pouze do **Kontroly** kvůli příliš přísným vetům (jeden ostrý bod z 96–120 dlaždic, nízký
+strop šumu pro vyšší ISO, nevyužité směrové biny pohybu).
+
+- **Přísnost (`Auto / Opatrný / Vyvážený / Přísný`)**: výchozí **Auto** deterministicky
+  vyhodnotí optickou ostrost, šum a série celé sady (bez pevné kvóty vyřazení) — pro ostrou
+  denní sérii zvolí **Přísný**, pro šero/vysoké ISO nebo malou sadu **Opatrný**, pro smíšené
+  podmínky **Vyvážený**. Ruční přepnutí přepočítá verdikty okamžitě bez nového měření.
+- **Směrový pohybový máz**: `opticalMotionBlur` vyhodnocuje 4 směrové biny (`subjectDirection`),
+  takže horizontální/vertikální švih už nemaskují hrany rovnoběžné se směrem pohybu. Záměr
+  *Záměrný pohyb*, *Autorská volnost* a *Sada pro skládání* zůstávají chráněné.
+- **Back-focus a optické porovnání sérií**: ve **Vyváženém** a **Přísném** režimu lze vyřadit
+  silně mimo zaostřený objekt i vedle ostrého pozadí a opticky výrazně měkčí varianty v ověřené
+  sérii vedle ostrého reprezentanta. Strop šumu pro vyhodnocení neostrosti zohledňuje běžné vyšší
+  ISO (extrémní šum zůstává v kontrole).
+- **Fotografické UX**: filtr fronty ve Focus režimu, porovnání série (`C`), 1:1 lupa rovnou na
+  motiv (`Z` nebo klik), EXIF proužek, kontaktní arch bez textů přes obraz a klidnější temná komora.
 
 ## Změny local-2.0 — 14. listopadu 2026: optická ostrost
 

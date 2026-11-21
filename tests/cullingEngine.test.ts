@@ -335,11 +335,19 @@ describe('optical blur evidence', () => {
     expect(decide(withOptics(textured, 2.2, 2.4)).reasons).not.toContain('cull_reason_optics_blur');
   });
 
-  it('flags a soft object beside a sharp area for review, never rejects on it', () => {
-    const result = decide(withOptics(scene(), 2.4, 0.4));
-    expect(result.risks).toContain('cull_risk_optics_focus_elsewhere');
-    expect(result.reasons).not.toContain('cull_reason_optics_blur');
-    expect(result.decision).toBe('review');
+  it('reviews mild back-focus in balanced mode, stays review in conservative, and rejects severe back-focus in balanced', () => {
+    const mild = decide(withOptics(scene(), 1.6, 0.4));
+    expect(mild.risks).toContain('cull_risk_optics_focus_elsewhere');
+    expect(mild.reasons).not.toContain('cull_reason_optics_blur');
+    expect(mild.decision).toBe('review');
+
+    const severeConservative = buildCullingResult({ metrics: withOptics(scene(), 2.4, 0.4), aspectRatio: 1.5, source: 'image' }, 'sport', 'standard', 'full', 'conservative');
+    expect(severeConservative.risks).toContain('cull_risk_optics_focus_elsewhere');
+    expect(severeConservative.decision).toBe('review');
+
+    const severeBalanced = decide(withOptics(scene(), 2.4, 0.4));
+    expect(severeBalanced.decision).toBe('reject');
+    expect(severeBalanced.reasons).toContain('cull_reason_optics_subject_blur');
   });
 
   it('leaves a photographer-chosen focus area in charge', () => {

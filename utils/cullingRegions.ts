@@ -31,11 +31,11 @@ export function focusSharpness(metrics: CullingMetrics): number | undefined {
   return regions.length ? Math.min(...regions.map(f => f.sharpnessScore)) : undefined;
 }
 
-export function severelySoftFocus(f: Pick<CullingFocusMeasurement, 'technical' | 'sharpnessScore'>): boolean {
+export function severelySoftFocus(f: Pick<CullingFocusMeasurement, 'technical' | 'sharpnessScore'>, maxNoise = 8): boolean {
   const t = f.technical;
   return t.detailConfidence >= 0.3 && t.tenengrad >= 100 && t.standardDeviation >= 10 &&
     f.sharpnessScore < 0.56 && t.laplacianVariance < 8 && t.laplacianVariance / t.tenengrad < 0.012 &&
-    t.noiseEstimate < 3;
+    t.noiseEstimate < maxNoise;
 }
 
 // This verifies matching measured content/scale, not semantic subject identity or motion tracking.

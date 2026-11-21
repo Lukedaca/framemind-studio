@@ -162,7 +162,7 @@ self.onmessage = async ({ data }: MessageEvent<CullingRequest>) => {
       : data.kind === 'inspect' ? await inspect(data)
       : data.kind === 'verify-duplicate' ? await verifyDuplicate(data.file, data.reference, data.bytesOnly)
       : data.kind === 'group' ? [...computeSimilarityGroups(data.items)]
-      : buildCullingResult(data.analysis, data.genre, data.intent, data.target);
+      : buildCullingResult(data.analysis, data.genre, data.intent, data.target, data.strictness);
     self.postMessage({ id: data.id, value });
   } catch (error) {
     self.postMessage({ id: data.id, error: error instanceof Error ? error.message : String(error) });

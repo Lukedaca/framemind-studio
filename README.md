@@ -91,8 +91,8 @@ Instalátor vzniká v `src-tauri/target/release/bundle/nsis/`.
 | Oblast | Současné chování |
 |---|---|
 | Import | JPEG, PNG, WebP; podporované RAW přípony se zpracují přes vložený JPEG náhled |
-| Culling | Lokální model a optická měření, výběr fotku po fotce nebo celá sada, originály se zoomem, porovnání až čtyř snímků a K / R / X |
-| Úpravy | Automatická úprava z histogramu, posuvníky a ořez |
+| Culling | Lokální model a optická měření (vč. směrového pohybu a auto-přísnosti), výběr fotku po fotce s filtrem fronty a EXIF nebo kontaktní arch celé sady, 1:1 originály na motiv, porovnání až čtyř snímků a K / R / X |
+| Úpravy | Automatická úprava z histogramu, posuvníky, ořez a hromadné použití úprav na celou sadu |
 | Lokální retuš | Klonování, hojivý štětec, chytré laso, adaptivní výřezy, porovnání variant a místní ONNX modely |
 | Export | JPEG / PNG, kvalita, velikost a vodoznak; jednotlivá fotka nebo sada |
 | Projekty a klienti | Lokální CRM a náhled galerie v profilu aplikace nebo prohlížeče |
@@ -117,9 +117,9 @@ prohlížeč nabízí; jinak se jednotlivé soubory stahují přes prohlížeč.
 
 ## Nová práce a vyprázdnění sady
 
-Studio po spuštění obnoví poslední pracovní sadu včetně historie. Další import
-přidává fotografie do této sady. Pro novou práci klikněte vlevo pod postupem na
-**Vyprázdnit sadu** a potvrďte dialog. Aplikace přejde na prázdný import a zruší
+Studio po spuštění obnoví poslední pracovní sadu včetně historie (pokud nebyl dokončen výběr, vrátí se přímo do cullingu).
+Při importu do rozpracované sady lze zvolit **Přidat k aktuální sadě** nebo **Začít novou sadu (nahradit)**; z přehledu karta **Nová sada** rovnou předvybere nahrazení.
+Pro úplné vyčištění klikněte vlevo pod postupem na **Vyprázdnit sadu** a potvrďte dialog. Aplikace přejde na prázdný import a zruší
 historii Zpět/Znovu této pracovní sady. Výsledky mimo uložený projekt si předem exportujte.
 
 Uložené projekty, klienti a originály na disku zůstanou zachované. Otevřený projekt
@@ -304,10 +304,8 @@ Při odinstalaci je odstranění dat samostatná volba.
 - RAW import extrahuje náhled; nejde o demosaicing ani plné vyvolání RAW.
   Soubor bez použitelného vloženého JPEG nemusí jít importovat.
 - Nejsou zde uživatelské účty, serverové úložiště ani synchronizace.
-- Aktuální ověření: TypeScript, 267 testů, oba frontendové buildy a Windows balíček prošly.
-  Sedm browserových kontrol zahrnuje automatický výběr, editor, Zpět a ukládání.
-  Výběr fotku po fotce i automatický výběr včetně systémových potvrzení prošly také
-  ve skutečném Windows EXE s oddělenými profily. Instalace na čistých Windows není ověřená.
+- Aktuální ověření zdrojů na `main` (21. 11. 2026): TypeScript (`tsc --noEmit`) a 277 testů ve 32 souborech prošly ([unreleased](docs/releases/unreleased.md)).
+  Zveřejněný Windows balíček 0.1.7 prošel 267 testy, oběma frontendovými buildy, sedmi browserovými kontrolami a ověřením ve skutečném Windows EXE s oddělenými profily. Instalace na čistých Windows není ověřená.
 - Aktuální kontroly popisuje [vydání 0.1.7](docs/releases/0.1.7.md);
   historické kontroly jsou v [poznámkách k 0.1.6](docs/releases/0.1.6.md).
   Syntetické kontroly a místní fotografické sady neprokazují obecnou přesnost

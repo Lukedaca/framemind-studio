@@ -26,6 +26,7 @@ import { computeAutoAdjust } from '../utils/autoAdjust';
 import { applyEditsAndExport } from '../utils/imageProcessor';
 import { EditorPreviewRenderer } from '../utils/editorPreview';
 import { applyFileEdits, INITIAL_EDITS } from '../utils/editorHistory';
+import { confirmAction } from '../utils/confirmAction';
 import {
   buildEditedFileName,
   downloadBlob,
@@ -681,6 +682,39 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
     }
   };
 
+  const applyEditsToAll = useCallback(async () => {
+    if (!activeFile || filesRef.current.length < 2) return;
+    finishEdit();
+    const count = filesRef.current.length;
+    if (!await confirmAction(t.adjust_apply_all_confirm.replace('{count}', String(count)))) return;
+    const source = filesRef.current.find(f => f.id === activeFile.id)?.edits || manualEdits;
+    const tonePatch = {
+      brightness: source.brightness,
+      contrast: source.contrast,
+      saturation: source.saturation,
+      vibrance: source.vibrance,
+      shadows: source.shadows,
+      highlights: source.highlights,
+      clarity: source.clarity,
+      sharpness: source.sharpness,
+      noiseReduction: source.noiseReduction,
+    };
+    const updates: Record<string, ManualEdits> = {};
+    for (const file of filesRef.current) {
+      updates[file.id] = { ...(file.edits || INITIAL_EDITS), ...tonePatch };
+    }
+    commitEdits(updates, t.adjust_apply_all.replace('{count}', String(count)));
+    addNotification(t.adjust_apply_all_done.replace('{count}', String(count)), 'info');
+  }, [activeFile, finishEdit, manualEdits, commitEdits, addNotification, t]);
+
+  const hasPhotoEdits = (file: UploadedFile) => {
+    if (!file.edits) return false;
+    const e = file.edits;
+    return e.brightness !== 0 || e.contrast !== 0 || e.saturation !== 0 || e.vibrance !== 0 ||
+      e.shadows !== 0 || e.highlights !== 0 || e.clarity !== 0 || e.sharpness !== 0 ||
+      e.noiseReduction !== 0 || !!e.aspectRatio || !!e.cropRect;
+  };
+
   // --- Export ---
   const canUseNativeSave = supportsNativeSavePicker();
   const buildExport = useCallback(async (file: UploadedFile) => {
@@ -808,10 +842,12 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
         <button onClick={props.onToggleSidebar} className="fm-icon-btn lg:hidden" aria-label="Menu">
           <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M3 6h14M3 10h14M3 14h14" strokeLinecap="round" /></svg>
         </button>
-        <div className="hidden min-w-0 flex-1 md:block">
-          <p className="truncate text-[13px] text-ink-100">{activeFile.file.name}</p>
-          <p className="font-mono text-[11px] text-ink-500">{activeIndex + 1} / {files.length}</p>
-          <p className={`text-[11px] ${storageStatus === 'error' ? 'text-[#ffb3c0]' : 'text-ink-500'}`} role="status" aria-live="polite">
+        <div className="hidden min-w-0 flex-1 items-center gap-3 md:flex">
+          <p className="truncate text-[13px] font-medium text-ink-100">{activeFile.file.name}</p>
+          <span className="h-3.5 w-px flex-shrink-0 bg-hairline" aria-hidden />
+          <p className="flex-shrink-0 font-mono text-[11px] tabular-nums text-ink-400">{activeIndex + 1} / {files.length}</p>
+          <span className="h-3.5 w-px flex-shrink-0 bg-hairline" aria-hidden />
+          <p className={`flex-shrink-0 text-[11px] ${storageStatus === 'error' ? 'text-[#ffb3c0]' : 'text-ink-500'}`} role="status" aria-live="polite">
             {storageStatus === 'error' ? t.storage_save_failed : storageStatus === 'saving' || draftEdits ? t.storage_saving : t.storage_saved}
             {storageStatus === 'error' && <button onClick={retryStorage} className="ml-2 underline">{t.storage_retry}</button>}
           </p>
@@ -890,6 +926,8 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               onChangeEnd={finishEdit}
               onAuto={runAuto}
               isAutoRunning={autoRunning}
+              fileCount={files.length}
+              onApplyToAll={applyEditsToAll}
               onReset={() => activeFileId && commitEdits({ [activeFileId]: { ...INITIAL_EDITS, watermark: manualEdits.watermark } }, t.manual_reset)}
             />
           )}
@@ -987,12 +1025,18 @@ const EditorView: React.FC<EditorViewProps> = (props) => {
               key={f.id}
               disabled={retouchBusy}
               onClick={() => goTo(i)}
-              className={`fm-thumb ${f.id === activeFileId ? 'is-active' : ''}`}
-              title={f.file.name}
+              className={`fm-thumb relative ${f.id === activeFileId ? 'is-active' : ''}`}
+              title={f.file.name + (hasPhotoEdits(f) ? ' · ' + t.editor_edited_badge : '')}
               aria-label={f.file.name}
               aria-current={f.id === activeFileId ? 'true' : undefined}
             >
               <img src={f.previewUrl} alt="" className="h-full w-full object-cover" draggable={false} loading="lazy" />
+              {hasPhotoEdits(f) && (
+                <span
+                  aria-hidden
+                  className="absolute bottom-1 right-1 h-2 w-2 rounded-full bg-fm-green shadow-[0_0_0_1.5px_rgba(7,8,11,0.9)]"
+                />
+              )}
             </button>
           ))}
         </nav>

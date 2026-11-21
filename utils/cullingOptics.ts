@@ -350,6 +350,41 @@ export function sharpestTile(optics: CullingOptics): number {
   return best;
 }
 
+/** Count of measured tiles at or below a blur limit in output pixels. */
+export function sharpTileCount(optics: CullingOptics, target: CullingOutputTarget = 'full', limit = OUTPUT_SHARP): number {
+  const scale = outputScale(target, optics.sourceWidth, optics.sourceHeight);
+  let count = 0;
+  for (let i = 2; i < optics.map.length; i += 4) if (optics.map[i] * scale <= limit) count++;
+  return count;
+}
+
+export interface OpticalMotionSummary {
+  maxBlur: number;
+  minBlur: number;
+  ratio: number;
+  source: 'subject' | 'frame';
+}
+
+/**
+ * Directional blur anisotropy from the 4 orientation bins (0°, 45°, 90°, 135°).
+ * Linear motion blur leaves edges parallel to the motion sharp while smearing
+ * perpendicular edges; a single scalar percentile across all orientations hides it.
+ */
+export function opticalMotionBlur(optics: CullingOptics | undefined, target: CullingOutputTarget = 'full'): OpticalMotionSummary | undefined {
+  if (!optics || !validOptics(optics)) return undefined;
+  const bins = optics.subjectDirection ?? (optics.subjectTiles === 0 ? optics.backgroundDirection : undefined);
+  if (!bins || bins.length !== 4) return undefined;
+  const scale = outputScale(target, optics.sourceWidth, optics.sourceHeight);
+  const maxBlur = Math.max(...bins) * scale;
+  const minBlur = Math.min(...bins) * scale;
+  return {
+    maxBlur,
+    minBlur,
+    ratio: maxBlur / Math.max(0.35, minBlur),
+    source: optics.subjectDirection ? 'subject' : 'frame',
+  };
+}
+
 /** Share of measured background tiles that are sharp at this delivery size. */
 export function sharpBackgroundShare(optics: CullingOptics, target: CullingOutputTarget = 'full'): number {
   const scale = outputScale(target, optics.sourceWidth, optics.sourceHeight);
